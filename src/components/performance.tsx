@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "@/router-compat";
 import { Area, ComposedChart, CartesianGrid, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Sparkles, ThumbsUp, Target, Dumbbell, ShieldCheck, Hourglass, PenLine, TriangleAlert } from "lucide-react";
-import { trendData, type TrendRange } from "@/data/mock";
+import { buildTrend, type TrendRange } from "@/lib/performanceStats";
 import { sessionStatusMeta, TRUST_NOTE } from "@/lib/verification";
 import type { AIAnalysisResult, PerformanceSession, SessionStatus, Skill } from "@/types";
 import { Card, Delta, Pill, ProgressBar } from "./common";
@@ -15,9 +15,9 @@ const ranges: { id: TrendRange; label: string }[] = [
   { id: "season", label: "This Season" },
 ];
 
-export function PerformanceChart() {
+export function PerformanceChart({ sessions }: { sessions: PerformanceSession[] }) {
   const [range, setRange] = useState<TrendRange>("last5");
-  const data = trendData[range];
+  const data = useMemo(() => buildTrend(sessions, range), [sessions, range]);
   const first = data[0]?.score ?? 0, last = data[data.length - 1]?.score ?? 0;
   return (
     <Card>

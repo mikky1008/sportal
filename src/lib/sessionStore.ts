@@ -41,8 +41,16 @@ function sanitize(s: PerformanceSession): PerformanceSession {
   return s;
 }
 
-function formatDate(d: Date) {
-  return d.toLocaleDateString("en-US", { month: "short", day: "2-digit" });
+const SHORT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "2026-10-29" -> "Oct 29". Plain string maths, so no time zone can shift the day. */
+export function shortDate(iso: string): string {
+  const [, m, d] = iso.split("-");
+  return `${SHORT_MONTHS[Number(m) - 1] ?? m} ${d}`;
+}
+
+function isoDay(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 export function createSessionStore(
@@ -101,11 +109,13 @@ export function createSessionStore(
     add(input: NewSession): PerformanceSession {
       if (input.status === "Coach-Verified")
         throw new Error("A new session cannot start as Coach-Verified.");
-      const { date, ...rest } = input;
+      const { date, isoDate, ...rest } = input;
+      const day = isoDate ?? isoDay(now());
       const session: PerformanceSession = {
         ...rest,
         id: `s-${now().getTime()}-${getSnapshot().length}`,
-        date: date ?? formatDate(now()),
+        isoDate: day,
+        date: date ?? shortDate(day),
       };
       commit([session, ...getSnapshot()]);
       return session;

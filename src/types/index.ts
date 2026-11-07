@@ -53,6 +53,8 @@ export type SessionStatus = "AI-Assessed" | "Coach-Verified" | "Pending Review" 
 export interface PerformanceSession {
   id: string;
   date: string;
+  /** calendar day as YYYY-MM-DD, used to sort and bucket sessions; `date` is only the label shown */
+  isoDate?: string;
   skill: SkillId;
   result: number;
   /** null when the athlete entered the result by hand and no consistency was measured */

@@ -17,7 +17,7 @@ function Performance() {
     <div className="flex flex-col gap-6">
       <PageHeader title="Performance" subtitle="Track progress across every session." action={<Link to="/performance/new" className={btn.primary}><Plus className="h-4 w-4" />Start New Practice</Link>} />
       <TrustLegend />
-      <PerformanceChart />
+      <PerformanceChart sessions={sessions} />
       <Card title="Performance History">
         <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
           {[{ id: "all", name: "All" }, ...skills].map((s) => (

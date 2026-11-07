@@ -47,18 +47,18 @@ export const skills: Skill[] = [
 ];
 
 export const sessions: PerformanceSession[] = [
-  { id: "s12", date: "Oct 29", skill: "shooting", result: 82, consistency: 78, status: "AI-Assessed" },
-  { id: "s11", date: "Oct 26", skill: "shooting", result: 76, consistency: 70, status: "Coach-Verified", verifiedBy: "Coach Reyes" },
-  { id: "s10", date: "Oct 22", skill: "dribbling", result: 75, consistency: 73, status: "AI-Assessed" },
-  { id: "s9", date: "Oct 19", skill: "agility", result: 85, consistency: 84, status: "Coach-Verified", verifiedBy: "Coach Reyes" },
-  { id: "s8", date: "Oct 15", skill: "shooting", result: 74, consistency: 70, status: "AI-Assessed" },
-  { id: "s7", date: "Oct 12", skill: "passing", result: 80, consistency: 74, status: "Pending Review" },
-  { id: "s6", date: "Oct 08", skill: "layups", result: 77, consistency: 72, status: "AI-Assessed" },
-  { id: "s5", date: "Oct 04", skill: "shooting", result: 70, consistency: 66, status: "AI-Assessed" },
-  { id: "s4", date: "Sep 30", skill: "vertical", result: 72, consistency: 80, status: "Self-Reported" },
-  { id: "s3", date: "Sep 26", skill: "shooting", result: 68, consistency: 62, status: "AI-Assessed" },
-  { id: "s2", date: "Sep 22", skill: "shooting", result: 64, consistency: 60, status: "Coach-Verified", verifiedBy: "Coach Reyes" },
-  { id: "s1", date: "Sep 18", skill: "shooting", result: 60, consistency: 58, status: "AI-Assessed" },
+  { id: "s12", date: "Oct 29", isoDate: "2026-10-29", skill: "shooting", result: 82, consistency: 78, status: "AI-Assessed" },
+  { id: "s11", date: "Oct 26", isoDate: "2026-10-26", skill: "shooting", result: 76, consistency: 70, status: "Coach-Verified", verifiedBy: "Coach Reyes" },
+  { id: "s10", date: "Oct 22", isoDate: "2026-10-22", skill: "dribbling", result: 75, consistency: 73, status: "AI-Assessed" },
+  { id: "s9", date: "Oct 19", isoDate: "2026-10-19", skill: "agility", result: 85, consistency: 84, status: "Coach-Verified", verifiedBy: "Coach Reyes" },
+  { id: "s8", date: "Oct 15", isoDate: "2026-10-15", skill: "shooting", result: 74, consistency: 70, status: "AI-Assessed" },
+  { id: "s7", date: "Oct 12", isoDate: "2026-10-12", skill: "passing", result: 80, consistency: 74, status: "Pending Review" },
+  { id: "s6", date: "Oct 08", isoDate: "2026-10-08", skill: "layups", result: 77, consistency: 72, status: "AI-Assessed" },
+  { id: "s5", date: "Oct 04", isoDate: "2026-10-04", skill: "shooting", result: 70, consistency: 66, status: "AI-Assessed" },
+  { id: "s4", date: "Sep 30", isoDate: "2026-09-30", skill: "vertical", result: 72, consistency: 80, status: "Self-Reported" },
+  { id: "s3", date: "Sep 26", isoDate: "2026-09-26", skill: "shooting", result: 68, consistency: 62, status: "AI-Assessed" },
+  { id: "s2", date: "Sep 22", isoDate: "2026-09-22", skill: "shooting", result: 64, consistency: 60, status: "Coach-Verified", verifiedBy: "Coach Reyes" },
+  { id: "s1", date: "Sep 18", isoDate: "2026-09-18", skill: "shooting", result: 60, consistency: 58, status: "AI-Assessed" },
 ];
 
 export type TrendRange = "last5" | "last10" | "month" | "season";
@@ -294,7 +294,7 @@ type S = [skill: SkillId, result: number, consistency: number, status: SessionSt
 const mk = (id: string, rows: S[]): PerformanceSession[] =>
   rows.map(([skill, result, consistency, status], i) => ({
     id: `${id}-s${i + 1}`,
-    date: "Oct 20",
+    date: "Oct 20", isoDate: "2026-10-20",
     skill,
     result,
     consistency,

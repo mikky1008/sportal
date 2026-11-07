@@ -40,7 +40,7 @@ export async function clearSession(): Promise<void> {
 
 async function call(
   path: string,
-  init: { method: "GET" | "POST" | "PUT"; body?: unknown; token?: string | null; signal?: AbortSignal },
+  init: { method: "GET" | "POST" | "PUT" | "DELETE"; body?: unknown; token?: string | null; signal?: AbortSignal },
 ): Promise<Response> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 15_000);
@@ -123,7 +123,7 @@ export type ApiResult<T> =
  */
 export async function apiRequest<T>(
   path: string,
-  init: { method?: "GET" | "POST" | "PUT"; body?: unknown; signal?: AbortSignal } = {},
+  init: { method?: "GET" | "POST" | "PUT" | "DELETE"; body?: unknown; signal?: AbortSignal } = {},
 ): Promise<ApiResult<T>> {
   const token = await getToken();
   if (!token) return { ok: false, status: 401, code: "unauthenticated", message: "Your session has expired. Sign in again." };

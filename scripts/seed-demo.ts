@@ -3,7 +3,7 @@
 //   SPORTAL_NEW_PASSWORD='Some-Strong-Pass-1!' npm run seed:demo -- --coach coach@school.edu
 //
 // Creates four demo athletes (demo.<name>@sportal.test, all with that password), connects them to the
-// coach, and adds profiles, records, a shortlist, inquiries, messages and an application.
+// coach, and adds profiles, records, practice sessions, a shortlist, inquiries, messages and an application.
 // Safe to run twice: athletes that already exist are reused and their data is replaced.
 
 import { randomUUID } from "node:crypto";
@@ -79,6 +79,15 @@ try {
       await tx`DELETE FROM athlete_records WHERE athlete_id = ${id}`;
       for (const [label, value, skill, score, ago] of d.rec)
         await tx`INSERT INTO athlete_records (id, athlete_id, label, value, skill, score, recorded_on, created_at) VALUES (${randomUUID()}, ${id}, ${label}, ${value}, ${skill}, ${score}, ${day(ago)}::date, ${ts})`;
+      // Practice sessions: a recent one and an earlier, lower one per skill, so the dashboard's
+      // "progress by skill" has something to compare.
+      await tx`DELETE FROM practice_sessions WHERE athlete_id = ${id}`;
+      for (const [, , skill, score, ago] of d.rec) {
+        for (const [daysAgo, delta] of [[ago, 0], [ago + 35, -6]] as const)
+          await tx`
+            INSERT INTO practice_sessions (id, athlete_id, skill, result, consistency, status, simulated, session_date, created_at)
+            VALUES (${randomUUID()}, ${id}, ${skill.toLowerCase()}, ${score + delta}, ${score + delta - 5}, 'ai_assessed', TRUE, ${day(daysAgo)}::date, ${ts})`;
+      }
       // accepted connection (one row per pair; reuse it if it exists)
       await tx`
         INSERT INTO coach_athlete_connections (id, coach_id, athlete_id, requested_by, status, requested_at, responded_at, created_at, updated_at)

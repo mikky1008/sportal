@@ -89,13 +89,15 @@ import {
   type ListKind,
 } from "./connections.server.ts";
 import {
-  addMyRecord,
   getCoachDashboard,
-  getMyProfile,
   listMyAthletes,
-  saveMyProfile,
   setShortlisted,
 } from "./coach-athletes.server.ts";
+import {
+  addMyRecord,
+  getMyProfile,
+  saveMyProfile,
+} from "./athlete-profile.server.ts";
 import { createPlan, getAssignedPlan, getPlan, listAssignedPlans, listPlans, PlanError, updatePlan } from "./training-plans.server.ts";
 import {
   getCoachProfile,

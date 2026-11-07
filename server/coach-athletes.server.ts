@@ -1,5 +1,5 @@
 // Coach "My Athletes" list, the coach dashboard's recruitment / performance / pending-action
-// numbers, the coach shortlist, and the athlete's own profile and records.
+// numbers, and the coach shortlist. (The athlete's own profile lives in athlete-profile.server.ts.)
 //
 // SERVER ONLY. Works on migration 4 in db.server.ts (athlete_profiles, athlete_skills,
 // athlete_achievements, athlete_records, coach_shortlist, recruitment_inquiries, coach_messages,
@@ -10,15 +10,14 @@
 //    profile popup, performance numbers). Pending, declined and disconnected athletes are never
 //    included, and neither are inactive or deleted accounts.
 //  - Emails and usernames are never returned.
-//  - An athlete can edit only their own profile and records. ranking / performance / consistency
-//    are not editable through the API.
 //  - Every list is scoped by the signed-in user's id taken from the session, never from the request.
 
-import { randomUUID } from "node:crypto";
-import { z } from "zod";
 import { getDb, type Db } from "./db.server.ts";
 import type { PublicUser } from "./auth.server.ts";
 import { ATHLETE_ROLE, COACH_ROLE, ConnectionError, PAGE_DEFAULT, PAGE_MAX } from "./connections.server.ts";
+import { skills as skillCatalog } from "../src/lib/skills.ts";
+
+const skillNames = new Map<string, string>(skillCatalog.map((k) => [k.id, k.name]));
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const now = () => new Date();
@@ -33,11 +32,6 @@ export const PERFORMANCE_WINDOW_DAYS = 30;
 function requireCoach(actor: Pick<PublicUser, "roles">): void {
   if (!actor.roles.includes(COACH_ROLE))
     throw new ConnectionError(403, "role_not_allowed", "Only coach accounts can use this.");
-}
-
-function requireAthlete(actor: Pick<PublicUser, "roles">): void {
-  if (!actor.roles.includes(ATHLETE_ROLE))
-    throw new ConnectionError(403, "role_not_allowed", "Only student-athlete accounts can use this.");
 }
 
 // ---------- My Athletes ----------
@@ -143,9 +137,9 @@ export async function listMyAthletes(
     for (const item of list) (m.get(item.athlete_id) ?? m.set(item.athlete_id, []).get(item.athlete_id)!).push(item);
     return m;
   };
-  const skillsBy = group(skills);
-  const achievementsBy = group(achievements);
-  const recordsBy = group(records);
+  const skillsBy = group<{ athlete_id: string; name: string }>(skills);
+  const achievementsBy = group<{ athlete_id: string; title: string; year: string }>(achievements);
+  const recordsBy = group<{ athlete_id: string; label: string; value: string; recorded_on: string }>(records);
 
   const items: AthleteDetail[] = rows.map((r) => {
     const fallback = splitName(r.display_name);
@@ -194,7 +188,7 @@ export interface CoachDashboard {
   performance: {
     /** connected athletes */
     athletesTotal: number;
-    /** connected athletes with at least one record in the last 30 days */
+    /** connected athletes with at least one practice session in the last 30 days */
     athletesUpdated: number;
     /** average score per skill over the last 30 days, and the change from the 30 days before (0 when there is no earlier data) */
     skills: { name: string; avg: number; change: number }[];
@@ -280,23 +274,25 @@ export async function getCoachDashboard(actor: PublicUser, dbArg?: Db): Promise<
       FROM coach_athlete_connections c JOIN users u ON u.id = c.athlete_id
       WHERE c.coach_id = ${me} AND c.status = 'accepted' AND u.is_active = TRUE AND u.deleted_at IS NULL`,
     db<{ n: number }[]>`
-      SELECT COUNT(DISTINCT r.athlete_id)::int AS n
-      FROM athlete_records r
-      JOIN coach_athlete_connections c ON c.athlete_id = r.athlete_id AND c.coach_id = ${me} AND c.status = 'accepted'
-      JOIN users u ON u.id = r.athlete_id
-      WHERE r.recorded_on >= ${since}::date AND u.is_active = TRUE AND u.deleted_at IS NULL`,
-    db<{ name: string; cur: number; prev: number | null }[]>`
-      SELECT r.skill AS name,
-             AVG(r.score) FILTER (WHERE r.recorded_on >= ${since}::date)::float8 AS cur,
-             AVG(r.score) FILTER (WHERE r.recorded_on < ${since}::date)::float8 AS prev
-      FROM athlete_records r
-      JOIN coach_athlete_connections c ON c.athlete_id = r.athlete_id AND c.coach_id = ${me} AND c.status = 'accepted'
-      JOIN users u ON u.id = r.athlete_id
-      WHERE r.skill IS NOT NULL AND r.score IS NOT NULL AND r.recorded_on >= ${before}::date
-        AND u.is_active = TRUE AND u.deleted_at IS NULL
-      GROUP BY r.skill
-      HAVING AVG(r.score) FILTER (WHERE r.recorded_on >= ${since}::date) IS NOT NULL
-      ORDER BY r.skill
+      SELECT COUNT(DISTINCT s.athlete_id)::int AS n
+      FROM practice_sessions s
+      JOIN coach_athlete_connections c ON c.athlete_id = s.athlete_id AND c.coach_id = ${me} AND c.status = 'accepted'
+      JOIN users u ON u.id = s.athlete_id
+      WHERE s.session_date >= ${since}::date AND u.is_active = TRUE AND u.deleted_at IS NULL`,
+    // Only sessions that count toward rankings (coach-verified or AI-assessed), and only skills measured
+    // in percent: vertical jump is in centimetres, so it can't be averaged with the rest.
+    db<{ id: string; cur: number; prev: number | null }[]>`
+      SELECT s.skill AS id,
+             AVG(s.result) FILTER (WHERE s.session_date >= ${since}::date)::float8 AS cur,
+             AVG(s.result) FILTER (WHERE s.session_date < ${since}::date)::float8 AS prev
+      FROM practice_sessions s
+      JOIN coach_athlete_connections c ON c.athlete_id = s.athlete_id AND c.coach_id = ${me} AND c.status = 'accepted'
+      JOIN users u ON u.id = s.athlete_id
+      WHERE s.status IN ('ai_assessed', 'coach_verified') AND s.skill <> 'vertical'
+        AND s.session_date >= ${before}::date AND u.is_active = TRUE AND u.deleted_at IS NULL
+      GROUP BY s.skill
+      HAVING AVG(s.result) FILTER (WHERE s.session_date >= ${since}::date) IS NOT NULL
+      ORDER BY s.skill
       LIMIT ${SKILLS_SHOWN}`,
   ]);
 
@@ -319,7 +315,7 @@ export async function getCoachDashboard(actor: PublicUser, dbArg?: Db): Promise<
       athletesTotal: roster[0]?.n ?? 0,
       athletesUpdated: updated[0]?.n ?? 0,
       skills: skillRows.map((s) => ({
-        name: s.name,
+        name: skillNames.get(s.id) ?? s.id,
         avg: Math.round(s.cur),
         change: s.prev === null ? 0 : Math.round(s.cur) - Math.round(s.prev),
       })),
@@ -348,114 +344,4 @@ export async function setShortlisted(actor: PublicUser, athleteId: string, on: b
     await db`DELETE FROM coach_shortlist WHERE coach_id = ${actor.id} AND athlete_id = ${athleteId}`;
   }
   return { athleteId, shortlisted: on };
-}
-
-// ---------- The athlete's own profile and records ----------
-
-const profileSchema = z.object({
-  sport: z.string().trim().max(60).default(""),
-  position: z.string().trim().max(80).default(""),
-  school: z.string().trim().max(120).default(""),
-  bio: z.string().trim().max(1000, "Bio can be at most 1000 characters.").default(""),
-  skills: z.array(z.string().trim().min(1, "A skill can't be empty.").max(60)).max(12, "Add at most 12 skills.").default([]),
-  achievements: z
-    .array(z.object({
-      title: z.string().trim().min(1, "An achievement needs a title.").max(160),
-      year: z.string().trim().regex(/^(\d{4})?$/, "Year must be 4 digits.").default(""),
-    }))
-    .max(12, "Add at most 12 achievements.")
-    .default([]),
-});
-
-const recordSchema = z.object({
-  label: z.string().trim().min(1, "Enter what was measured.").max(80),
-  value: z.string().trim().min(1, "Enter the result.").max(40),
-  recordedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use the date format YYYY-MM-DD.").optional(),
-  skill: z.string().trim().min(1).max(60).optional(),
-  score: z.number().min(0, "Score must be 0-100.").max(100, "Score must be 0-100.").optional(),
-});
-
-function validation(error: z.ZodError): ConnectionError {
-  const fieldErrors: Record<string, string> = {};
-  for (const issue of error.issues) {
-    const key = String(issue.path[0] ?? "body");
-    if (!fieldErrors[key]) fieldErrors[key] = issue.message;
-  }
-  return new ConnectionError(400, "validation", "Please fix the highlighted fields.", { fieldErrors });
-}
-
-export interface MyAthleteProfile {
-  sport: string;
-  position: string;
-  school: string;
-  bio: string;
-  skills: string[];
-  achievements: { title: string; year: string }[];
-}
-
-export async function getMyProfile(actor: PublicUser, dbArg?: Db): Promise<MyAthleteProfile> {
-  requireAthlete(actor);
-  const db = dbArg ?? (await getDb());
-  const [row] = await db<{ sport: string; playing_position: string; school: string; bio: string }[]>`
-    SELECT sport, playing_position, school, bio FROM athlete_profiles WHERE user_id = ${actor.id}`;
-  const skills = await db<{ name: string }[]>`SELECT name FROM athlete_skills WHERE athlete_id = ${actor.id} ORDER BY position`;
-  const achievements = await db<{ title: string; year: string }[]>`
-    SELECT title, year FROM athlete_achievements WHERE athlete_id = ${actor.id} ORDER BY position`;
-  return {
-    sport: row?.sport ?? "",
-    position: row?.playing_position ?? "",
-    school: row?.school ?? "",
-    bio: row?.bio ?? "",
-    skills: skills.map((s) => s.name),
-    achievements,
-  };
-}
-
-/** Replaces the athlete's profile, skills and achievements in one transaction. */
-export async function saveMyProfile(actor: PublicUser, body: unknown, dbArg?: Db): Promise<MyAthleteProfile> {
-  requireAthlete(actor);
-  const parsed = profileSchema.safeParse(body);
-  if (!parsed.success) throw validation(parsed.error);
-  const p = parsed.data;
-  const db = dbArg ?? (await getDb());
-  const ts = now();
-  await db.begin(async (tx) => {
-    await tx`
-      INSERT INTO athlete_profiles (user_id, sport, playing_position, school, bio, created_at, updated_at)
-      VALUES (${actor.id}, ${p.sport}, ${p.position}, ${p.school}, ${p.bio}, ${ts}, ${ts})
-      ON CONFLICT (user_id) DO UPDATE
-        SET sport = EXCLUDED.sport, playing_position = EXCLUDED.playing_position,
-            school = EXCLUDED.school, bio = EXCLUDED.bio, updated_at = EXCLUDED.updated_at`;
-    await tx`DELETE FROM athlete_skills WHERE athlete_id = ${actor.id}`;
-    for (const [i, name] of p.skills.entries())
-      await tx`INSERT INTO athlete_skills (id, athlete_id, position, name) VALUES (${randomUUID()}, ${actor.id}, ${i}, ${name})`;
-    await tx`DELETE FROM athlete_achievements WHERE athlete_id = ${actor.id}`;
-    for (const [i, a] of p.achievements.entries())
-      await tx`INSERT INTO athlete_achievements (id, athlete_id, position, title, year) VALUES (${randomUUID()}, ${actor.id}, ${i}, ${a.title}, ${a.year})`;
-  });
-  return getMyProfile(actor, db);
-}
-
-/** Logs one performance record for the signed-in athlete. */
-export async function addMyRecord(actor: PublicUser, body: unknown, dbArg?: Db): Promise<{ id: string }> {
-  requireAthlete(actor);
-  const parsed = recordSchema.safeParse(body);
-  if (!parsed.success) throw validation(parsed.error);
-  const r = parsed.data;
-  const ts = now();
-  const recordedOn = r.recordedOn ?? isoDay(ts);
-  const asDate = new Date(`${recordedOn}T00:00:00Z`);
-  if (Number.isNaN(asDate.getTime()) || isoDay(asDate) !== recordedOn)
-    throw new ConnectionError(400, "validation", "Please fix the highlighted fields.", { fieldErrors: { recordedOn: "Enter a real date." } });
-  if (recordedOn > isoDay(new Date(ts.getTime() + DAY_MS)))
-    throw new ConnectionError(400, "validation", "Please fix the highlighted fields.", { fieldErrors: { recordedOn: "A record can't be dated in the future." } });
-  if ((r.skill === undefined) !== (r.score === undefined))
-    throw new ConnectionError(400, "validation", "Please fix the highlighted fields.", { fieldErrors: { score: "Give both a skill and a score, or neither." } });
-
-  const db = dbArg ?? (await getDb());
-  const id = randomUUID();
-  await db`
-    INSERT INTO athlete_records (id, athlete_id, label, value, skill, score, recorded_on, created_at)
-    VALUES (${id}, ${actor.id}, ${r.label}, ${r.value}, ${r.skill ?? null}, ${r.score ?? null}, ${recordedOn}::date, ${ts})`;
-  return { id };
 }

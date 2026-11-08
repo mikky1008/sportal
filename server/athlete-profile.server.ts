@@ -246,9 +246,14 @@ export async function saveScholarship(actor: PublicUser, raw: unknown, dbArg?: D
   const errors = validateScholarship(s);
   if (Object.keys(errors).length > 0) throw fail(errors as Record<string, string>);
   const db = dbArg ?? (await getDb());
+  if (s.universities.length > 0) {
+    // Only universities that have posted a scholarship can be picked (open or not, so an old pick still saves).
+    const known = await db<{ university: string }[]>`SELECT DISTINCT university FROM scholarships WHERE university = ANY(${s.universities}::text[])`;
+    if (known.length !== s.universities.length) throw fail({ universities: "Choose universities from the list." });
+  }
   await db`
     INSERT INTO athlete_extras (user_id, universities, coverage, course, updated_at)
-    VALUES (${actor.id}, ${db.array(s.universities)}::text[], ${s.coverage}, ${s.course}, ${now()})
+    VALUES (${actor.id}, ${s.universities}::text[], ${s.coverage}, ${s.course}, ${now()})
     ON CONFLICT (user_id) DO UPDATE SET universities = EXCLUDED.universities, coverage = EXCLUDED.coverage,
       course = EXCLUDED.course, updated_at = EXCLUDED.updated_at`;
   return getMyExtras(actor, db);

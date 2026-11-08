@@ -71,6 +71,26 @@
 //   GET /api/athletes/me/training-plans            ?limit&offset -> { ok, items, total }
 //   GET /api/athletes/me/training-plans/:id        -> { ok, plan }
 //
+// Scholarships (every route needs a signed-in account):
+//   GET  /api/scholarships                          ?sport&q&includeClosed&limit&offset -> { ok, items, total }   open ones by default;
+//                                                    each item has myApplication ({ id, status } or null) for the caller
+//   POST /api/scholarships                          university representative or admin
+//                                                   { name, university?, sport, coverage, details, eligibility[], deadline } -> 201 { ok, scholarship }
+//   GET  /api/scholarships/universities            -> { ok, items: string[] }   universities with an open scholarship
+//   POST /api/scholarships/:id/open | /close        poster or admin -> { ok, scholarship }
+//   POST /api/scholarships/:id/apply                student-athlete -> 201 { ok, application }   (409 already_applied | closed)
+//   POST /api/scholarships/:id/withdraw             student-athlete -> { ok, application }
+//   GET  /api/athletes/me/applications              student-athlete ?limit&offset -> { ok, items, total }
+//
+// Notifications (the caller's own only; created by the server, never by a client):
+//   GET  /api/notifications                         ?category&limit&offset -> { ok, items, total, unread }
+//   GET  /api/notifications/unread-count            -> { ok, unread }   the number on the header bell
+//   POST /api/notifications/read-all                -> { ok, updated }
+//   POST /api/notifications/:id/read                -> { ok, notification }
+//
+// Header search:
+//   GET  /api/search                                ?q&limit -> { ok, athletes, scholarships }   q needs 2+ characters; athletes only for verified coaches
+//
 // The session token is returned in the JSON body and sent back as an `Authorization: Bearer`
 // header (a native app has no browser cookie jar). Only a SHA-256 hash of it is stored.
 
@@ -113,6 +133,28 @@ import {
   reviewVerification,
   saveCoachProfile,
 } from "./coach-profile.server.ts";
+import {
+  applyToScholarship,
+  createScholarship,
+  listMyApplications,
+  listScholarships,
+  listUniversities,
+  ScholarshipError,
+  setScholarshipOpen,
+  withdrawApplication,
+  SCHOLARSHIP_PAGE_DEFAULT,
+  SCHOLARSHIP_PAGE_MAX,
+} from "./scholarships.server.ts";
+import {
+  listNotifications,
+  markAllRead,
+  markRead,
+  NotificationError,
+  NOTIF_PAGE_DEFAULT,
+  NOTIF_PAGE_MAX,
+  unreadCount,
+} from "./notifications.server.ts";
+import { globalSearch } from "./search.server.ts";
 import { PLAN_STATUSES, type PlanStatus } from "../src/lib/trainingPlanRules.ts";
 
 const TRUST_PROXY = process.env["TRUST_PROXY"] === "true" || !!process.env["VERCEL"];
@@ -361,6 +403,112 @@ async function handleAthleteSearch(req: Request, path: string): Promise<Response
   }
 }
 
+const scholarshipSchema = z.object({
+  name: z.string().trim().min(3).max(120),
+  university: z.string().trim().min(2).max(120).optional(),
+  sport: z.string().trim().min(1).max(40),
+  coverage: z.string().trim().max(120).default(""),
+  details: z.string().max(2000).default(""),
+  eligibility: z.array(z.string().max(120)).max(10).default([]),
+  deadline: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+
+function pageFrom(req: Request, def: number, max: number): { limit: number; offset: number } {
+  const params = new URL(req.url).searchParams;
+  const limit = Number(params.get("limit") ?? def);
+  const offset = Number(params.get("offset") ?? 0);
+  return {
+    limit: Number.isInteger(limit) && limit >= 1 ? Math.min(limit, max) : def,
+    offset: Number.isInteger(offset) && offset >= 0 ? offset : 0,
+  };
+}
+
+/** Returns null when the path is not a scholarships route, so the caller can keep matching. */
+async function handleScholarships(req: Request, path: string): Promise<Response | null> {
+  const isList = path === "/api/scholarships";
+  const action = /^\/api\/scholarships\/([^/]+)\/(open|close|apply|withdraw)$/.exec(path);
+  const isMine = path === "/api/athletes/me/applications";
+  const isUnis = path === "/api/scholarships/universities";
+  if (!isList && !action && !isMine && !isUnis) return null;
+  const get = req.method === "GET";
+  const post = req.method === "POST";
+  if (!((isList && (get || post)) || (action && post) || ((isMine || isUnis) && get))) return null;
+
+  const user = await getUserBySessionToken(bearer(req));
+  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
+  const meta = requestMeta(req);
+  try {
+    if (isList && get) {
+      const params = new URL(req.url).searchParams;
+      return send(req, 200, {
+        ok: true,
+        ...(await listScholarships(user, {
+          sport: params.get("sport") ?? undefined,
+          q: params.get("q") ?? undefined,
+          includeClosed: params.get("includeClosed") === "true",
+          ...pageFrom(req, SCHOLARSHIP_PAGE_DEFAULT, SCHOLARSHIP_PAGE_MAX),
+        })),
+      });
+    }
+    if (isUnis) return send(req, 200, { ok: true, items: await listUniversities() });
+    if (isMine) {
+      const { limit, offset } = pageFrom(req, SCHOLARSHIP_PAGE_DEFAULT, SCHOLARSHIP_PAGE_MAX);
+      return send(req, 200, { ok: true, ...(await listMyApplications(user, limit, offset)) });
+    }
+    if (isList && post) {
+      const parsed = scholarshipSchema.safeParse(await readJson(req));
+      if (!parsed.success)
+        return send(req, 400, { ok: false, code: "validation", message: "Please fix the highlighted fields.", fieldErrors: parsed.error.flatten().fieldErrors });
+      return send(req, 201, { ok: true, scholarship: await createScholarship(user, parsed.data, meta) });
+    }
+    const [, id, verb] = action as RegExpExecArray;
+    if (verb === "open" || verb === "close")
+      return send(req, 200, { ok: true, scholarship: await setScholarshipOpen(user, id as string, verb === "open", meta) });
+    if (verb === "apply") return send(req, 201, { ok: true, application: await applyToScholarship(user, id as string, meta) });
+    return send(req, 200, { ok: true, application: await withdrawApplication(user, id as string, meta) });
+  } catch (err) {
+    if (err instanceof ScholarshipError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
+    throw err;
+  }
+}
+
+/** Returns null when the path is not a notifications route, so the caller can keep matching. */
+async function handleNotifications(req: Request, path: string): Promise<Response | null> {
+  const one = /^\/api\/notifications\/([^/]+)\/read$/.exec(path);
+  const isList = req.method === "GET" && path === "/api/notifications";
+  const isCount = req.method === "GET" && path === "/api/notifications/unread-count";
+  const isAll = req.method === "POST" && path === "/api/notifications/read-all";
+  const isOne = req.method === "POST" && !!one && one[1] !== "read-all";
+  if (!isList && !isCount && !isAll && !isOne) return null;
+
+  const user = await getUserBySessionToken(bearer(req));
+  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
+  try {
+    if (isList)
+      return send(req, 200, {
+        ok: true,
+        ...(await listNotifications(user, { category: new URL(req.url).searchParams.get("category") ?? undefined, ...pageFrom(req, NOTIF_PAGE_DEFAULT, NOTIF_PAGE_MAX) })),
+      });
+    if (isCount) return send(req, 200, { ok: true, unread: await unreadCount(user) });
+    if (isAll) return send(req, 200, { ok: true, updated: await markAllRead(user) });
+    return send(req, 200, { ok: true, notification: await markRead(user, (one as RegExpExecArray)[1] as string) });
+  } catch (err) {
+    if (err instanceof NotificationError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
+    throw err;
+  }
+}
+
+/** Returns null when the path is not the header search route, so the caller can keep matching. */
+async function handleGlobalSearch(req: Request, path: string): Promise<Response | null> {
+  if (req.method !== "GET" || path !== "/api/search") return null;
+  const user = await getUserBySessionToken(bearer(req));
+  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
+  const params = new URL(req.url).searchParams;
+  const q = params.get("q") ?? "";
+  if (q.length > 160) return send(req, 400, { ok: false, code: "validation", message: "Search text is too long." });
+  return send(req, 200, { ok: true, ...(await globalSearch(user, q, Number(params.get("limit") ?? 5))) });
+}
+
 /** Returns null when the path is not a training-plans route, so the caller can keep matching. */
 async function handleTrainingPlans(req: Request, path: string): Promise<Response | null> {
   if (path !== "/api/training-plans" && !path.startsWith("/api/training-plans/")) return null;
@@ -556,6 +704,12 @@ export async function handle(req: Request): Promise<Response> {
     if (assigned) return assigned;
     const selfService = await handleAthleteSelfService(req, path);
     if (selfService) return selfService;
+    const scholarships = await handleScholarships(req, path);
+    if (scholarships) return scholarships;
+    const notifications = await handleNotifications(req, path);
+    if (notifications) return notifications;
+    const search = await handleGlobalSearch(req, path);
+    if (search) return search;
     return send(req, 404, { error: "not_found" });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";

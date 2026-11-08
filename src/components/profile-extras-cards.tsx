@@ -2,9 +2,10 @@ import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { Camera, Trash2, Video } from "lucide-react";
 import { Card, Pill, Select, btn } from "@/components/common";
+import { useUniversityOptions } from "@/lib/useUniversityOptions";
 import { athleteCompletionNow, toastSaved } from "@/components/profile-completion-cards";
 import {
-  COVERAGE_OPTIONS, EXTRAS_LIMITS, ExtrasValidationError, UNIVERSITY_OPTIONS, isMediaUsable, profileExtrasStore,
+  COVERAGE_OPTIONS, EXTRAS_LIMITS, ExtrasValidationError, isMediaUsable, profileExtrasStore,
   useProfileExtras, validatePhotoFile, validateScholarship, validateVideoUrl,
   type CoveragePreference, type MediaStatus, type ScholarshipInterests,
 } from "@/lib/profileExtrasStore";
@@ -23,6 +24,7 @@ export function ScholarshipInterestsCard() {
   // null until something is edited, so the form always shows what is saved
   const [draft, setDraft] = useState<ScholarshipInterests | null>(null);
   const d = draft ?? saved;
+  const { options: universityOptions, loading: universitiesLoading } = useUniversityOptions(d.universities);
   const errors = validateScholarship(d);
   const edit = (patch: Partial<ScholarshipInterests>) => setDraft({ ...d, ...patch });
   const toggleUni = (u: string) =>
@@ -47,7 +49,7 @@ export function ScholarshipInterestsCard() {
         <fieldset className="flex flex-col gap-2">
           <legend className="mb-1 text-sm font-medium">Universities you're interested in</legend>
           <div className="flex flex-wrap gap-2">
-            {UNIVERSITY_OPTIONS.map((u) => (
+            {universityOptions.map((u) => (
               <button
                 key={u} type="button" aria-pressed={d.universities.includes(u)} onClick={() => toggleUni(u)}
                 className={cn(
@@ -57,6 +59,7 @@ export function ScholarshipInterestsCard() {
               >{u}</button>
             ))}
           </div>
+          {!universitiesLoading && universityOptions.length === 0 && <span className="text-xs text-muted-foreground">No university has posted a scholarship yet.</span>}
           {errors.universities && <span role="alert" className="text-xs text-destructive">{errors.universities}</span>}
         </fieldset>
         <div className="grid gap-4 sm:grid-cols-2">

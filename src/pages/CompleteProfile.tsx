@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { sports } from "@/lib/sports";
 import { Select } from "@/components/common";
 import { AnimatedBar } from "@/components/profile-completion";
+import { useUniversityOptions } from "@/lib/useUniversityOptions";
 import { ShowcaseCard } from "@/components/profile-extras-cards";
 import { athleteCompletionNow, toastSaved, useAthleteCompletion } from "@/components/profile-completion-cards";
 import {
@@ -13,7 +14,7 @@ import {
   type ProfileDraft, type ProfileErrors,
 } from "@/lib/profileStore";
 import {
-  COVERAGE_OPTIONS, ExtrasValidationError, UNIVERSITY_OPTIONS, profileExtrasStore, useProfileExtras, validateScholarship,
+  COVERAGE_OPTIONS, ExtrasValidationError, profileExtrasStore, useProfileExtras, validateScholarship,
   type CoveragePreference, type ScholarshipInterests,
 } from "@/lib/profileExtrasStore";
 import { ATHLETE_SECTION_IDS, type AthleteSectionId } from "@/lib/profileCompletion";
@@ -88,6 +89,7 @@ function CompleteProfileBody() {
   const d = draft ?? toDraft(athlete);
   const errors = validateProfile(d);
   const sch = schDraft ?? extras.scholarship;
+  const { options: universityOptions, loading: universitiesLoading } = useUniversityOptions(sch.universities);
   const schErrors = validateScholarship(sch);
   const edit = (patch: Partial<ProfileDraft>) => setDraft({ ...d, ...patch });
   const editSch = (patch: Partial<ScholarshipInterests>) => setSchDraft({ ...sch, ...patch });
@@ -313,7 +315,7 @@ function CompleteProfileBody() {
                 <fieldset className="flex flex-col gap-2">
                   <legend className="mb-1 text-sm font-medium">Universities you're interested in</legend>
                   <div className="flex flex-wrap gap-2">
-                    {UNIVERSITY_OPTIONS.map((u) => (
+                    {universityOptions.map((u) => (
                       <button
                         key={u} type="button" aria-pressed={sch.universities.includes(u)}
                         onClick={() => editSch({ universities: sch.universities.includes(u) ? sch.universities.filter((x) => x !== u) : [...sch.universities, u] })}
@@ -324,6 +326,7 @@ function CompleteProfileBody() {
                       >{u}</button>
                     ))}
                   </div>
+                  {!universitiesLoading && universityOptions.length === 0 && <span className="text-xs text-muted-foreground">No university has posted a scholarship yet.</span>}
                   {tried && schErrors.universities && <span role="alert" className="text-xs text-destructive">{schErrors.universities}</span>}
                 </fieldset>
                 <div className="grid gap-4 sm:grid-cols-2">

@@ -4,11 +4,8 @@
 export const COVERAGE_OPTIONS = ["Full tuition", "Partial tuition", "Stipend / allowance", "Open to any"] as const;
 export type CoveragePreference = (typeof COVERAGE_OPTIONS)[number];
 
-/**
- * Universities an athlete can say they are interested in. This is the list of universities that offer
- * scholarships; replace it with a database list when scholarships get a backend.
- */
-export const UNIVERSITY_OPTIONS: string[] = ["National University", "De La Salle University", "University of Santo Tomas", "UP Diliman"];
+/** Longest university name we accept. The list itself comes from the scholarships posted in the database. */
+export const UNIVERSITY_NAME_MAX = 120;
 
 export const EXTRAS_LIMITS = {
   course: 80,
@@ -65,7 +62,9 @@ export class ExtrasValidationError extends Error {
  */
 export function validateScholarship(s: ScholarshipInterests): ScholarshipErrors {
   const e: ScholarshipErrors = {};
-  if (s.universities.some((u) => !UNIVERSITY_OPTIONS.includes(u)) || new Set(s.universities).size !== s.universities.length)
+  // Which names are real is checked by the server against the posted scholarships; here we only
+  // check the shape, so the form and the server agree on everything else.
+  if (s.universities.some((u) => typeof u !== "string" || !u.trim() || u.length > UNIVERSITY_NAME_MAX) || new Set(s.universities).size !== s.universities.length)
     e.universities = "Choose universities from the list.";
   if (s.coverage !== "" && !(COVERAGE_OPTIONS as readonly string[]).includes(s.coverage))
     e.coverage = "Choose a coverage preference from the list.";

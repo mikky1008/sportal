@@ -110,7 +110,9 @@ export type NotificationCategory =
   | "recruitment"
   | "scholarship"
   | "application"
-  | "verification";
+  | "verification"
+  | "connection"
+  | "system";
 
 export interface Notification {
   id: string;

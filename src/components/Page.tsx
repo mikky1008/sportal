@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import { IonContent, IonFooter, IonPage } from "@ionic/react";
 import { LogOut } from "lucide-react";
-import { notifications } from "@/data/mock";
+import { useUnreadCount } from "@/lib/notificationsApi";
 import { useAthleteProfile } from "@/lib/profileStore";
 import { Link } from "@/router-compat";
 import { BottomNav, nav } from "@/layouts/Nav";
@@ -62,7 +62,7 @@ function TopBar({ backTo }: { backTo?: string }) {
   // A coach's "home" is the coach dashboard, never the athlete one.
   const home = user ? homePathFor(user.roles) : "/dashboard";
   const { pathname } = useLocation();
-  const unread = notifications.filter((n) => !n.read).length;
+  const unread = useUnreadCount();
   const isActive = (to: string) => pathname === to || pathname.startsWith(to + "/");
   const tabs = nav.filter((n) => TOP_TABS.includes(n.to));
 

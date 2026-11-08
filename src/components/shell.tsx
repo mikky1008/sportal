@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
-import { Bell, ChevronDown, Menu, Search, type LucideIcon } from "lucide-react";
+import { Bell, Menu, Search, type LucideIcon } from "lucide-react";
 import { Link } from "@/router-compat";
+import { MIN_SEARCH_CHARS, searchEverything, type SearchResults } from "@/lib/searchApi";
 import { PersonAvatar } from "@/components/avatar";
 import { cn } from "@/lib/utils";
 
@@ -136,17 +137,93 @@ export const DropdownLabel = ({ children }: { children: ReactNode }) => (
   <p className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">{children}</p>
 );
 
-/** Search field in the bar (wide screens only). Same size and look for every role. */
+/**
+ * Search field in the bar (wide screens only). Same size and look for every role. It searches as
+ * you type (after a short pause) and lists scholarships for everyone and athletes for verified
+ * coaches; the server decides what each account may see.
+ */
 export function HeaderSearch({ placeholder }: { placeholder: string }) {
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState<SearchResults | null>(null);
+  const [state, setState] = useState<"idle" | "loading" | "error">("idle");
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const { pathname } = useLocation();
+  const term = q.trim();
+
+  useEffect(() => setOpen(false), [pathname]);
+
+  useEffect(() => {
+    if (term.length < MIN_SEARCH_CHARS) {
+      setResults(null);
+      setState("idle");
+      return;
+    }
+    setState("loading");
+    const ctrl = new AbortController();
+    // Wait for a pause in typing, and cancel the request if a newer one replaces it.
+    const t = setTimeout(async () => {
+      const r = await searchEverything(term, ctrl.signal);
+      if (ctrl.signal.aborted) return;
+      if (r.ok) { setResults(r.data); setState("idle"); } else setState("error");
+    }, 300);
+    return () => { clearTimeout(t); ctrl.abort(); };
+  }, [term]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (e: PointerEvent) => { if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false); };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("pointerdown", onPointer); document.removeEventListener("keydown", onKey); };
+  }, [open]);
+
+  const empty = !!results && !results.athletes.length && !results.scholarships.length;
+  const showPanel = open && term.length >= MIN_SEARCH_CHARS;
+  const rowClass = "block rounded-xl px-3 py-2.5 text-sm hover:bg-muted";
+
   return (
-    <div className="relative ml-2 hidden max-w-xl flex-1 xl:block">
+    <div ref={boxRef} className="relative ml-2 hidden max-w-xl flex-1 xl:block">
       <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-shell-icon" />
       <input
-        type="text"
+        type="search"
+        value={q}
+        onChange={(e) => { setQ(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
         placeholder={placeholder}
+        aria-label="Search"
         className="h-11 w-full rounded-full border border-white/15 bg-black/20 pl-12 pr-12 text-sm text-shell-fg outline-none placeholder:text-shell-muted focus:border-shell-focus focus:ring-4 focus:ring-shell-focus/20"
       />
-      <ChevronDown className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-shell-icon" />
+      {showPanel && (
+        <div className="absolute left-0 right-0 top-full z-40 mt-2 max-h-96 overflow-y-auto rounded-2xl border bg-card p-2 text-foreground shadow-lg">
+          {state === "loading" && !results && <p className="px-3 py-2.5 text-sm text-muted-foreground">Searching…</p>}
+          {state === "error" && <p className="px-3 py-2.5 text-sm text-muted-foreground">Search isn't available right now.</p>}
+          {empty && state !== "error" && <p className="px-3 py-2.5 text-sm text-muted-foreground">No results for “{term}”.</p>}
+          {!!results?.scholarships.length && (
+            <div>
+              <p className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Scholarships</p>
+              {results.scholarships.map((s) => (
+                <Link key={s.id} to="/scholarships" className={rowClass}>
+                  <span className="block font-semibold">{s.name}</span>
+                  <span className="block text-xs text-muted-foreground">{s.university} · {s.sport}</span>
+                </Link>
+              ))}
+            </div>
+          )}
+          {!!results?.athletes.length && (
+            <div>
+              <p className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Athletes</p>
+              {results.athletes.map((a) => (
+                <Link key={a.id} to="/coach/athletes" className={rowClass}>
+                  <span className="block font-semibold">{a.displayName}</span>
+                  <span className="block text-xs text-muted-foreground">Open My Athletes to connect</span>
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

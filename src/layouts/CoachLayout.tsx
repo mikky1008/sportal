@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import { IonContent, IonPage } from "@ionic/react";
 import { toast } from "sonner";
@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { Link } from "@/router-compat";
 import { useAuth } from "@/auth/AuthContext";
+import { listNotifications, useUnreadCount, type NotificationView } from "@/lib/notificationsApi";
 import { useCoachProfile } from "@/lib/coachProfileStore";
 import {
   AppHeader, DropdownDivider, DropdownLabel, DropdownPanel, HeaderBrand, HeaderNavItem, HeaderPill, HeaderPillDivider,
@@ -47,21 +48,35 @@ const MORE_NAV: NavEntry[] = [
   { label: "My University", icon: Building2 },
 ];
 
-const SAMPLE_NOTIFICATIONS = ["New affiliation request from a student-athlete", "A recruiter replied to your inquiry", "An athlete updated their profile"];
 
 const comingSoon = (label: string) => toast(`${label} is coming soon`, { description: "This coach page hasn't been built yet." });
 
 function NotificationsMenu() {
   const { open, setOpen, ref } = useDropdown();
+  const unread = useUnreadCount();
+  const [items, setItems] = useState<NotificationView[] | null>(null);
+  // Fetch the latest few each time the panel opens, so it never shows a stale list.
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    void listNotifications("all", 5).then((r) => live && setItems(r.ok ? r.data.items : []));
+    return () => { live = false; };
+  }, [open]);
   return (
     <div ref={ref} className="relative">
-      <NotificationBell count={SAMPLE_NOTIFICATIONS.length} onClick={() => setOpen((v) => !v)} expanded={open} />
+      <NotificationBell count={unread} onClick={() => setOpen((v) => !v)} expanded={open} />
       {open && (
         <DropdownPanel className="w-[min(20rem,calc(100vw-2rem))]">
-          <DropdownLabel>Notifications · sample data</DropdownLabel>
-          {SAMPLE_NOTIFICATIONS.map((t) => (
-            <div key={t} className="rounded-xl px-3 py-2.5 text-sm hover:bg-muted">{t}</div>
+          <DropdownLabel>Notifications</DropdownLabel>
+          {items === null && <div className="px-3 py-2.5 text-sm text-muted-foreground">Loading…</div>}
+          {items?.length === 0 && <div className="px-3 py-2.5 text-sm text-muted-foreground">Nothing here yet.</div>}
+          {items?.map((n) => (
+            <div key={n.id} className="rounded-xl px-3 py-2.5 text-sm hover:bg-muted">
+              <p className={n.read ? "" : "font-semibold"}>{n.title}</p>
+              <p className="text-xs text-muted-foreground">{n.message}</p>
+            </div>
           ))}
+          <Link to="/notifications" className="mt-1 block rounded-xl px-3 py-2 text-center text-sm font-semibold text-primary hover:bg-muted">See all</Link>
         </DropdownPanel>
       )}
     </div>

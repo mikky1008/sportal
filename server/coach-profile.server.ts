@@ -16,6 +16,7 @@
 
 import { getDb, type Db } from "./db.server.ts";
 import { audit, type PublicUser, type RequestMeta } from "./auth.server.ts";
+import { notify } from "./notifications.server.ts";
 import { COACH_ROLE, ConnectionError, isVerifiedCoach, PAGE_DEFAULT, PAGE_MAX } from "./connections.server.ts";
 import {
   COACH_PROFILE_KEYS, EMPTY_COACH, validateCoach, type CoachProfile,
@@ -342,6 +343,13 @@ export async function applyReview(
   await audit(
     input.decision === "approve" ? "coach_verification.approved" : "coach_verification.rejected",
     { userId: input.reviewerId, ...input.meta, detail: { coachId: input.coachId, via: input.reviewerId ? "api" : "cli" } },
+    db,
+  );
+  await notify(
+    input.coachId,
+    input.decision === "approve"
+      ? { category: "verification", title: "You're verified", message: "Your coach account has been verified. You can now connect with athletes." }
+      : { category: "verification", title: "Verification not approved", message: `Reason: ${note}` },
     db,
   );
 }

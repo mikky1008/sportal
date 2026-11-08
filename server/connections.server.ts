@@ -19,6 +19,7 @@
 import { randomUUID } from "node:crypto";
 import { getDb, type Db } from "./db.server.ts";
 import { audit, type PublicUser, type RequestMeta } from "./auth.server.ts";
+import { notify } from "./notifications.server.ts";
 
 export const COACH_ROLE = "coach";
 export const ATHLETE_ROLE = "student_athlete";
@@ -444,6 +445,8 @@ export async function sendRequest(
     { userId: actor.id, ...meta, detail: { connectionId: row.id, coachId, athleteId, reopened: !created } },
     db,
   );
+  const otherId = actor.id === coachId ? athleteId : coachId;
+  await notify(otherId, { category: "connection", title: "New connection request", message: `${actor.displayName} wants to connect with you.` }, db);
   return { connection: await viewById(db, row.id, actor.id), created };
 }
 
@@ -485,6 +488,16 @@ export async function respondToRequest(
   await audit(
     decision === "accepted" ? "connection.accepted" : "connection.declined",
     { userId: actor.id, ...meta, detail: { connectionId: row.id, coachId: row.coach_id, athleteId: row.athlete_id } },
+    db,
+  );
+  // The person who sent the request is the one waiting for the answer.
+  await notify(
+    row.requested_by,
+    {
+      category: "connection",
+      title: decision === "accepted" ? "Connection accepted" : "Connection declined",
+      message: decision === "accepted" ? `${actor.displayName} accepted your connection request.` : `${actor.displayName} declined your connection request.`,
+    },
     db,
   );
   return viewById(db, row.id, actor.id);

@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Calendar, Check, X, BarChart3, Trophy, Mail, GraduationCap, FileCheck, ShieldCheck } from "lucide-react";
+import { Bell, Calendar, Check, X, BarChart3, Trophy, Mail, GraduationCap, FileCheck, ShieldCheck, Users } from "lucide-react";
 import { toast } from "sonner";
-import type { Notification, Ranking, Scholarship } from "@/types";
+import type { Notification, Ranking } from "@/types";
+import { formatDeadline, type ApplicationStatus, type ScholarshipView } from "@/lib/scholarshipsApi";
 import { Pill, btn } from "./common";
 import { cn } from "@/lib/utils";
 
@@ -25,7 +26,7 @@ export function RankingItem({ r, unit = "%" }: { r: Ranking; unit?: string }) {
   );
 }
 
-function Modal({ open, onClose, title, children }: { open: boolean; onClose: () => void; title: string; children: React.ReactNode }) {
+export function Modal({ open, onClose, title, children }: { open: boolean; onClose: () => void; title: string; children: React.ReactNode }) {
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center" role="dialog" aria-modal="true" aria-label={title}>
@@ -42,30 +43,91 @@ function Modal({ open, onClose, title, children }: { open: boolean; onClose: () 
 }
 
 
-export function ScholarshipCard({ s }: { s: Scholarship }) {
+const APPLICATION_LABEL: Record<ApplicationStatus, { text: string; tone: "success" | "warning" | "gold" | "primary" }> = {
+  submitted: { text: "Applied", tone: "success" },
+  under_review: { text: "Under review", tone: "warning" },
+  accepted: { text: "Accepted", tone: "success" },
+  rejected: { text: "Not selected", tone: "gold" },
+  withdrawn: { text: "Withdrawn", tone: "gold" },
+};
+
+/**
+ * One scholarship. `onApply` / `onWithdraw` talk to the API and resolve to an error message (or
+ * null on success), so the card only has to show the result. `canApply` is false for accounts that
+ * are not student-athletes, so they never see an Apply button that can only fail.
+ */
+export function ScholarshipCard({
+  s, canApply, onApply, onWithdraw, onToggleOpen,
+}: {
+  s: ScholarshipView;
+  canApply: boolean;
+  onApply: (id: string) => Promise<string | null>;
+  onWithdraw: (id: string) => Promise<string | null>;
+  /** Only used when the signed-in user posted this scholarship. */
+  onToggleOpen?: (id: string, open: boolean) => Promise<string | null>;
+}) {
   const [open, setOpen] = useState(false);
-  const [applied, setApplied] = useState(false);
-  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const status = s.myApplication?.status;
+  const active = !!status && status !== "withdrawn";
+  const label = status ? APPLICATION_LABEL[status] : null;
+  const canWithdraw = status === "submitted" || status === "under_review";
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    const err = await onApply(s.id);
+    setBusy(false);
+    if (err) {
+      toast.error(err);
+      return;
+    }
+    setOpen(false);
+    toast.success("Application submitted", { description: "The scholarship committee will review it." });
+  };
+  const withdraw = async () => {
+    setBusy(true);
+    const err = await onWithdraw(s.id);
+    setBusy(false);
+    if (err) toast.error(err);
+    else toast.success("Application withdrawn");
+  };
+
   return (
     <article className="surface flex flex-col p-5">
-      <div className="mb-3 flex items-center justify-between"><Pill tone="gold">{s.coverage}</Pill>{applied && <Pill tone="success">Applied</Pill>}</div>
+      <div className="mb-3 flex items-center justify-between">
+        <Pill tone="gold">{s.coverage || "Scholarship"}</Pill>
+        {!s.isOpen ? <Pill tone="gold">Closed</Pill> : label && active && <Pill tone={label.tone}>{label.text}</Pill>}
+      </div>
       <h3 className="text-xl font-bold leading-tight">{s.name}</h3>
       <p className="mt-1 text-sm text-muted-foreground">{s.university} · {s.sport}</p>
-      <p className="mt-3 text-sm">{s.details}</p>
-      <h4 className="mt-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Eligibility</h4>
-      <ul className="mt-1 flex flex-col gap-1 text-sm">{s.eligibility.map((e) => <li key={e} className="flex gap-2"><Check className="mt-0.5 h-4 w-4 text-success" />{e}</li>)}</ul>
-      <div className="mt-auto flex items-center justify-between pt-4">
-        <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground"><Calendar className="h-4 w-4" />Due {s.deadline}</span>
-        <button disabled={applied} onClick={() => setOpen(true)} className={cn(btn.primary, "px-4 py-2")}>{applied ? "Submitted" : "Apply"}</button>
+      {s.details && <p className="mt-3 text-sm">{s.details}</p>}
+      {s.eligibility.length > 0 && (
+        <>
+          <h4 className="mt-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Eligibility</h4>
+          <ul className="mt-1 flex flex-col gap-1 text-sm">{s.eligibility.map((e) => <li key={e} className="flex gap-2"><Check className="mt-0.5 h-4 w-4 text-success" />{e}</li>)}</ul>
+        </>
+      )}
+      <div className="mt-auto flex items-center justify-between gap-3 pt-4">
+        <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground"><Calendar className="h-4 w-4" />Due {formatDeadline(s.deadline)}</span>
+        {s.postedByMe && onToggleOpen && (
+          <button
+            disabled={busy}
+            onClick={async () => { setBusy(true); const err = await onToggleOpen(s.id, !s.isOpen); setBusy(false); if (err) toast.error(err); }}
+            className={cn(btn.secondary, "px-4 py-2")}
+          >{s.isOpen ? "Close applications" : "Reopen"}</button>
+        )}
+        {canApply && (canWithdraw ? (
+          <button disabled={busy} onClick={withdraw} className={cn(btn.secondary, "px-4 py-2")}>{busy ? "Withdrawing…" : "Withdraw"}</button>
+        ) : (
+          <button disabled={active} onClick={() => setOpen(true)} className={cn(btn.primary, "px-4 py-2")}>{active ? "Submitted" : status === "withdrawn" ? "Apply again" : "Apply"}</button>
+        ))}
       </div>
-      <Modal open={open} onClose={() => setOpen(false)} title={`Apply: ${s.name}`}>
-        <form onSubmit={(e) => { e.preventDefault(); setApplied(true); setOpen(false); toast.success("Application submitted", { description: "The scholarship committee will review it." }); }} className="flex flex-col gap-4">
+      <Modal open={open} onClose={() => !busy && setOpen(false)} title={`Apply: ${s.name}`}>
+        <form onSubmit={submit} className="flex flex-col gap-4">
           <p className="text-sm text-muted-foreground">Your Sportal showcase profile and AI-assessed results will be attached.</p>
-          <label className="flex flex-col gap-1.5 text-sm font-medium">Why are you a good fit?
-            <textarea required value={note} onChange={(e) => setNote(e.target.value)} rows={4} className="rounded-xl border bg-background p-3 font-normal outline-none focus:ring-2 focus:ring-ring" />
-          </label>
           <p className="rounded-xl bg-muted p-3 text-xs text-muted-foreground">Sportal manages the application. The university decides who receives the scholarship.</p>
-          <button type="submit" className={btn.primary}>Submit Application</button>
+          <button type="submit" disabled={busy} className={btn.primary}>{busy ? "Submitting…" : "Submit Application"}</button>
         </form>
       </Modal>
     </article>
@@ -79,6 +141,8 @@ const catMeta: Record<Notification["category"], { icon: typeof Mail; label: stri
   scholarship: { icon: GraduationCap, label: "Scholarship", tone: "bg-gold/20 text-foreground" },
   application: { icon: FileCheck, label: "Application", tone: "bg-accent text-primary" },
   verification: { icon: ShieldCheck, label: "Verification", tone: "bg-warning/20 text-foreground" },
+  connection: { icon: Users, label: "Connection", tone: "bg-accent text-primary" },
+  system: { icon: Bell, label: "Update", tone: "bg-muted text-foreground" },
 };
 export const notificationCategories = catMeta;
 

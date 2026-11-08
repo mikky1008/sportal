@@ -505,6 +505,60 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX idx_practice_sessions_status ON practice_sessions (status) WHERE status = 'pending_review';
     `,
   },
+  {
+    version: 7,
+    name: "scholarships_and_notifications",
+    sql: `
+      -- Scholarships posted by a university representative (or an admin). Replaces the hardcoded list.
+      CREATE TABLE scholarships (
+        id          TEXT PRIMARY KEY,
+        posted_by   TEXT REFERENCES users(id) ON DELETE SET NULL,
+        university  TEXT NOT NULL,
+        name        TEXT NOT NULL,
+        sport       TEXT NOT NULL,
+        coverage    TEXT NOT NULL DEFAULT '',
+        details     TEXT NOT NULL DEFAULT '',
+        eligibility JSONB NOT NULL DEFAULT '[]'::jsonb,
+        deadline    DATE NOT NULL,
+        is_open     BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at  TIMESTAMPTZ NOT NULL,
+        updated_at  TIMESTAMPTZ NOT NULL,
+        CONSTRAINT scholarships_name_check CHECK (length(btrim(name)) BETWEEN 3 AND 120),
+        CONSTRAINT scholarships_university_check CHECK (length(btrim(university)) BETWEEN 2 AND 120),
+        CONSTRAINT scholarships_details_check CHECK (length(details) <= 2000)
+      );
+      CREATE INDEX idx_scholarships_open ON scholarships (is_open, deadline);
+      CREATE INDEX idx_scholarships_sport ON scholarships (lower(sport));
+
+      -- One application per athlete per scholarship. Withdrawing keeps the row so history survives.
+      CREATE TABLE scholarship_applications (
+        id             TEXT PRIMARY KEY,
+        scholarship_id TEXT NOT NULL REFERENCES scholarships(id) ON DELETE CASCADE,
+        athlete_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        status         TEXT NOT NULL DEFAULT 'submitted',
+        created_at     TIMESTAMPTZ NOT NULL,
+        updated_at     TIMESTAMPTZ NOT NULL,
+        CONSTRAINT scholarship_applications_status_check CHECK (status IN ('submitted', 'under_review', 'accepted', 'rejected', 'withdrawn')),
+        CONSTRAINT scholarship_applications_pair_key UNIQUE (scholarship_id, athlete_id)
+      );
+      CREATE INDEX idx_scholarship_applications_athlete ON scholarship_applications (athlete_id, created_at DESC);
+
+      -- In-app notifications. Rows are created by the server when something happens, never by a client.
+      CREATE TABLE notifications (
+        id         TEXT PRIMARY KEY,
+        user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        category   TEXT NOT NULL,
+        title      TEXT NOT NULL,
+        message    TEXT NOT NULL,
+        link       TEXT,
+        created_at TIMESTAMPTZ NOT NULL,
+        read_at    TIMESTAMPTZ,
+        CONSTRAINT notifications_category_check CHECK (category IN ('analysis', 'ranking', 'recruitment', 'scholarship', 'application', 'verification', 'connection', 'system'))
+      );
+      CREATE INDEX idx_notifications_user ON notifications (user_id, created_at DESC);
+      CREATE INDEX idx_notifications_unread ON notifications (user_id) WHERE read_at IS NULL;
+    `,
+  },
 ];
 
 const MIGRATION_LOCK_ID = 727_274_001;

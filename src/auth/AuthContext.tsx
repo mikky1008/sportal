@@ -6,6 +6,7 @@ import { primaryRole } from "@/lib/roles";
 import { profileStore } from "@/lib/profileStore";
 import { profileExtrasStore } from "@/lib/profileExtrasStore";
 import { coachProfileStore } from "@/lib/coachProfileStore";
+import { sessionStore } from "@/lib/sessionStore";
 
 interface AuthValue {
   user: PublicUser | null;
@@ -44,8 +45,15 @@ function scopeStoresTo(user: PublicUser | null) {
   profileStore.refresh();
   profileExtrasStore.refresh();
   coachProfileStore.refresh();
-  // A coach's profile and verification status live on the server.
-  if (user && primaryRole(user.roles) === "coach") void coachProfileStore.load();
+  sessionStore.refresh();
+  // Profiles, showcase and sessions live on the server: load them for whoever just signed in.
+  const role = user ? primaryRole(user.roles) : null;
+  if (role === "coach") void coachProfileStore.load();
+  if (role === "student_athlete") {
+    void profileStore.load();
+    void profileExtrasStore.load();
+    void sessionStore.load();
+  }
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {

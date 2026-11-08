@@ -2,8 +2,8 @@ import { Link } from "@/router-compat";
 import { Page } from "@/components/Page";
 import { useState } from "react";
 import { Plus } from "lucide-react";
-import { skills } from "@/data/mock";
-import { useSessions } from "@/lib/sessionStore";
+import { skills } from "@/lib/skills";
+import { useSessions, useSessionsLoad } from "@/lib/sessionStore";
 import { Card, PageHeader, btn } from "@/components/common";
 import { HistoryList, PerformanceChart, TrustLegend } from "@/components/performance";
 import { cn } from "@/lib/utils";
@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 
 function Performance() {
   const sessions = useSessions();
+  const load = useSessionsLoad();
   const [filter, setFilter] = useState<string>("all");
   const items = filter === "all" ? sessions : sessions.filter((s) => s.skill === filter);
   return (
@@ -26,7 +27,9 @@ function Performance() {
             </button>
           ))}
         </div>
-        {items.length ? <HistoryList items={items} /> : <p className="py-8 text-center text-sm text-muted-foreground">No sessions for this skill yet.</p>}
+        {load === "loading" ? <p role="status" className="py-8 text-center text-sm text-muted-foreground">Loading your sessions…</p>
+          : load === "error" ? <p role="alert" className="py-8 text-center text-sm text-destructive">Couldn't load your sessions. Refresh the page to try again.</p>
+          : items.length ? <HistoryList items={items} /> : <p className="py-8 text-center text-sm text-muted-foreground">No sessions for this skill yet.</p>}
       </Card>
     </div>
   );

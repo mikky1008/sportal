@@ -3,7 +3,7 @@ import { Page } from "@/components/Page";
 import { useRef, useState, type FormEvent, type ReactNode } from "react";
 import { ArrowLeft, ArrowRight, Check, Save } from "lucide-react";
 import { toast } from "sonner";
-import { sports } from "@/data/mock";
+import { sports } from "@/lib/sports";
 import { Select } from "@/components/common";
 import { AnimatedBar } from "@/components/profile-completion";
 import { ShowcaseCard } from "@/components/profile-extras-cards";
@@ -83,6 +83,7 @@ function CompleteProfileBody() {
   const [draft, setDraft] = useState<ProfileDraft | null>(null);
   const [schDraft, setSchDraft] = useState<ScholarshipInterests | null>(null);
   const [tried, setTried] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const d = draft ?? toDraft(athlete);
   const errors = validateProfile(d);
@@ -104,15 +105,17 @@ function CompleteProfileBody() {
   };
 
   /** Saves what is on screen. Returns false (and shows the problems) when something is invalid. */
-  function saveCurrent(): boolean {
+  async function saveCurrent(): Promise<boolean> {
     setTried(true);
+    if (saving) return false;
     const before = athleteCompletionNow().percent;
+    setSaving(true);
     try {
       if (current === "scholarship") {
-        profileExtrasStore.saveScholarship(sch);
+        await profileExtrasStore.saveScholarship(sch);
         setSchDraft(null);
       } else if (current !== "showcase") {
-        profileStore.save(d);
+        await profileStore.save(d);
         setDraft(null);
       } else {
         return true; // photo and video link save from their own buttons
@@ -125,13 +128,16 @@ function CompleteProfileBody() {
         toast.error("Fix the highlighted fields to save.");
         return false;
       }
-      throw err;
+      toast.error(err instanceof Error ? err.message : "Couldn't save. Please try again.");
+      return false;
+    } finally {
+      setSaving(false);
     }
   }
 
-  function onNext(e?: FormEvent) {
+  async function onNext(e?: FormEvent) {
     e?.preventDefault();
-    if (!saveCurrent()) return;
+    if (!(await saveCurrent())) return;
     if (isLast) {
       toast.success("Profile setup finished");
       void navigate({ to: "/dashboard" });

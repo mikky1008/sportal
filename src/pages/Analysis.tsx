@@ -1,11 +1,12 @@
 import { Link, useNavigate, useSearch } from "@/router-compat";
 import { Page } from "@/components/Page";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { Loader2, Sparkles, CheckCircle2, ShieldAlert, TriangleAlert } from "lucide-react";
 import { analyzeSkill, getPendingVideo } from "@/services/aiService";
 import { buildAnalysis } from "@/lib/feedback";
 import { sessionStore, useSessions } from "@/lib/sessionStore";
-import { skills } from "@/data/mock";
+import { skills } from "@/lib/skills";
 import { sessionStatusMeta, statusForNewSession, TRUST_NOTE } from "@/lib/verification";
 import type { AIMeasurement, SkillId } from "@/types";
 import { Card, Pill, StatTile, btn } from "@/components/common";
@@ -25,6 +26,7 @@ function Analysis() {
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [wantsReview, setWantsReview] = useState(false);
+  const [saving, setSaving] = useState(false);
   const name = skills.find((s) => s.id === skill)?.name;
 
   useEffect(() => {
@@ -64,15 +66,25 @@ function Analysis() {
   const result = buildAnalysis(measurement, saved);
   const status = statusForNewSession({ source: "ai", needsReview: result.needsReview, requestedReview: wantsReview });
 
-  const save = () => {
-    sessionStore.add({
-      skill: result.skill,
-      result: result.accuracy,
-      consistency: result.consistency,
-      status,
-      ...(result.isMock ? { simulated: true } : {}),
-    });
-    navigate({ to: "/performance" });
+  const save = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await sessionStore.add({
+        skill: result.skill,
+        result: result.accuracy,
+        consistency: result.consistency,
+        source: "ai",
+        needsReview: result.needsReview,
+        requestedReview: wantsReview,
+        ...(result.isMock ? { simulated: true } : {}),
+      });
+      navigate({ to: "/performance" });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't save the session. Please try again.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -139,7 +151,7 @@ function Analysis() {
       )}
 
       <div className="flex flex-col gap-3 sm:flex-row">
-        <button onClick={save} className={btn.primary}>Save to History</button>
+        <button onClick={save} disabled={saving} className={btn.primary}>{saving ? "Saving…" : "Save to History"}</button>
         <Link to="/rankings" className={btn.secondary}>View Basketball Rankings</Link>
         <Link to="/performance/new" className={btn.secondary}>Practice Again</Link>
       </div>

@@ -40,10 +40,22 @@
 //   PUT    /api/coach/shortlist/:athleteId         -> { ok, athleteId, shortlisted: true }                add to shortlist
 //   DELETE /api/coach/shortlist/:athleteId         -> { ok, athleteId, shortlisted: false }               remove from shortlist
 //
-// The athlete's own profile (student-athlete accounts only):
-//   GET  /api/athletes/me/profile                  -> { ok, profile }
-//   PUT  /api/athletes/me/profile                  { sport, position, school, bio, skills[], achievements[{title,year}] } (full replace) -> { ok, profile }
-//   POST /api/athletes/me/records                  { label, value, recordedOn?, skill?, score? }  -> 201 { ok, id }
+// The athlete's own data (student-athlete accounts only; always the signed-in athlete's own):
+//   GET  /api/athletes/me/profile                  -> { ok, profile }   name, sport, position, school, year, height, weight, team, bio, achievements + system-owned rank/scores
+//   PUT  /api/athletes/me/profile                  the Settings form's fields (text) -> { ok, profile }   partial saves allowed, anything filled in must be valid
+//   POST /api/athletes/me/records                  { label, value, recordedOn? }  -> 201 { ok, id }
+//   GET  /api/athletes/me/extras                   -> { ok, extras }   scholarship interests + showcase photo / video
+//   PUT  /api/athletes/me/extras/scholarship       { universities[], coverage, course } -> { ok, extras }
+//   PUT / DELETE /api/athletes/me/extras/photo     { dataUrl } (a resized image data URL, up to ~400 KB) -> { ok, extras }
+//   PUT / DELETE /api/athletes/me/extras/video     { url } (an https YouTube / Vimeo / Facebook link) -> { ok, extras }
+//   GET  /api/athletes/me/sessions                 ?limit -> { ok, items }   newest first
+//   POST /api/athletes/me/sessions                 { skill, result, consistency?, source: "ai"|"manual", needsReview?, requestedReview?, simulated?, date? } -> 201 { ok, session }
+//                                                  (the server picks the status; a new session is never Coach-Verified)
+//   POST /api/athletes/me/sessions/:id/request-review   -> { ok, session }
+//
+// Session review (verified coaches only; only for athletes they are connected to):
+//   GET  /api/coach/sessions                       -> { ok, items }   sessions waiting for review
+//   POST /api/coach/sessions/:id/verify            -> { ok, session }
 //
 // Coach profile and verification (the profile is stored in the database; nothing is browser-only):
 //   GET  /api/coach/profile                        coach -> { ok, profile, verification }
@@ -88,16 +100,11 @@ import {
   sendRequest,
   type ListKind,
 } from "./connections.server.ts";
+import { getCoachDashboard, listMyAthletes, setShortlisted } from "./coach-athletes.server.ts";
 import {
-  getCoachDashboard,
-  listMyAthletes,
-  setShortlisted,
-} from "./coach-athletes.server.ts";
-import {
-  addMyRecord,
-  getMyProfile,
-  saveMyProfile,
+  addMyRecord, getMyExtras, getMyProfile, removePhoto, removeVideo, saveMyProfile, saveScholarship, setPhoto, setVideo,
 } from "./athlete-profile.server.ts";
+import { createSession, listMySessions, listSessionsForReview, requestSessionReview, verifySession } from "./practice-sessions.server.ts";
 import { createPlan, getAssignedPlan, getPlan, listAssignedPlans, listPlans, PlanError, updatePlan } from "./training-plans.server.ts";
 import {
   getCoachProfile,
@@ -166,11 +173,14 @@ function send(req: Request, status: number, body: unknown): Response {
   return new Response(status === 204 ? null : JSON.stringify(body), { status, headers });
 }
 
-async function readJson(req: Request): Promise<unknown> {
+/** A profile photo is sent as a data URL of up to ~400 KB, so that one route gets a bigger limit. */
+const PHOTO_BODY_BYTES = 450 * 1024;
+
+async function readJson(req: Request, maxBytes: number = MAX_BODY_BYTES): Promise<unknown> {
   const declared = Number(req.headers.get("content-length") ?? 0);
-  if (declared > MAX_BODY_BYTES) throw new Error("too_large");
+  if (declared > maxBytes) throw new Error("too_large");
   const text = await req.text();
-  if (text.length > MAX_BODY_BYTES) throw new Error("too_large");
+  if (text.length > maxBytes) throw new Error("too_large");
   if (!text) return {};
   try {
     return JSON.parse(text);
@@ -386,16 +396,13 @@ async function handleTrainingPlans(req: Request, path: string): Promise<Response
   }
 }
 
-/** Returns null when the path is not a coach-dashboard or athlete-profile route, so the caller can keep matching. */
+/** Returns null when the path is not a coach-dashboard route, so the caller can keep matching. */
 async function handleCoachAndProfile(req: Request, path: string): Promise<Response | null> {
   const m = req.method;
   const isCoachAthletes = m === "GET" && path === "/api/coach/athletes";
   const isDashboard = m === "GET" && path === "/api/coach/dashboard";
   const shortlist = m === "PUT" || m === "DELETE" ? /^\/api\/coach\/shortlist\/([^/]+)$/.exec(path) : null;
-  const isGetProfile = m === "GET" && path === "/api/athletes/me/profile";
-  const isPutProfile = m === "PUT" && path === "/api/athletes/me/profile";
-  const isAddRecord = m === "POST" && path === "/api/athletes/me/records";
-  if (!isCoachAthletes && !isDashboard && !shortlist && !isGetProfile && !isPutProfile && !isAddRecord) return null;
+  if (!isCoachAthletes && !isDashboard && !shortlist) return null;
 
   // Authentication comes first: nothing below runs, and no body is read, for an anonymous caller.
   const user = await getUserBySessionToken(bearer(req));
@@ -405,9 +412,7 @@ async function handleCoachAndProfile(req: Request, path: string): Promise<Respon
     if (isCoachAthletes) return send(req, 200, { ok: true, ...(await listMyAthletes(user, pagingFrom(req))) });
     if (isDashboard) return send(req, 200, { ok: true, ...(await getCoachDashboard(user)) });
     if (shortlist) return send(req, 200, { ok: true, ...(await setShortlisted(user, shortlist[1] ?? "", m === "PUT")) });
-    if (isGetProfile) return send(req, 200, { ok: true, profile: await getMyProfile(user) });
-    if (isPutProfile) return send(req, 200, { ok: true, profile: await saveMyProfile(user, await readJson(req)) });
-    return send(req, 201, { ok: true, ...(await addMyRecord(user, await readJson(req))) });
+    return null;
   } catch (err) {
     if (err instanceof ConnectionError)
       return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message, ...err.extra });
@@ -466,6 +471,61 @@ async function handleAssignedPlans(req: Request, path: string): Promise<Response
   }
 }
 
+/** The athlete's own profile, showcase, records and practice sessions; plus a coach's session review. Returns null for any other path. */
+async function handleAthleteSelfService(req: Request, path: string): Promise<Response | null> {
+  const m = req.method;
+  const extras = /^\/api\/athletes\/me\/extras(?:\/(scholarship|photo|video))?$/.exec(path);
+  const sessions = /^\/api\/athletes\/me\/sessions(?:\/([^/]+)\/request-review)?$/.exec(path);
+  const verify = m === "POST" ? /^\/api\/coach\/sessions\/([^/]+)\/verify$/.exec(path) : null;
+  const routes = {
+    getProfile: m === "GET" && path === "/api/athletes/me/profile",
+    putProfile: m === "PUT" && path === "/api/athletes/me/profile",
+    addRecord: m === "POST" && path === "/api/athletes/me/records",
+    getExtras: m === "GET" && !!extras && !extras[1],
+    putScholarship: m === "PUT" && extras?.[1] === "scholarship",
+    putPhoto: m === "PUT" && extras?.[1] === "photo",
+    delPhoto: m === "DELETE" && extras?.[1] === "photo",
+    putVideo: m === "PUT" && extras?.[1] === "video",
+    delVideo: m === "DELETE" && extras?.[1] === "video",
+    listSessions: m === "GET" && !!sessions && !sessions[1],
+    addSession: m === "POST" && !!sessions && !sessions[1],
+    requestReview: m === "POST" && !!sessions?.[1],
+    pendingSessions: m === "GET" && path === "/api/coach/sessions",
+    verify: !!verify,
+  };
+  if (!Object.values(routes).some(Boolean)) return null;
+
+  const user = await getUserBySessionToken(bearer(req));
+  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
+  const meta = requestMeta(req);
+
+  try {
+    if (routes.getProfile) return send(req, 200, { ok: true, profile: await getMyProfile(user) });
+    if (routes.putProfile) return send(req, 200, { ok: true, profile: await saveMyProfile(user, await readJson(req)) });
+    if (routes.addRecord) return send(req, 201, { ok: true, ...(await addMyRecord(user, await readJson(req))) });
+
+    if (routes.getExtras) return send(req, 200, { ok: true, extras: await getMyExtras(user) });
+    if (routes.putScholarship) return send(req, 200, { ok: true, extras: await saveScholarship(user, await readJson(req)) });
+    if (routes.putPhoto) return send(req, 200, { ok: true, extras: await setPhoto(user, await readJson(req, PHOTO_BODY_BYTES)) });
+    if (routes.delPhoto) return send(req, 200, { ok: true, extras: await removePhoto(user) });
+    if (routes.putVideo) return send(req, 200, { ok: true, extras: await setVideo(user, await readJson(req)) });
+    if (routes.delVideo) return send(req, 200, { ok: true, extras: await removeVideo(user) });
+
+    if (routes.listSessions) {
+      const limit = Number(new URL(req.url).searchParams.get("limit") ?? "");
+      return send(req, 200, { ok: true, ...(await listMySessions(user, Number.isFinite(limit) && limit > 0 ? { limit } : {})) });
+    }
+    if (routes.addSession) return send(req, 201, { ok: true, session: await createSession(user, await readJson(req)) });
+    if (routes.requestReview) return send(req, 200, { ok: true, session: await requestSessionReview(user, sessions?.[1] ?? "") });
+    if (routes.pendingSessions) return send(req, 200, { ok: true, ...(await listSessionsForReview(user)) });
+    return send(req, 200, { ok: true, session: await verifySession(user, verify?.[1] ?? "", meta) });
+  } catch (err) {
+    if (err instanceof ConnectionError)
+      return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message, ...err.extra });
+    throw err;
+  }
+}
+
 export async function handle(req: Request): Promise<Response> {
   try {
     const path = new URL(req.url).pathname.replace(/\/+$/, "") || "/";
@@ -494,6 +554,8 @@ export async function handle(req: Request): Promise<Response> {
     if (coachReview) return coachReview;
     const assigned = await handleAssignedPlans(req, path);
     if (assigned) return assigned;
+    const selfService = await handleAthleteSelfService(req, path);
+    if (selfService) return selfService;
     return send(req, 404, { error: "not_found" });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";

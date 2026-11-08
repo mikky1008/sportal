@@ -1,103 +1,97 @@
-// Session history with persistence.
+// The signed-in athlete's practice sessions, loaded from and saved to the API
+// (GET / POST /api/athletes/me/sessions). Nothing is kept in the browser any more.
 //
-// PROTOTYPE LIMIT: this lives in the browser's localStorage, so anyone can edit it in devtools.
-// The rule "only a coach can mark a session Coach-Verified" is enforced here in code, but it can
-// only be *trusted* once the same check runs on the server. Swap this module's storage for an API
-// and keep the same function names.
+// The SERVER decides every new session's status (see server/practice-sessions.server.ts): a session
+// can be created AI-Assessed, Self-Reported or Pending Review, never Coach-Verified. Only a verified,
+// connected coach can verify a session, and that happens through the coach endpoints, not here.
 
 import { useSyncExternalStore } from "react";
-import { sessions as seedSessions } from "@/data/mock";
-import { sessionStatusMeta } from "@/lib/verification";
-import type { PerformanceSession, SessionStatus, UserRole } from "@/types";
+import { apiRequest, type ApiResult } from "@/auth/authClient";
+import type { PerformanceSession, SessionStatus, SkillId } from "@/types";
 
-const KEY = "sportal.sessions.v1";
+export type SessionsLoadState = "idle" | "loading" | "ready" | "error";
 
-type StorageLike = Pick<Storage, "getItem" | "setItem">;
-
-export interface Actor {
-  role: UserRole;
-  name: string;
+/** What the server sends for one session. */
+export interface SessionView {
+  id: string;
+  date: string; // YYYY-MM-DD
+  skill: string;
+  result: number;
+  consistency: number | null;
+  status: SessionStatus;
+  verifiedBy?: string;
+  simulated?: true;
 }
 
-export type NewSession = Omit<PerformanceSession, "id" | "date" | "verifiedBy"> & { date?: string };
-
-function isSession(x: unknown): x is PerformanceSession {
-  if (!x || typeof x !== "object") return false;
-  const s = x as Record<string, unknown>;
-  return (
-    typeof s["id"] === "string" &&
-    typeof s["date"] === "string" &&
-    typeof s["skill"] === "string" &&
-    typeof s["result"] === "number" &&
-    (typeof s["consistency"] === "number" || s["consistency"] === null) &&
-    typeof s["status"] === "string" &&
-    s["status"] in sessionStatusMeta
-  );
+/** What a page hands over to log a session. The server works out the status from these. */
+export interface NewSession {
+  skill: SkillId;
+  result: number;
+  /** null for a hand-entered result: nothing was measured */
+  consistency: number | null;
+  /** "ai": the result came from an analysis. "manual": the athlete typed it in. */
+  source: "ai" | "manual";
+  /** the analysis flagged the result for a coach to look at */
+  needsReview?: boolean;
+  /** the athlete asked for a coach to review it */
+  requestedReview?: boolean;
+  /** true when the numbers came from the simulated prototype AI */
+  simulated?: boolean;
 }
 
-/** A "Coach-Verified" record that names no coach can't be trusted, so it is treated as pending. */
-function sanitize(s: PerformanceSession): PerformanceSession {
-  if (s.status === "Coach-Verified" && !s.verifiedBy) return { ...s, status: "Pending Review" };
-  return s;
+export interface SessionsApi {
+  list(): Promise<ApiResult<{ items: SessionView[] }>>;
+  create(input: NewSession): Promise<ApiResult<{ session: SessionView }>>;
+  requestReview(id: string): Promise<ApiResult<{ session: SessionView }>>;
 }
+
+const httpApi: SessionsApi = {
+  list: () => apiRequest<{ items: SessionView[] }>("/api/athletes/me/sessions"),
+  create: (input) => apiRequest<{ session: SessionView }>("/api/athletes/me/sessions", { method: "POST", body: input }),
+  requestReview: (id) => apiRequest<{ session: SessionView }>(`/api/athletes/me/sessions/${encodeURIComponent(id)}/request-review`, { method: "POST" }),
+};
 
 const SHORT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** "2026-10-29" -> "Oct 29". Plain string maths, so no time zone can shift the day. */
+/** "2026-10-29" → "Oct 29" (no time zone maths: the date is a plain calendar day). */
 export function shortDate(iso: string): string {
   const [, m, d] = iso.split("-");
-  return `${SHORT_MONTHS[Number(m) - 1] ?? m} ${d}`;
+  const month = SHORT_MONTHS[Number(m) - 1];
+  return month && d ? `${month} ${d}` : iso;
 }
 
-function isoDay(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+export function sessionFromView(v: SessionView): PerformanceSession {
+  return {
+    id: v.id,
+    date: shortDate(v.date),
+    isoDate: v.date,
+    skill: v.skill as SkillId,
+    result: v.result,
+    consistency: v.consistency,
+    status: v.status,
+    ...(v.verifiedBy ? { verifiedBy: v.verifiedBy } : {}),
+    ...(v.simulated ? { simulated: true } : {}),
+  };
 }
 
-export function createSessionStore(
-  storage: StorageLike | null,
-  seed: PerformanceSession[],
-  now: () => Date = () => new Date(),
-) {
-  let cache: PerformanceSession[] | null = null;
+interface State { items: PerformanceSession[]; load: SessionsLoadState; loadError: string | null }
+
+export function createSessionStore(api: SessionsApi = httpApi) {
   const listeners = new Set<() => void>();
-
-  function load(): PerformanceSession[] {
-    if (!storage) return seed;
-    try {
-      const raw = storage.getItem(KEY);
-      if (!raw) return seed;
-      const parsed: unknown = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return seed;
-      return parsed.filter(isSession).map(sanitize);
-    } catch {
-      return seed;
-    }
-  }
-
-  function commit(next: PerformanceSession[]) {
-    cache = next;
-    try {
-      storage?.setItem(KEY, JSON.stringify(next));
-    } catch {
-      // storage full or blocked: keep working in memory
-    }
+  let generation = 0;
+  const NONE: PerformanceSession[] = [];
+  const fresh = (): State => ({ items: NONE, load: "idle", loadError: null });
+  let state: State = fresh();
+  const set = (next: State) => {
+    state = next;
     listeners.forEach((l) => l());
-  }
-
-  function getSnapshot() {
-    if (cache === null) cache = load();
-    return cache;
-  }
-
-  function update(id: string, fn: (s: PerformanceSession) => PerformanceSession) {
-    const list = getSnapshot();
-    if (!list.some((s) => s.id === id)) throw new Error(`Unknown session: ${id}`);
-    commit(list.map((s) => (s.id === id ? fn(s) : s)));
-  }
+  };
 
   return {
-    getSnapshot,
-    getServerSnapshot: () => seed,
+    getSnapshot: () => state.items,
+    getServerSnapshot: () => NONE,
+    getLoadSnapshot: () => state.load,
+    getServerLoadSnapshot: (): SessionsLoadState => "idle",
     subscribe(l: () => void) {
       listeners.add(l);
       return () => {
@@ -105,65 +99,50 @@ export function createSessionStore(
       };
     },
 
-    /** New sessions can never arrive already Coach-Verified. */
-    add(input: NewSession): PerformanceSession {
-      if (input.status === "Coach-Verified")
-        throw new Error("A new session cannot start as Coach-Verified.");
-      const { date, isoDate, ...rest } = input;
-      const day = isoDate ?? isoDay(now());
-      const session: PerformanceSession = {
-        ...rest,
-        id: `s-${now().getTime()}-${getSnapshot().length}`,
-        isoDate: day,
-        date: date ?? shortDate(day),
-      };
-      commit([session, ...getSnapshot()]);
+    /** Forget everything (sign in, sign out, new account). */
+    refresh() {
+      generation++;
+      set(fresh());
+    },
+
+    /** Loads the signed-in athlete's sessions. Call it only for student-athlete accounts. */
+    async load(): Promise<void> {
+      const mine = ++generation;
+      set({ ...state, load: "loading", loadError: null });
+      const res = await api.list();
+      if (mine !== generation) return;
+      if (res.ok) set({ items: res.data.items.map(sessionFromView), load: "ready", loadError: null });
+      else set({ ...state, load: "error", loadError: res.message });
+    },
+
+    /** Saves a new session. Throws an Error with the server's message when it can't be saved. */
+    async add(input: NewSession): Promise<PerformanceSession> {
+      const mine = generation;
+      const res = await api.create(input);
+      if (!res.ok) throw new Error(res.fieldErrors ? Object.values(res.fieldErrors)[0] ?? res.message : res.message);
+      const session = sessionFromView(res.data.session);
+      if (mine === generation) set({ ...state, items: [session, ...state.items.filter((s) => s.id !== session.id)] });
       return session;
     },
 
     /** Athlete asks a coach to look at an AI-assessed or self-reported result. */
-    requestReview(id: string) {
-      update(id, (s) =>
-        s.status === "AI-Assessed" || s.status === "Self-Reported"
-          ? { ...s, status: "Pending Review" }
-          : s,
-      );
-    },
-
-    /** Only a coach can verify. Throws for anyone else. */
-    verify(id: string, actor: Actor) {
-      if (actor.role !== "coach") throw new Error("Only a coach can verify a session.");
-      if (!actor.name.trim()) throw new Error("A verifying coach must be named.");
-      update(id, (s) => ({
-        ...s,
-        status: "Coach-Verified" satisfies SessionStatus,
-        verifiedBy: actor.name,
-      }));
-    },
-
-    reset() {
-      commit(seed);
+    async requestReview(id: string): Promise<PerformanceSession> {
+      const mine = generation;
+      const res = await api.requestReview(id);
+      if (!res.ok) throw new Error(res.message);
+      const session = sessionFromView(res.data.session);
+      if (mine === generation) set({ ...state, items: state.items.map((s) => (s.id === session.id ? session : s)) });
+      return session;
     },
   };
 }
 
-export const sessionStore = createSessionStore(
-  typeof window === "undefined" ? null : safeLocalStorage(),
-  seedSessions,
-);
-
-function safeLocalStorage(): StorageLike | null {
-  try {
-    return window.localStorage;
-  } catch {
-    return null;
-  }
-}
+export const sessionStore = createSessionStore();
 
 export function useSessions(): PerformanceSession[] {
-  return useSyncExternalStore(
-    sessionStore.subscribe,
-    sessionStore.getSnapshot,
-    sessionStore.getServerSnapshot,
-  );
+  return useSyncExternalStore(sessionStore.subscribe, sessionStore.getSnapshot, sessionStore.getServerSnapshot);
+}
+
+export function useSessionsLoad(): SessionsLoadState {
+  return useSyncExternalStore(sessionStore.subscribe, sessionStore.getLoadSnapshot, sessionStore.getServerLoadSnapshot);
 }

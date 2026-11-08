@@ -52,8 +52,9 @@ export type SessionStatus = "AI-Assessed" | "Coach-Verified" | "Pending Review" 
 
 export interface PerformanceSession {
   id: string;
+  /** shown as written, e.g. "Oct 29" */
   date: string;
-  /** calendar day as YYYY-MM-DD, used to sort and bucket sessions; `date` is only the label shown */
+  /** YYYY-MM-DD, set on sessions that come from the server; used for the trend charts */
   isoDate?: string;
   skill: SkillId;
   result: number;

@@ -3,10 +3,9 @@ import { Page } from "@/components/Page";
 import { useRef, useState } from "react";
 import { Camera, Upload, ArrowLeft, Info, Video, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
-import { skills } from "@/data/mock";
+import { skills } from "@/lib/skills";
 import { getAssessmentName, setPendingVideo } from "@/services/aiService";
 import { sessionStore } from "@/lib/sessionStore";
-import { statusForNewSession } from "@/lib/verification";
 import type { SkillId } from "@/types";
 import { Card, Pill, btn } from "@/components/common";
 import { cn } from "@/lib/utils";
@@ -39,11 +38,19 @@ function NewPractice() {
   const manualMax = sel?.id === "vertical" ? 300 : 100;
   const manualValue = Number(manual);
   const manualOk = manual.trim() !== "" && Number.isFinite(manualValue) && manualValue >= 0 && manualValue <= manualMax;
-  const saveManual = () => {
-    if (!sel || !manualOk) return;
-    sessionStore.add({ skill: sel.id, result: manualValue, consistency: null, status: statusForNewSession({ source: "manual" }) });
-    toast.success("Saved as Self-Reported. A coach can verify it later.");
-    navigate({ to: "/performance" });
+  const [saving, setSaving] = useState(false);
+  const saveManual = async () => {
+    if (!sel || !manualOk || saving) return;
+    setSaving(true);
+    try {
+      await sessionStore.add({ skill: sel.id, result: manualValue, consistency: null, source: "manual" });
+      toast.success("Saved as Self-Reported. A coach can verify it later.");
+      navigate({ to: "/performance" });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't save the session. Please try again.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -143,7 +150,7 @@ function NewPractice() {
                 <input type="number" inputMode="decimal" min={0} max={manualMax} value={manual} onChange={(e) => setManual(e.target.value)}
                   className="h-11 rounded-xl border bg-card px-3 text-sm font-normal normal-case tracking-normal text-foreground outline-none focus:ring-2 focus:ring-ring" />
               </label>
-              <button disabled={!manualOk} onClick={saveManual} className={btn.secondary}>Save as Self-Reported</button>
+              <button disabled={!manualOk || saving} onClick={saveManual} className={btn.secondary}>Save as Self-Reported</button>
             </div>
             <p className="mt-3 text-xs text-muted-foreground">Self-reported results are labelled as such and are not verified.</p>
           </Card>

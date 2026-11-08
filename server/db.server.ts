@@ -440,6 +440,71 @@ export const MIGRATIONS: Migration[] = [
         SELECT r.id, p.id FROM roles r JOIN permissions p ON p.name = 'coaches:review' WHERE r.name = 'admin';
     `,
   },
+  {
+    version: 6,
+    name: "athlete_profile_extras_and_sessions",
+    sql: `
+      -- The rest of what the Settings / Complete Profile forms hold. sport, playing_position, school and
+      -- bio already exist; names live in user_profiles; achievements in athlete_achievements.
+      -- municipality / province are set by the platform (Rankings location filters), not by the athlete.
+      ALTER TABLE athlete_profiles
+        ADD COLUMN year_level   TEXT NOT NULL DEFAULT '',
+        ADD COLUMN height_cm    NUMERIC(5,1),
+        ADD COLUMN weight_kg    NUMERIC(5,1),
+        ADD COLUMN team_status  TEXT NOT NULL DEFAULT '',
+        ADD COLUMN team_name    TEXT NOT NULL DEFAULT '',
+        ADD COLUMN municipality TEXT NOT NULL DEFAULT '',
+        ADD COLUMN province     TEXT NOT NULL DEFAULT '',
+        ADD CONSTRAINT athlete_profiles_height_check CHECK (height_cm IS NULL OR height_cm BETWEEN 120 AND 230),
+        ADD CONSTRAINT athlete_profiles_weight_check CHECK (weight_kg IS NULL OR weight_kg BETWEEN 30 AND 200),
+        ADD CONSTRAINT athlete_profiles_team_status_check
+          CHECK (team_status IN ('', 'Varsity', 'Junior Varsity', 'Reserve', 'Club / Community', 'Not on a team'));
+
+      -- Scholarship interests and the profile showcase (photo + highlight video link).
+      -- Photos are small resized images stored inline (the form caps them at ~400 KB); there is no
+      -- moderation service yet, so 'approved' means "passed the format and size checks".
+      CREATE TABLE athlete_extras (
+        user_id      TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        universities TEXT[] NOT NULL DEFAULT '{}',
+        coverage     TEXT NOT NULL DEFAULT '',
+        course       TEXT NOT NULL DEFAULT '',
+        photo_data   TEXT,
+        photo_status TEXT,
+        video_url    TEXT,
+        video_status TEXT,
+        updated_at   TIMESTAMPTZ NOT NULL,
+        CONSTRAINT athlete_extras_coverage_check CHECK (coverage IN ('', 'Full tuition', 'Partial tuition', 'Stipend / allowance', 'Open to any')),
+        CONSTRAINT athlete_extras_course_check CHECK (length(course) <= 80),
+        CONSTRAINT athlete_extras_photo_check CHECK ((photo_data IS NULL) = (photo_status IS NULL) AND (photo_data IS NULL OR length(photo_data) <= 400000)),
+        CONSTRAINT athlete_extras_video_check CHECK ((video_url IS NULL) = (video_status IS NULL) AND (video_url IS NULL OR length(video_url) <= 300)),
+        CONSTRAINT athlete_extras_photo_status_check CHECK (photo_status IS NULL OR photo_status IN ('approved', 'pending', 'rejected')),
+        CONSTRAINT athlete_extras_video_status_check CHECK (video_status IS NULL OR video_status IN ('approved', 'pending', 'rejected'))
+      );
+
+      -- Practice sessions. The server decides the status: a new session can be ai_assessed,
+      -- self_reported or pending_review, never coach_verified. Only a verified coach who is connected
+      -- to the athlete can move a session to coach_verified, and the row then names that coach.
+      CREATE TABLE practice_sessions (
+        id            TEXT PRIMARY KEY,
+        athlete_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        skill         TEXT NOT NULL,
+        result        NUMERIC(6,2) NOT NULL,
+        consistency   NUMERIC(5,2),
+        status        TEXT NOT NULL,
+        simulated     BOOLEAN NOT NULL DEFAULT FALSE,
+        session_date  DATE NOT NULL,
+        verified_by   TEXT REFERENCES users(id) ON DELETE SET NULL,
+        verified_at   TIMESTAMPTZ,
+        created_at    TIMESTAMPTZ NOT NULL,
+        CONSTRAINT practice_sessions_status_check CHECK (status IN ('ai_assessed', 'pending_review', 'self_reported', 'coach_verified')),
+        CONSTRAINT practice_sessions_result_check CHECK (result >= 0 AND result <= 300),
+        CONSTRAINT practice_sessions_consistency_check CHECK (consistency IS NULL OR consistency BETWEEN 0 AND 100),
+        CONSTRAINT practice_sessions_verified_check CHECK ((status = 'coach_verified') = (verified_at IS NOT NULL))
+      );
+      CREATE INDEX idx_practice_sessions_athlete ON practice_sessions (athlete_id, session_date DESC, created_at DESC);
+      CREATE INDEX idx_practice_sessions_status ON practice_sessions (status) WHERE status = 'pending_review';
+    `,
+  },
 ];
 
 const MIGRATION_LOCK_ID = 727_274_001;

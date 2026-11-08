@@ -2,9 +2,10 @@ import { Link } from "@/router-compat";
 import { Page } from "@/components/Page";
 import { Award, Ruler, School, Share2, Sparkles } from "lucide-react";
 import { toast } from "sonner";
-import { skills } from "@/data/mock";
+import { skills } from "@/lib/skills";
+import { summarizeSkills } from "@/lib/performanceStats";
 import { useAthleteProfile } from "@/lib/profileStore";
-import { useHeadlineRanks } from "@/lib/useRankings";
+import { useMyHeadlineRank } from "@/lib/useRankings";
 import { useSessions } from "@/lib/sessionStore";
 import { summarizeTrust } from "@/lib/verification";
 import { Card, Pill, ProgressBar, StatTile, btn } from "@/components/common";
@@ -15,8 +16,9 @@ import court from "@/assets/court.jpg";
 
 function Profile() {
   const a = useAthleteProfile();
-  const myRank = useHeadlineRanks().get(a.id);
+  const myRank = useMyHeadlineRank();
   const sessions = useSessions();
+  const skillStats = summarizeSkills(sessions);
   const trust = summarizeTrust(sessions);
   return (
     <div className="flex flex-col gap-6">
@@ -41,8 +43,8 @@ function Profile() {
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile label="Basketball Rank" value={myRank ? `#${myRank}` : "Unranked"} />
-        <StatTile label="Performance" value={String(a.performanceScore)} />
-        <StatTile label="Consistency" value={`${a.consistency}%`} />
+        <StatTile label="Performance" value={a.performanceScore ? String(a.performanceScore) : "—"} />
+        <StatTile label="Consistency" value={a.consistency ? `${a.consistency}%` : "—"} />
         <StatTile label="Coach-Verified" value={`${trust.verified}/${trust.total}`} hint={<span className="text-muted-foreground">sessions</span>} />
       </div>
 
@@ -67,8 +69,8 @@ function Profile() {
             <ul className="grid gap-4 sm:grid-cols-2">
               {skills.map((s) => (
                 <li key={s.id}>
-                  <div className="mb-1 flex justify-between text-sm"><span className="font-semibold">{s.emoji} {s.name}</span><span className="font-display font-bold">{s.primaryValue}</span></div>
-                  <ProgressBar value={s.consistency} />
+                  <div className="mb-1 flex justify-between text-sm"><span className="font-semibold">{s.emoji} {s.name}</span><span className="font-display font-bold">{skillStats[s.id]?.primaryValue ?? "—"}</span></div>
+                  <ProgressBar value={skillStats[s.id]?.consistency ?? 0} />
                 </li>
               ))}
             </ul>

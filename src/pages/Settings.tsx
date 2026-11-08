@@ -2,7 +2,7 @@ import { useSearch } from "@/router-compat";
 import { Page } from "@/components/Page";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { sports } from "@/data/mock";
+import { sports } from "@/lib/sports";
 import { Card, PageHeader, Select, btn } from "@/components/common";
 import { Switch } from "@/components/ui/switch";
 import { ScholarshipInterestsCard, ShowcaseCard } from "@/components/profile-extras-cards";
@@ -41,24 +41,29 @@ function Settings() {
   // `draft` is null until the athlete edits something, so the form always shows the saved profile.
   const [draft, setDraft] = useState<ProfileDraft | null>(null);
   const [tried, setTried] = useState(false);
+  const [saving, setSaving] = useState(false);
   const d = draft ?? toDraft(a);
   const errors = validateProfile(d);
   const shown = tried ? errors : {};
   const edit = (patch: Partial<ProfileDraft>) => setDraft({ ...d, ...patch });
   const setAch = (i: number, patch: Partial<{ title: string; year: string }>) =>
     edit({ achievements: d.achievements.map((x, j) => (j === i ? { ...x, ...patch } : x)) });
-  const save = (e: React.FormEvent) => {
+  const save = async (e: React.FormEvent) => {
     e.preventDefault();
     setTried(true);
+    if (saving) return;
     const before = athleteCompletionNow().percent;
+    setSaving(true);
     try {
-      profileStore.save(d);
+      await profileStore.save(d);
       setDraft(null);
       setTried(false);
       toastSaved("Profile saved", before);
     } catch (err) {
       if (err instanceof ProfileValidationError) toast.error("Fix the highlighted fields to save.");
-      else throw err;
+      else toast.error(err instanceof Error ? err.message : "Couldn't save your profile. Please try again.");
+    } finally {
+      setSaving(false);
     }
   };
   const discard = () => { setDraft(null); setTried(false); };
@@ -147,7 +152,7 @@ function Settings() {
           </fieldset>
 
           <div className="flex flex-wrap items-center gap-3 sm:col-span-2">
-            <button type="submit" className={btn.primary}>Save changes</button>
+            <button type="submit" className={btn.primary} disabled={saving}>{saving ? "Saving…" : "Save changes"}</button>
             <button type="button" className={btn.secondary} onClick={discard} disabled={draft === null}>Discard changes</button>
             {tried && hasErrors(errors) && <span role="alert" className="text-sm text-destructive">Some fields need attention.</span>}
           </div>

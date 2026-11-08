@@ -137,9 +137,9 @@ export async function listMyAthletes(
     for (const item of list) (m.get(item.athlete_id) ?? m.set(item.athlete_id, []).get(item.athlete_id)!).push(item);
     return m;
   };
-  const skillsBy = group<{ athlete_id: string; name: string }>(skills);
-  const achievementsBy = group<{ athlete_id: string; title: string; year: string }>(achievements);
-  const recordsBy = group<{ athlete_id: string; label: string; value: string; recorded_on: string }>(records);
+  const skillsBy = group(skills);
+  const achievementsBy = group(achievements);
+  const recordsBy = group(records);
 
   const items: AthleteDetail[] = rows.map((r) => {
     const fallback = splitName(r.display_name);

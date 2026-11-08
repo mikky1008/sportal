@@ -46,7 +46,7 @@ export type SessionSource = "ai" | "manual";
 
 /**
  * Decides the status a brand-new session starts with. Nothing here ever returns
- * "Coach-Verified": only an authorized coach can set that (see sessionStore.verify).
+ * "Coach-Verified": only an authorized coach can set that (see verifySession in server/practice-sessions.server.ts).
  */
 export function statusForNewSession(opts: {
   source: SessionSource;

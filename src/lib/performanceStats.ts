@@ -2,6 +2,7 @@
 // Pure functions: nothing here stores or fetches anything.
 
 import type { PerformanceSession, SkillId } from "@/types";
+import { formatResult, isPercentSkill } from "@/lib/skills";
 
 export type TrendRange = "last5" | "last10" | "month" | "season";
 export interface TrendPoint { label: string; score: number; consistency: number | null }
@@ -9,10 +10,10 @@ export interface TrendPoint { label: string; score: number; consistency: number 
 const DAY_MS = 86_400_000;
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** Sessions with a calendar date, oldest first. Vertical jump is in centimetres, so it can't share a % chart. */
+/** Sessions with a calendar date, oldest first. Heights (cm) and times (s) can't share a % chart. */
 function chartable(sessions: PerformanceSession[]): (PerformanceSession & { isoDate: string })[] {
   return sessions
-    .filter((s): s is PerformanceSession & { isoDate: string } => !!s.isoDate && s.skill !== "vertical")
+    .filter((s): s is PerformanceSession & { isoDate: string } => !!s.isoDate && isPercentSkill(s.skill))
     .sort((a, b) => (a.isoDate < b.isoDate ? -1 : a.isoDate > b.isoDate ? 1 : 0));
 }
 
@@ -59,7 +60,7 @@ export function buildTrend(sessions: PerformanceSession[], range: TrendRange, to
 }
 
 export interface SkillSummary {
-  /** the latest result, e.g. "82%" or "72 cm" */
+  /** the latest result, e.g. "82%", "72 cm" or "10.6 s" */
   primaryValue: string;
   /** average consistency of the latest sessions that measured it, or null when none did */
   consistency: number | null;
@@ -82,7 +83,7 @@ export function summarizeSkills(sessions: PerformanceSession[]): Partial<Record<
     const oldest = recent[recent.length - 1] ?? latest;
     const cons = recent.map((s) => s.consistency).filter((c): c is number => c !== null);
     out[skill] = {
-      primaryValue: skill === "vertical" ? `${latest.result} cm` : `${latest.result}%`,
+      primaryValue: formatResult(skill, latest.result),
       consistency: cons.length ? avg(cons) : null,
       improvement: Math.round(latest.result - oldest.result),
       sessions: all.length,

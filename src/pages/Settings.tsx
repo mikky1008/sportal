@@ -8,7 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import { ScholarshipInterestsCard, ShowcaseCard } from "@/components/profile-extras-cards";
 import { athleteCompletionNow, toastSaved } from "@/components/profile-completion-cards";
 import { ATHLETE_SECTION_IDS, type AthleteSectionId } from "@/lib/profileCompletion";
-import { MUNICIPALITIES } from "@/lib/athleteProfileRules";
+import { CATEGORIES, MUNICIPALITIES } from "@/lib/athleteProfileRules";
 import { getShowcaseVisibility, setShowcaseVisibility } from "@/lib/rankingsApi";
 import {
   LIMITS, ProfileValidationError, TEAM_STATUSES, hasErrors, profileStore, toDraft, useAthleteProfile, validateProfile,
@@ -118,6 +118,14 @@ function Settings() {
             </Select>
             <span id="e-muni" className="text-xs font-normal text-muted-foreground">Where your school is. It puts you in the Municipality filter on Rankings.</span>
             <FieldError id="e-muni-err" msg={shown.municipality} />
+          </label>
+          <label className="flex flex-col gap-1.5 text-sm font-medium sm:col-span-2">Ranking category
+            <Select value={d.category} onChange={(e) => edit({ category: e.target.value })} aria-describedby="e-cat">
+              <option value="">Not set</option>
+              {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+            </Select>
+            <span id="e-cat" className="text-xs font-normal text-muted-foreground">Used by the Category filter on Rankings.</span>
+            <FieldError id="e-cat-err" msg={shown.category} />
           </label>
           <label className="flex flex-col gap-1.5 text-sm font-medium sm:col-span-2">Year level
             <input className={field} value={d.year} onChange={(e) => edit({ year: e.target.value })} aria-invalid={!!shown.year} placeholder="e.g. Grade 12 · STEM" />

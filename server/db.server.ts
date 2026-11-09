@@ -592,6 +592,17 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX idx_recruitment_inquiries_athlete ON recruitment_inquiries (athlete_id, updated_at DESC);
     `,
   },
+  {
+    version: 10,
+    name: "athlete_ranking_category",
+    sql: `
+      -- The ranking category an athlete competes in (the Rankings page filters on it). Chosen by the
+      -- athlete; empty means not chosen.
+      ALTER TABLE athlete_profiles
+        ADD COLUMN category TEXT NOT NULL DEFAULT '',
+        ADD CONSTRAINT athlete_profiles_category_check CHECK (category IN ('', 'Men''s Collegiate', 'Women''s Collegiate', 'Juniors'));
+    `,
+  },
 ];
 
 const MIGRATION_LOCK_ID = 727_274_001;

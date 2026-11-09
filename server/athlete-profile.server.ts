@@ -6,8 +6,11 @@
 //
 //  - The rules are the SAME functions the forms use (src/lib/athleteProfileRules.ts and
 //    athleteExtrasRules.ts), so the browser and the server always agree on what is valid.
-//  - rank, performanceScore, consistency, municipality and province are system-owned: they are
-//    returned but never accepted from a request.
+//  - rank, performanceScore and consistency are system-owned: they are returned but never accepted
+//    from a request.
+//  - The athlete picks their own municipality (from the Surigao del Norte list, see MUNICIPALITIES in
+//    athleteProfileRules.ts); the server fills in the province. It drives the Rankings location filter.
+//  - The athlete also picks a ranking category (CATEGORIES in athleteProfileRules.ts), used by the Rankings filter.
 //  - Partial saves are fine: an empty field is "not done yet", anything filled in must be valid.
 //  - There is no moderation service yet, so a photo or video that passes the checks is stored as
 //    'approved'. Nothing here lets an athlete change a status once a reviewer exists to set it.
@@ -18,7 +21,7 @@ import { getDb, type Db } from "./db.server.ts";
 import type { PublicUser } from "./auth.server.ts";
 import { ATHLETE_ROLE, ConnectionError } from "./connections.server.ts";
 import {
-  LIMITS, TEAM_STATUSES, validateProfile, type ProfileDraft,
+  LIMITS, PROVINCE, TEAM_STATUSES, validateProfile, type ProfileDraft,
 } from "../src/lib/athleteProfileRules.ts";
 import {
   EMPTY_EXTRAS, validatePhotoDataUrl, validateScholarship, validateVideoUrl,
@@ -59,6 +62,7 @@ export interface AthleteProfileView {
   consistency: number | null;
   municipality: string;
   province: string;
+  category: string;
 }
 
 interface ProfileRow {
@@ -79,6 +83,7 @@ interface ProfileRow {
   consistency: number | null;
   municipality: string | null;
   province: string | null;
+  category: string | null;
 }
 
 export async function getMyProfile(actor: PublicUser, dbArg?: Db): Promise<AthleteProfileView> {
@@ -90,7 +95,7 @@ export async function getMyProfile(actor: PublicUser, dbArg?: Db): Promise<Athle
            ap.height_cm::float8 AS height_cm, ap.weight_kg::float8 AS weight_kg,
            ap.team_status, ap.team_name, ap.bio, ap.ranking,
            ap.performance::float8 AS performance, ap.consistency::float8 AS consistency,
-           ap.municipality, ap.province
+           ap.municipality, ap.province, ap.category
     FROM users u
     LEFT JOIN user_profiles up ON up.user_id = u.id
     LEFT JOIN athlete_profiles ap ON ap.user_id = u.id
@@ -118,6 +123,7 @@ export async function getMyProfile(actor: PublicUser, dbArg?: Db): Promise<Athle
     consistency: r.consistency,
     municipality: r.municipality ?? "",
     province: r.province ?? "",
+    category: r.category ?? "",
   };
 }
 
@@ -149,7 +155,7 @@ function readDraft(raw: unknown): ProfileDraft {
   }
   const draft: ProfileDraft = {
     firstName: text("firstName"), lastName: text("lastName"), sport: text("sport"), position: text("position"),
-    school: text("school"), year: text("year"), heightCm: numText("heightCm"), weightKg: numText("weightKg"),
+    school: text("school"), municipality: text("municipality"), category: text("category"), year: text("year"), heightCm: numText("heightCm"), weightKg: numText("weightKg"),
     teamStatus: text("teamStatus") as TeamStatus, teamName: text("teamName"), bio: text("bio"), achievements,
   };
   if (Object.keys(bad).length > 0) throw fail(bad);
@@ -178,6 +184,12 @@ export async function saveMyProfile(actor: PublicUser, raw: unknown, dbArg?: Db)
   const last = d.lastName.trim();
   const teamName = d.teamStatus === "Not on a team" ? "" : d.teamName.trim();
   const status = (TEAM_STATUSES as string[]).includes(d.teamStatus) ? d.teamStatus : "";
+  // An older client that never sends "municipality" must not wipe a saved one; an empty string clears it on purpose.
+  const sentMunicipality = Object.hasOwn(raw as object, "municipality");
+  const municipality = d.municipality.trim();
+  const province = municipality ? PROVINCE : "";
+  const sentCategory = Object.hasOwn(raw as object, "category");
+  const category = d.category.trim();
 
   await db.begin(async (tx) => {
     await tx`
@@ -187,13 +199,16 @@ export async function saveMyProfile(actor: PublicUser, raw: unknown, dbArg?: Db)
     if (display) await tx`UPDATE users SET display_name = ${display.slice(0, 80)}, updated_at = ${ts} WHERE id = ${actor.id}`;
     await tx`
       INSERT INTO athlete_profiles
-        (user_id, sport, playing_position, school, year_level, height_cm, weight_kg, team_status, team_name, bio, created_at, updated_at)
+        (user_id, sport, playing_position, school, municipality, province, category, year_level, height_cm, weight_kg, team_status, team_name, bio, created_at, updated_at)
       VALUES
-        (${actor.id}, ${d.sport}, ${d.position.trim()}, ${d.school.trim()}, ${d.year.trim()},
+        (${actor.id}, ${d.sport}, ${d.position.trim()}, ${d.school.trim()}, ${municipality}, ${province}, ${category}, ${d.year.trim()},
          ${d.heightCm.trim() ? Number(d.heightCm) : null}, ${d.weightKg.trim() ? Number(d.weightKg) : null},
          ${status}, ${teamName}, ${d.bio.trim()}, ${ts}, ${ts})
       ON CONFLICT (user_id) DO UPDATE SET
         sport = EXCLUDED.sport, playing_position = EXCLUDED.playing_position, school = EXCLUDED.school,
+        municipality = CASE WHEN ${sentMunicipality}::boolean THEN EXCLUDED.municipality ELSE athlete_profiles.municipality END,
+        province = CASE WHEN ${sentMunicipality}::boolean THEN EXCLUDED.province ELSE athlete_profiles.province END,
+        category = CASE WHEN ${sentCategory}::boolean THEN EXCLUDED.category ELSE athlete_profiles.category END,
         year_level = EXCLUDED.year_level, height_cm = EXCLUDED.height_cm, weight_kg = EXCLUDED.weight_kg,
         team_status = EXCLUDED.team_status, team_name = EXCLUDED.team_name, bio = EXCLUDED.bio,
         updated_at = EXCLUDED.updated_at`;

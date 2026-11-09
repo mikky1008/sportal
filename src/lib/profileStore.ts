@@ -40,6 +40,7 @@ export interface AthleteProfileView {
   consistency: number | null;
   municipality: string;
   province: string;
+  category: string;
 }
 
 export interface ProfileApi {
@@ -63,6 +64,8 @@ export function toDraft(a: Athlete): ProfileDraft {
     sport: a.sport,
     position: a.position,
     school: a.school,
+    municipality: a.municipality ?? "",
+    category: a.category ?? "",
     year: a.year,
     heightCm: h === null ? "" : String(h),
     weightKg: w === null ? "" : String(w),
@@ -103,6 +106,7 @@ export function athleteFromView(v: AthleteProfileView): Athlete {
     teamName: v.teamName,
     ...(v.municipality ? { municipality: v.municipality } : {}),
     ...(v.province ? { province: v.province } : {}),
+    ...(v.category ? { category: v.category } : {}),
     achievements: v.achievements.map((a) => ({ title: a.title, year: a.year })),
   };
 }

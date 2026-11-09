@@ -10,19 +10,11 @@
  * simulated numbers, because fake results must not be mistaken for a real analysis.
  */
 import type { AIMeasurement, SkillId } from "@/types";
+import { skillById } from "@/lib/skills";
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-const assessments: Record<SkillId, string> = {
-  shooting: "10-Shot Challenge",
-  dribbling: "Cone Weave Drill",
-  passing: "Target Passing Drill",
-  layups: "Alternating Layup Drill",
-  agility: "Lane Agility Test",
-  vertical: "Standing Vertical Test",
-};
-
-export const getAssessmentName = (skill: SkillId) => assessments[skill];
+export const getAssessmentName = (skill: SkillId): string => skillById(skill)?.assessment ?? "";
 
 /** Results below this confidence are never trusted on their own; they go to a coach. */
 export const MIN_CONFIDENCE = 0.7;
@@ -60,7 +52,7 @@ export function parseMeasurement(skill: SkillId, json: unknown): AIMeasurement {
   if (lowConfidence && !reasons.length) reasons.push(`Model confidence is only ${Math.round(confidence * 100)}%.`);
   return {
     skill,
-    assessment: assessments[skill],
+    assessment: getAssessmentName(skill),
     attempts, made, missed, accuracy, consistency, confidence,
     // The server may ask for review; we also enforce the confidence floor here so a
     // misconfigured server can't mark a shaky result as trustworthy.
@@ -91,7 +83,7 @@ async function analyzeSimulated(skill: SkillId): Promise<AIMeasurement> {
   await delay(1800);
   return {
     skill,
-    assessment: assessments[skill],
+    assessment: getAssessmentName(skill),
     attempts: 10, made: 8, missed: 2, accuracy: 80, consistency: 76,
     confidence: 1,
     needsReview: false,

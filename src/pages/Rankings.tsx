@@ -1,16 +1,16 @@
 import { Page } from "@/components/Page";
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Info } from "lucide-react";
-import { useRankingCandidates } from "@/lib/useRankings";
+import { useAuth } from "@/auth/AuthContext";
+import { fetchRankings, type RankingsPage } from "@/lib/rankingsApi";
 import {
   ALL,
   MIN_COUNTED_SESSIONS,
   SPORT_METRICS,
   SURIGAO_DEL_NORTE_MUNICIPALITIES,
-  computeRankings,
-  filterOptions,
+  CATEGORIES,
 } from "@/lib/rankings";
-import { Card, PageHeader, Select } from "@/components/common";
+import { Card, PageHeader, Select, btn } from "@/components/common";
 import { RankingItem } from "@/components/listings";
 import { cn } from "@/lib/utils";
 
@@ -24,11 +24,14 @@ const MODES: { id: FilterMode; label: string }[] = [
   { id: "school", label: "School" },
 ];
 
+type Load = { kind: "loading" } | { kind: "error"; message: string } | { kind: "ready" };
+
 function Rankings() {
-  const candidates = useRankingCandidates();
+  const { user } = useAuth();
+  const isAthlete = !!user?.roles.includes("student_athlete");
   const [sport, setSport] = useState("Basketball");
   const [metric, setMetric] = useState("");
-  const [category, setCategory] = useState("Men's Collegiate");
+  const [category, setCategory] = useState(ALL);
   const [mode, setMode] = useState<FilterMode>("municipality");
   const [municipality, setMunicipality] = useState(ALL);
   const [school, setSchool] = useState(ALL);
@@ -37,25 +40,47 @@ function Rankings() {
   const metrics = SPORT_METRICS[sport] ?? [];
   const m = metrics.includes(metric) ? metric : (metrics[0] ?? "");
 
+  // Positions are worked out by the server from real, counted sessions. Only the active tab's
+  // filter is sent, so a hidden dropdown can never filter silently.
+  const [data, setData] = useState<RankingsPage | null>(null);
+  const [load, setLoad] = useState<Load>({ kind: "loading" });
+  const [reloadKey, setReloadKey] = useState(0);
   // Only schools that have athletes in this sport are offered. A saved choice that stops being
   // valid (e.g. after switching sport) falls back to "All".
-  const schools = useMemo(() => filterOptions(candidates, { sport }).schools, [candidates, sport]);
+  const schools = data?.options.schools ?? [];
   const sch = schools.includes(school) ? school : ALL;
   const muni = (SURIGAO_DEL_NORTE_MUNICIPALITIES as readonly string[]).includes(municipality)
     ? municipality
     : ALL;
 
-  // Only the active tab's filter is applied, so a hidden dropdown can never filter silently.
-  const outcome = useMemo(
-    () =>
-      computeRankings(candidates, {
+  useEffect(() => {
+    if (!m) return;
+    const ctrl = new AbortController();
+    setLoad({ kind: "loading" });
+    void fetchRankings(
+      {
         sport,
         metric: m,
+        ...(category !== ALL ? { category } : {}),
         ...(mode === "municipality" && muni !== ALL ? { municipality: muni } : {}),
         ...(mode === "school" && sch !== ALL ? { school: sch } : {}),
-      }),
-    [candidates, sport, m, mode, muni, sch],
-  );
+      },
+      ctrl.signal,
+    ).then((r) => {
+      if (ctrl.signal.aborted) return;
+      if (r.ok) {
+        setData(r.data);
+        setLoad({ kind: "ready" });
+      } else setLoad({ kind: "error", message: r.message });
+    });
+    return () => ctrl.abort();
+  }, [sport, m, category, mode, muni, sch, reloadKey]);
+
+  const outcome = {
+    rows: data?.rows ?? [],
+    notEnoughSessions: data?.notEnoughSessions ?? 0,
+    ...(data?.me ? { me: data.me } : {}),
+  };
   const { rows, me, notEnoughSessions } = outcome;
   const unit = m.includes("(s)") ? "s" : m === "Overall Performance" ? "" : "%";
   const place =
@@ -89,7 +114,7 @@ function Rankings() {
       label: "Category",
       value: category,
       set: setCategory,
-      opts: ["Men's Collegiate", "Women's Collegiate", "Juniors"],
+      opts: [ALL, ...CATEGORIES],
     },
   ];
 
@@ -180,8 +205,15 @@ function Rankings() {
 
       <div className="grid gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2" title={`${sport} ${m}`}>
-          {rows.length ? (
-            <ol className="flex flex-col gap-2">
+          {load.kind === "loading" && !data ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">Loading rankings…</p>
+          ) : load.kind === "error" ? (
+            <div className="py-8 text-center">
+              <p className="text-sm text-muted-foreground">{load.message}</p>
+              <button className={cn(btn.secondary, "mt-3")} onClick={() => setReloadKey((k) => k + 1)}>Try again</button>
+            </div>
+          ) : rows.length ? (
+            <ol className={cn("flex flex-col gap-2", load.kind === "loading" && "opacity-60")}>
               {rows.map((r) => (
                 <RankingItem key={r.athleteId ?? r.position} r={r} unit={unit} />
               ))}
@@ -221,7 +253,7 @@ function Rankings() {
                 counted sessions needed. Self-reported and pending-review sessions don't count.
               </p>
             </Card>
-          ) : (
+          ) : isAthlete && load.kind === "ready" ? (
             <Card>
               <p className="text-sm text-muted-foreground">
                 You're not in this view
@@ -231,7 +263,7 @@ function Rankings() {
                 .
               </p>
             </Card>
-          )}
+          ) : null}
           <Card>
             <div className="flex gap-3 text-sm text-muted-foreground">
               <Info className="h-5 w-5 shrink-0 text-primary" />

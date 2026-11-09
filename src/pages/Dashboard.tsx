@@ -1,7 +1,7 @@
 import { Link } from "@/router-compat";
 import { Page } from "@/components/Page";
 import { Plus, Trophy, Gauge, Repeat, CalendarCheck } from "lucide-react";
-import { skills } from "@/lib/skills";
+import { isPercentSkill, skillsForSport } from "@/lib/skills";
 import { summarizeSkills } from "@/lib/performanceStats";
 import { useAthleteProfile } from "@/lib/profileStore";
 import { useMyHeadlineRank } from "@/lib/useRankings";
@@ -19,11 +19,11 @@ const avg = (xs: number[]): number => Math.round(xs.reduce((a, b) => a + b, 0) /
 /**
  * The four numbers under the hero, worked out from the athlete's own sessions: the average of the
  * last five sessions, and how that moved from the five before. Vertical jump is in centimetres, so
- * it is left out of these percentages. With no sessions every value is null and the tiles show "—".
+ * heights and times are left out of these percentages. With no sessions every value is null and the tiles show "—".
  */
 function recentOverview(sessions: PerformanceSession[]) {
   const list = sessions
-    .filter((s) => s.skill !== "vertical")
+    .filter((s) => isPercentSkill(s.skill))
     .sort((a, b) => ((b.isoDate ?? "") < (a.isoDate ?? "") ? -1 : (b.isoDate ?? "") > (a.isoDate ?? "") ? 1 : 0));
   const last = list.slice(0, 5);
   const before = list.slice(5, 10);
@@ -47,7 +47,7 @@ function Dashboard() {
   const myRank = useMyHeadlineRank();
   const overview = recentOverview(sessions);
   const stats = summarizeSkills(sessions);
-  const skillCards: Skill[] = skills.map((s) => ({
+  const skillCards: Skill[] = skillsForSport(a.sport).map((s) => ({
     ...s,
     primaryValue: stats[s.id]?.primaryValue ?? "—",
     consistency: stats[s.id]?.consistency ?? 0,

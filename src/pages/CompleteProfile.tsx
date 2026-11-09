@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { sports } from "@/lib/sports";
 import { Select } from "@/components/common";
 import { AnimatedBar } from "@/components/profile-completion";
+import { CATEGORIES, MUNICIPALITIES } from "@/lib/athleteProfileRules";
 import { useUniversityOptions } from "@/lib/useUniversityOptions";
 import { ShowcaseCard } from "@/components/profile-extras-cards";
 import { athleteCompletionNow, toastSaved, useAthleteCompletion } from "@/components/profile-completion-cards";
@@ -52,7 +53,7 @@ const SECTION_INFO: Record<AthleteSectionId, { title: string; hint: string }> = 
 const SECTION_FIELDS: Partial<Record<AthleteSectionId, (keyof ProfileErrors)[]>> = {
   basic: ["firstName", "lastName", "bio"],
   athletic: ["sport", "position", "heightCm", "weightKg", "teamStatus", "teamName"],
-  school: ["school", "year"],
+  school: ["school", "municipality", "category", "year"],
   achievements: ["achievements", "achievementsTotal"],
 };
 
@@ -282,6 +283,20 @@ function CompleteProfileBody() {
               <div className="grid gap-4">
                 <Field label="School" error={shown("school")}>
                   <input className={input} value={d.school} onChange={(e) => edit({ school: e.target.value })} aria-invalid={!!shown("school")} />
+                </Field>
+                <Field label="Municipality (optional)" error={shown("municipality")}>
+                  <Select value={d.municipality} onChange={(e) => edit({ municipality: e.target.value })}>
+                    <option value="">Not set</option>
+                    {MUNICIPALITIES.map((m) => <option key={m} value={m}>{m}</option>)}
+                  </Select>
+                  <span className="text-xs font-normal text-muted-foreground">Where your school is. It puts you in the Municipality filter on Rankings.</span>
+                </Field>
+                <Field label="Ranking category (optional)" error={shown("category")}>
+                  <Select value={d.category} onChange={(e) => edit({ category: e.target.value })}>
+                    <option value="">Not set</option>
+                    {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </Select>
+                  <span className="text-xs font-normal text-muted-foreground">Used by the Category filter on Rankings.</span>
                 </Field>
                 <Field label="Year level" error={shown("year")}>
                   <input className={input} value={d.year} onChange={(e) => edit({ year: e.target.value })} aria-invalid={!!shown("year")} placeholder="e.g. Grade 12 · STEM" />

@@ -9,6 +9,7 @@
 //    and tied values share a position.
 //  - Rankings never mix sports.
 
+import { skillById } from "./skills.ts";
 import type {
   DirectoryAthlete,
   PerformanceSession,
@@ -23,7 +24,7 @@ export const COUNTED_STATUSES: SessionStatus[] = ["Coach-Verified", "AI-Assessed
 
 export const SPORT_METRICS: Record<string, string[]> = {
   Basketball: ["Shooting Accuracy", "Overall Performance", "Consistency"],
-  Volleyball: ["Spike Accuracy"],
+  Volleyball: ["Spike Accuracy", "Serve Accuracy"],
   "Track & Field": ["100m Sprint (s)"],
 };
 
@@ -36,42 +37,36 @@ export const PRIMARY_METRIC: Record<string, string> = {
 
 export const ALL = "All";
 
-/** The municipalities offered by the Municipality filter (Surigao del Norte). */
-export const SURIGAO_DEL_NORTE_MUNICIPALITIES = [
-  "Alegria",
-  "Bacuag",
-  "Burgos",
-  "Claver",
-  "Dapa",
-  "Del Carmen",
-  "General Luna",
-  "Gigaquit",
-  "Mainit",
-  "Malimono",
-  "Pilar",
-  "Placer",
-  "San Benito",
-  "San Francisco",
-  "San Isidro",
-  "Santa Monica",
-  "Sison",
-  "Socorro",
-  "Tagana-an",
-  "Tubod",
-] as const;
+/** The municipalities offered by the Municipality filter. The list lives with the profile rules, so athletes can only pick what the filter offers. */
+export { MUNICIPALITIES as SURIGAO_DEL_NORTE_MUNICIPALITIES, CATEGORIES } from "./athleteProfileRules.ts";
 
 /** Times are better when lower. */
 export const lowerIsBetter = (metric: string) => metric.includes("(s)");
 
-/** Vertical jump is in cm, so it can't be averaged with percentage skills. */
-const OVERALL_EXCLUDED: SkillId[] = ["vertical"];
+/** Skills that have a ranking metric of their own (everything else feeds the Basketball metrics below). */
+const SKILL_METRIC: Partial<Record<SkillId, string>> = {
+  spiking: "Spike Accuracy",
+  serving: "Serve Accuracy",
+  sprint100: "100m Sprint (s)",
+};
 
-export function resultsFromSessions(sessions: PerformanceSession[]): RankingResult[] {
+/**
+ * Turns an athlete's sessions into ranking results. Volleyball and Track & Field skills each feed
+ * their own metric. Basketball skills feed Shooting Accuracy, Overall Performance (percentage
+ * skills only: vertical jump is in cm so it cannot be averaged with them) and Consistency.
+ */
+export function resultsFromSessions(
+  sessions: Pick<PerformanceSession, "skill" | "result" | "consistency" | "status">[],
+): RankingResult[] {
   const out: RankingResult[] = [];
   for (const s of sessions) {
+    const own = SKILL_METRIC[s.skill];
+    if (own) out.push({ metric: own, value: s.result, status: s.status });
+    const def = skillById(s.skill);
+    if (def?.sport !== "Basketball") continue;
     if (s.skill === "shooting")
       out.push({ metric: "Shooting Accuracy", value: s.result, status: s.status });
-    if (!OVERALL_EXCLUDED.includes(s.skill))
+    if (def.unit === "%")
       out.push({ metric: "Overall Performance", value: s.result, status: s.status });
     if (s.consistency !== null)
       out.push({ metric: "Consistency", value: s.consistency, status: s.status });
@@ -86,6 +81,8 @@ export interface RankingCandidate {
   school: string;
   municipality: string;
   province: string;
+  /** the ranking category the athlete chose; "" or missing = none */
+  category?: string;
   isCurrentUser?: boolean;
   results: RankingResult[];
 }
@@ -96,6 +93,7 @@ export interface RankingFilters {
   province?: string;
   municipality?: string;
   school?: string;
+  category?: string;
 }
 
 export interface RankingOutcome {
@@ -120,6 +118,7 @@ export function poolFor(
     province?: string | undefined;
     municipality?: string | undefined;
     school?: string | undefined;
+    category?: string | undefined;
   },
 ): RankingCandidate[] {
   return candidates.filter(
@@ -127,7 +126,8 @@ export function poolFor(
       c.sport === f.sport &&
       matches(c.province, f.province) &&
       matches(c.municipality, f.municipality) &&
-      matches(c.school, f.school),
+      matches(c.school, f.school) &&
+      matches(c.category, f.category),
   );
 }
 

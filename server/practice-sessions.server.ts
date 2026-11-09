@@ -18,7 +18,7 @@ import { z } from "zod";
 import { getDb, type Db } from "./db.server.ts";
 import { audit, type PublicUser, type RequestMeta } from "./auth.server.ts";
 import { ATHLETE_ROLE, COACH_ROLE, ConnectionError, PAGE_DEFAULT, PAGE_MAX } from "./connections.server.ts";
-import { skills } from "../src/lib/skills.ts";
+import { skillById, skills } from "../src/lib/skills.ts";
 import { statusForNewSession } from "../src/lib/verification.ts";
 import type { SessionStatus } from "../src/types/index.ts";
 
@@ -138,8 +138,9 @@ export async function createSession(actor: PublicUser, body: unknown, dbArg?: Db
     throw fail(fieldErrors);
   }
   const b = parsed.data;
-  const max = b.skill === "vertical" ? 300 : 100;
-  if (b.result < 0 || b.result > max) throw fail({ result: `Enter a result between 0 and ${max}.` });
+  const def = skillById(b.skill);
+  if (!def) throw fail({ skill: "Unknown skill." });
+  if (b.result < def.min || b.result > def.max) throw fail({ result: `Enter a result between ${def.min} and ${def.max}${def.unit === "%" ? "" : ` ${def.unit}`}.` });
   // A hand-entered result has no measured consistency; only an analysis can supply one.
   if (b.source === "manual" && b.consistency !== undefined && b.consistency !== null)
     throw fail({ consistency: "A self-reported session has no consistency score." });
@@ -158,6 +159,10 @@ export async function createSession(actor: PublicUser, body: unknown, dbArg?: Db
   if (status === "coach_verified") throw new Error("a new session can never start as coach_verified"); // defensive: statusForNewSession never returns it
 
   const db = dbArg ?? (await getDb());
+  // A skill belongs to one sport. An athlete who has chosen a sport can only log that sport's skills,
+  // so a Volleyball athlete cannot add Basketball results to their record (or the rankings).
+  const [mine] = await db<{ sport: string }[]>`SELECT sport FROM athlete_profiles WHERE user_id = ${actor.id}`;
+  if (mine?.sport && mine.sport !== def.sport) throw fail({ skill: `${def.name} is a ${def.sport} skill. Your sport is ${mine.sport}.` });
   const [today] = await db<{ n: number }[]>`
     SELECT COUNT(*)::int AS n FROM practice_sessions WHERE athlete_id = ${actor.id} AND created_at >= ${new Date(ts.getTime() - DAY_MS)}`;
   if ((today?.n ?? 0) >= MAX_SESSIONS_PER_DAY)

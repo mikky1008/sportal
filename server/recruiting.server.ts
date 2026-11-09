@@ -21,7 +21,7 @@ import { ATHLETE_ROLE, COACH_ROLE, isVerifiedCoach } from "./connections.server.
 import { notify } from "./notifications.server.ts";
 import { headlinePositions } from "./rankings.server.ts";
 import { formatHeight } from "../src/lib/athleteProfileRules.ts";
-import { skills as SKILLS } from "../src/lib/skills.ts";
+import { formatResult, skillById } from "../src/lib/skills.ts";
 
 export const DIRECTORY_LIMIT_DEFAULT = 60;
 export const DIRECTORY_LIMIT_MAX = 100;
@@ -180,18 +180,19 @@ async function loadDirectory(db: Db, opts: { onlyId?: string; includeHidden?: bo
   const ranks = await headlinePositions(db, "");
 
   return rows.map((r) => {
-    // Per-skill sessions are Basketball sessions, so other sports have no results to show yet.
-    const mine = r.sport === "Basketball" ? (bySkill.get(r.id) ?? []) : [];
+    // Only the skills of the athlete's own sport are shown (a skill belongs to exactly one sport).
+    const mine = (bySkill.get(r.id) ?? []).filter((s) => skillById(s.skill)?.sport === r.sport);
     const total = mine.reduce((a, s) => a + s.n, 0);
     const verified = mine.reduce((a, s) => a + s.verified, 0);
-    const overall = mine.filter((s) => s.skill !== "vertical"); // cm, so it cannot be averaged with percentages
-    const overallN = overall.reduce((a, s) => a + s.n, 0);
-    const score = overallN ? round1(overall.reduce((a, s) => a + s.total, 0) / overallN) : 0;
+    // The score is the average of the percentage skills; heights (cm) and times (s) cannot be averaged with them.
+    const rated = mine.filter((s) => skillById(s.skill)?.unit === "%");
+    const ratedN = rated.reduce((a, s) => a + s.n, 0);
+    const score = ratedN ? round1(rated.reduce((a, s) => a + s.total, 0) / ratedN) : 0;
     const skillList = mine
-      .map((s) => ({ id: s.skill, avg: s.total / s.n }))
-      .sort((x, y) => y.avg - x.avg)
+      .map((s) => ({ id: s.skill, avg: s.total / s.n, pct: skillById(s.skill)?.unit === "%" }))
+      .sort((x, y) => Number(y.pct) - Number(x.pct) || (x.pct ? y.avg - x.avg : x.avg - y.avg))
       .slice(0, 3)
-      .map((s) => ({ name: SKILLS.find((k) => k.id === s.id)?.name ?? s.id, value: `${Math.round(s.avg)}${s.id === "vertical" ? " cm" : "%"}` }));
+      .map((s) => ({ name: skillById(s.id)?.name ?? s.id, value: formatResult(s.id, Math.round(s.avg * 10) / 10) }));
     const first = r.first_name ?? r.display_name.trim().split(/\s+/)[0] ?? "";
     const last = r.last_name ?? r.display_name.trim().split(/\s+/).slice(1).join(" ");
     return {

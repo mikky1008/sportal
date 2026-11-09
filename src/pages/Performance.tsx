@@ -2,7 +2,8 @@ import { Link } from "@/router-compat";
 import { Page } from "@/components/Page";
 import { useState } from "react";
 import { Plus } from "lucide-react";
-import { skills } from "@/lib/skills";
+import { skillsForSport } from "@/lib/skills";
+import { useAthleteProfile } from "@/lib/profileStore";
 import { useSessions, useSessionsLoad } from "@/lib/sessionStore";
 import { Card, PageHeader, btn } from "@/components/common";
 import { HistoryList, PerformanceChart, TrustLegend } from "@/components/performance";
@@ -10,6 +11,7 @@ import { cn } from "@/lib/utils";
 
 
 function Performance() {
+  const sport = useAthleteProfile().sport;
   const sessions = useSessions();
   const load = useSessionsLoad();
   const [filter, setFilter] = useState<string>("all");
@@ -21,7 +23,7 @@ function Performance() {
       <PerformanceChart sessions={sessions} />
       <Card title="Performance History">
         <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
-          {[{ id: "all", name: "All" }, ...skills].map((s) => (
+          {[{ id: "all", name: "All" }, ...skillsForSport(sport)].map((s) => (
             <button key={s.id} onClick={() => setFilter(s.id)} className={cn("whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-semibold", filter === s.id ? "border-primary bg-primary text-primary-foreground" : "bg-card text-muted-foreground")}>
               {s.name}
             </button>

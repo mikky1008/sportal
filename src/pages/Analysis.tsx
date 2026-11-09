@@ -12,7 +12,8 @@ import type { AIMeasurement, SkillId } from "@/types";
 import { Card, Pill, StatTile, btn } from "@/components/common";
 import { ConsistencyTracker, FeedbackCard } from "@/components/performance";
 
-const ids = skills.map((s) => s.id) as SkillId[];
+// Only Basketball has an analysis flow; the other sports log results by hand.
+const ids = skills.filter((s) => s.sport === "Basketball").map((s) => s.id) as SkillId[];
 const parseAnalysisSearch = (s: Record<string, unknown>): { skill: SkillId } => ({
   skill: ids.includes(s["skill"] as SkillId) ? (s["skill"] as SkillId) : "shooting",
 });

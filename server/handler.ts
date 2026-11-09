@@ -92,7 +92,7 @@
 //   GET  /api/search                                ?q&limit -> { ok, athletes, scholarships }   q needs 2+ characters; athletes only for verified coaches
 //
 // Rankings (every route needs a signed-in account):
-//   GET  /api/rankings                              ?sport&metric&province&municipality&school&limit -> { ok, sport, metric, minCountedSessions, rows, total, notEnoughSessions, me?, options }
+//   GET  /api/rankings                              ?sport&metric&province&municipality&school&category&limit -> { ok, sport, metric, minCountedSessions, rows, total, notEnoughSessions, me?, options }
 //                                                    sport defaults to Basketball; me (athletes only) is the caller's own standing in this view
 //   GET  /api/rankings/headline                     ?ids=a,b,c (up to 100) -> { ok, me, ranks }   nationwide headline rank per athlete; me.position null = not ranked yet
 //   GET  /api/athletes/me/visibility                student-athlete -> { ok, visible }
@@ -573,6 +573,7 @@ async function handleRankings(req: Request, path: string): Promise<Response | nu
           province: params.get("province") ?? undefined,
           municipality: params.get("municipality") ?? undefined,
           school: params.get("school") ?? undefined,
+          category: params.get("category") ?? undefined,
           limit: Number.isInteger(limit) && limit >= 1 ? Math.min(limit, RANKINGS_LIMIT_MAX) : RANKINGS_LIMIT_DEFAULT,
         })),
       });

@@ -13,6 +13,18 @@ export const TEAM_STATUSES: TeamStatus[] = [
   "Not on a team",
 ];
 
+/** Every municipality is in this province, so the server fills the province in when one is chosen. */
+export const PROVINCE = "Surigao del Norte";
+
+/** The municipalities an athlete can pick (they drive the Municipality filter in Rankings). */
+export const MUNICIPALITIES = [
+  "Alegria", "Bacuag", "Burgos", "Claver", "Dapa", "Del Carmen", "General Luna", "Gigaquit", "Mainit", "Malimono",
+  "Pilar", "Placer", "San Benito", "San Francisco", "San Isidro", "Santa Monica", "Sison", "Socorro", "Tagana-an", "Tubod",
+] as const;
+
+/** The ranking categories an athlete can belong to (Rankings has a Category filter). */
+export const CATEGORIES = ["Men's Collegiate", "Women's Collegiate", "Juniors"] as const;
+
 export const LIMITS = {
   name: 40,
   position: 40,
@@ -34,6 +46,10 @@ export interface ProfileDraft {
   sport: string;
   position: string;
   school: string;
+  /** one of MUNICIPALITIES, or "" when not chosen */
+  municipality: string;
+  /** one of CATEGORIES, or "" when not chosen */
+  category: string;
   year: string;
   heightCm: string;
   weightKg: string;
@@ -108,6 +124,12 @@ export function validateProfile(
   req("sport", "Sport", 60);
   if (!e.sport && !(partial && !d.sport.trim()) && !sports.some((s) => s.name === d.sport))
     e.sport = "Choose a sport from the list.";
+
+  if (d.municipality.trim() && !(MUNICIPALITIES as readonly string[]).includes(d.municipality))
+    e.municipality = "Choose a municipality from the list.";
+
+  if (d.category.trim() && !(CATEGORIES as readonly string[]).includes(d.category))
+    e.category = "Choose a category from the list.";
 
   if (d.position.trim().length > LIMITS.position)
     e.position = `Position must be ${LIMITS.position} characters or fewer.`;

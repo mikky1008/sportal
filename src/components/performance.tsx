@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { formatResult, skillById } from "@/lib/skills";
 import { Link } from "@/router-compat";
 import { Area, ComposedChart, CartesianGrid, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Sparkles, ThumbsUp, Target, Dumbbell, ShieldCheck, Hourglass, PenLine, TriangleAlert } from "lucide-react";
@@ -81,7 +82,7 @@ export function SkillCard({ skill }: { skill: Skill }) {
   );
 }
 
-const skillName = (id: string) => ({ shooting: "Shooting", dribbling: "Dribbling", passing: "Passing", layups: "Layups", agility: "Agility", vertical: "Vertical Jump" } as Record<string, string>)[id];
+const skillName = (id: string) => skillById(id)?.name ?? id;
 
 const pct = (v: number | null) => (v === null ? "—" : `${v}%`);
 
@@ -109,7 +110,7 @@ export function HistoryList({ items }: { items: PerformanceSession[] }) {
               <tr key={s.id} className="border-t bg-card">
                 <td className="px-4 py-3 font-medium">{s.date}</td>
                 <td className="px-4 py-3">{skillName(s.skill)}</td>
-                <td className="px-4 py-3 font-display text-lg font-bold">{s.skill === "vertical" ? `${s.result} cm` : `${s.result}%`}</td>
+                <td className="px-4 py-3 font-display text-lg font-bold">{formatResult(s.skill, s.result)}</td>
                 <td className="px-4 py-3">{pct(s.consistency)}</td>
                 <td className="px-4 py-3"><StatusPills s={s} /></td>
               </tr>
@@ -125,7 +126,7 @@ export function HistoryList({ items }: { items: PerformanceSession[] }) {
               <p className="text-xs text-muted-foreground">{s.date} · Consistency {pct(s.consistency)}{meta(s.status).verified && s.verifiedBy ? ` · Verified by ${s.verifiedBy}` : ""}</p>
               <div className="mt-2"><StatusPills s={s} /></div>
             </div>
-            <p className="font-display text-3xl font-bold">{s.skill === "vertical" ? `${s.result}cm` : `${s.result}%`}</p>
+            <p className="font-display text-3xl font-bold">{formatResult(s.skill, s.result)}</p>
           </li>
         ))}
       </ul>

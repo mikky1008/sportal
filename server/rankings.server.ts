@@ -13,8 +13,8 @@
 // out of everyone else's rankings, but can still see their own standing. Responses carry names,
 // schools and places only, never emails.
 //
-// KNOWN LIMIT: per-skill sessions exist for Basketball only, so Volleyball and Track & Field
-// athletes appear as "not enough sessions" until those sports have a way to record results.
+// Volleyball (spiking, serving) and Track & Field (100m sprint) have no AI analysis, so their results
+// are entered by hand and only count once a coach has verified them; Basketball also counts AI-Assessed.
 // Rankings are recomputed on every request, which is fine for a prototype-sized pool.
 
 import { getDb, type Db } from "./db.server.ts";
@@ -22,6 +22,7 @@ import type { PublicUser } from "./auth.server.ts";
 import { ATHLETE_ROLE } from "./connections.server.ts";
 import {
   ALL,
+  CATEGORIES,
   MIN_COUNTED_SESSIONS,
   PRIMARY_METRIC,
   SPORT_METRICS,
@@ -60,6 +61,7 @@ interface AthleteRow {
   school: string;
   municipality: string;
   province: string;
+  category: string;
 }
 interface SessionRow {
   athlete_id: string;
@@ -74,7 +76,7 @@ async function loadCandidates(db: Db, viewerId: string): Promise<RankingCandidat
   const athletes = await db<AthleteRow[]>`
     SELECT u.id,
            COALESCE(NULLIF(btrim(concat_ws(' ', up.first_name, up.last_name)), ''), u.display_name) AS name,
-           ap.sport, ap.school, ap.municipality, ap.province
+           ap.sport, ap.school, ap.municipality, ap.province, ap.category
     FROM athlete_profiles ap
     JOIN users u ON u.id = ap.user_id
     LEFT JOIN user_profiles up ON up.user_id = u.id
@@ -100,19 +102,17 @@ async function loadCandidates(db: Db, viewerId: string): Promise<RankingCandidat
     school: a.school,
     municipality: a.municipality,
     province: a.province,
+    category: a.category,
     ...(a.id === viewerId ? { isCurrentUser: true } : {}),
-    // Per-skill sessions are Basketball sessions; other sports have no results to rank yet.
-    results:
-      a.sport === "Basketball"
-        ? resultsFromSessions(
-            (byAthlete.get(a.id) ?? []).map((s) => ({
-              skill: s.skill as SkillId,
-              result: s.result,
-              consistency: s.consistency,
-              status: LABEL[s.status],
-            })),
-          )
-        : [],
+    // Each skill feeds a metric of its own sport, so one athlete's sessions can never leak into another sport's ranking.
+    results: resultsFromSessions(
+      (byAthlete.get(a.id) ?? []).map((s) => ({
+        skill: s.skill as SkillId,
+        result: s.result,
+        consistency: s.consistency,
+        status: LABEL[s.status],
+      })),
+    ),
   }));
 }
 
@@ -122,6 +122,7 @@ export interface RankingQuery {
   province?: string | undefined;
   municipality?: string | undefined;
   school?: string | undefined;
+  category?: string | undefined;
   limit: number;
 }
 
@@ -154,10 +155,12 @@ export async function getRankings(user: PublicUser, q: RankingQuery, dbArg?: Db)
   const province = clean(q.province, "Province");
   const municipality = clean(q.municipality, "Municipality");
   const school = clean(q.school, "School");
+  const category = clean(q.category, "Category");
+  if (category && !(CATEGORIES as readonly string[]).includes(category)) throw new RankingError(400, "validation", "Unknown category.");
 
   const db = dbArg ?? (await getDb());
   const candidates = await loadCandidates(db, user.id);
-  const outcome = computeRankings(candidates, { sport: q.sport, metric, province, municipality, school });
+  const outcome = computeRankings(candidates, { sport: q.sport, metric, province, municipality, school, category });
   const isAthlete = user.roles.includes(ATHLETE_ROLE);
 
   return {

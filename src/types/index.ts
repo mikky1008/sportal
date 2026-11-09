@@ -2,7 +2,10 @@
 
 export type UserRole = "athlete" | "coach" | "admin";
 
-export type SkillId = "shooting" | "dribbling" | "passing" | "layups" | "agility" | "vertical";
+export type SkillId =
+  | "shooting" | "dribbling" | "passing" | "layups" | "agility" | "vertical" // Basketball
+  | "spiking" | "serving" // Volleyball
+  | "sprint100"; // Track & Field
 
 export interface Sport {
   id: string;
@@ -32,6 +35,8 @@ export interface Athlete {
   /** where the athlete's school is — used by the Rankings location filters */
   municipality?: string;
   province?: string;
+  /** the ranking category the athlete chose (see CATEGORIES), if any */
+  category?: string;
   /** team/program name, e.g. "SNNHS Varsity Boys"; empty string when not on a team */
   teamName?: string;
   achievements: { title: string; year: string }[];

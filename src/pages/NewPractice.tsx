@@ -3,7 +3,8 @@ import { Page } from "@/components/Page";
 import { useRef, useState } from "react";
 import { Camera, Upload, ArrowLeft, Info, Video, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
-import { skills } from "@/lib/skills";
+import { skills, skillsForSport } from "@/lib/skills";
+import { useAthleteProfile } from "@/lib/profileStore";
 import { getAssessmentName, setPendingVideo } from "@/services/aiService";
 import { sessionStore } from "@/lib/sessionStore";
 import type { SkillId } from "@/types";
@@ -19,13 +20,18 @@ const parseNewSearch = (s: Record<string, unknown>): { skill?: SkillId | undefin
 function NewPractice() {
   const { skill: initial } = useSearch(parseNewSearch);
   const [skill, setSkill] = useState<SkillId | undefined>(initial);
-  const [step, setStep] = useState<1 | 2 | 3>(initial ? 2 : 1);
+  // Basketball has a drill-and-video flow; other sports go straight to logging a result.
+  const [step, setStep] = useState<1 | 2 | 3>(initial ? (skills.find((s) => s.id === initial)?.sport === "Basketball" ? 2 : 3) : 1);
+  const profile = useAthleteProfile();
+  const sportSkills = skillsForSport(profile.sport);
   const [file, setFile] = useState<File | null>(null);
   const uploadRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   const [manual, setManual] = useState("");
   const sel = skills.find((s) => s.id === skill);
+  const manualOnly = !!sel && sel.sport !== "Basketball";
+  const [askReview, setAskReview] = useState(true);
 
   const steps = ["Choose skill", "Assessment", "Video"];
 
@@ -35,16 +41,18 @@ function NewPractice() {
     navigate({ to: "/performance/analysis", search: { skill: sel.id } });
   };
 
-  const manualMax = sel?.id === "vertical" ? 300 : 100;
+  const manualMax = sel?.max ?? 100;
+  const manualMin = sel?.min ?? 0;
   const manualValue = Number(manual);
-  const manualOk = manual.trim() !== "" && Number.isFinite(manualValue) && manualValue >= 0 && manualValue <= manualMax;
+  const manualOk = manual.trim() !== "" && Number.isFinite(manualValue) && manualValue >= manualMin && manualValue <= manualMax;
   const [saving, setSaving] = useState(false);
   const saveManual = async () => {
     if (!sel || !manualOk || saving) return;
     setSaving(true);
     try {
-      await sessionStore.add({ skill: sel.id, result: manualValue, consistency: null, source: "manual" });
-      toast.success("Saved as Self-Reported. A coach can verify it later.");
+      const review = manualOnly && askReview;
+      await sessionStore.add({ skill: sel.id, result: manualValue, consistency: null, source: "manual", ...(review ? { requestedReview: true } : {}) });
+      toast.success(review ? "Sent for verification. It counts in rankings once a coach verifies it." : "Saved as Self-Reported. A coach can verify it later.");
       navigate({ to: "/performance" });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't save the session. Please try again.");
@@ -57,7 +65,7 @@ function NewPractice() {
     <div className="mx-auto flex max-w-4xl flex-col gap-6">
       <div className="flex items-center gap-3">
         {step > 1 ? (
-          <button onClick={() => setStep((s) => (s - 1) as 1 | 2)} className="grid h-10 w-10 place-items-center rounded-xl border bg-card" aria-label="Back"><ArrowLeft className="h-5 w-5" /></button>
+          <button onClick={() => setStep((s) => (manualOnly && s === 3 ? 1 : ((s - 1) as 1 | 2)))} className="grid h-10 w-10 place-items-center rounded-xl border bg-card" aria-label="Back"><ArrowLeft className="h-5 w-5" /></button>
         ) : (
           <Link to="/dashboard" className="grid h-10 w-10 place-items-center rounded-xl border bg-card" aria-label="Back"><ArrowLeft className="h-5 w-5" /></Link>
         )}
@@ -78,16 +86,22 @@ function NewPractice() {
             <p className="mt-1 text-muted-foreground">Select a skill so Sportal can focus its analysis on the correct performance criteria.</p>
           </div>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            {skills.map((s) => (
-              <button key={s.id} onClick={() => { setSkill(s.id); setStep(2); }}
+            {sportSkills.map((s) => (
+              <button key={s.id} onClick={() => { setSkill(s.id); setStep(s.sport === "Basketball" ? 2 : 3); }}
                 className={cn("surface flex flex-col items-start gap-3 p-5 text-left transition hover:-translate-y-0.5 hover:border-primary", skill === s.id && "border-primary ring-2 ring-primary/30")}>
                 <span className="text-4xl" aria-hidden>{s.emoji}</span>
                 <span className="font-display text-xl font-bold">{s.name}</span>
-                {s.aiReady ? <Pill tone="success">AI-assisted</Pill> : <Pill>Preview (mock)</Pill>}
+                {s.aiReady ? <Pill tone="success">AI-assisted</Pill> : s.sport === "Basketball" ? <Pill>Preview (mock)</Pill> : <Pill>Coach-verified</Pill>}
               </button>
             ))}
           </div>
-          <p className="text-xs text-muted-foreground">AI-assisted analysis currently supports selected basketball skills only.</p>
+          {sportSkills.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{profile.sport} doesn't have practice skills yet. Basketball, Volleyball and Track &amp; Field do.</p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              {sportSkills[0]?.sport === "Basketball" ? "AI-assisted analysis currently supports selected basketball skills only." : `${sportSkills[0]?.sport} results are entered by hand and count in rankings once a coach verifies them.`}
+            </p>
+          )}
         </>
       )}
 
@@ -108,7 +122,36 @@ function NewPractice() {
         </>
       )}
 
-      {step === 3 && sel && (
+      {step === 3 && sel && manualOnly && (
+        <>
+          <div>
+            <p className="text-sm font-semibold text-primary">{sel.emoji} {sel.name} · {sel.assessment}</p>
+            <h1 className="text-3xl font-bold sm:text-4xl">Log your result</h1>
+          </div>
+          <Card title="How to run it">
+            <p className="text-sm">{sel.howTo}</p>
+            <p className="mt-3 flex items-start gap-2 text-xs text-muted-foreground"><Info className="mt-0.5 h-4 w-4 shrink-0" />{sel.sport} has no AI analysis yet. Your result is entered by hand, and it counts in rankings once a coach has verified it.</p>
+          </Card>
+          <Card title="Your result">
+            <div className="flex flex-col gap-4">
+              <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                {sel.unit === "s" ? "Time (seconds)" : sel.unit === "cm" ? "Height (cm)" : "Result (%)"}
+                <input type="number" inputMode="decimal" step="any" min={manualMin} max={manualMax} value={manual} onChange={(e) => setManual(e.target.value)}
+                  className="h-11 rounded-xl border bg-card px-3 text-sm font-normal normal-case tracking-normal text-foreground outline-none focus:ring-2 focus:ring-ring" />
+                <span className="text-xs font-normal normal-case tracking-normal">Between {manualMin} and {manualMax}{sel.unit === "%" ? "" : ` ${sel.unit}`}.</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input type="checkbox" checked={askReview} onChange={(e) => setAskReview(e.target.checked)} className="h-4 w-4 accent-[var(--primary)]" />
+                Ask a coach to verify this result
+              </label>
+              <button disabled={!manualOk || saving} onClick={saveManual} className={btn.primary}>{askReview ? "Save and request verification" : "Save as Self-Reported"}</button>
+              <p className="text-xs text-muted-foreground">Self-reported results are labelled as such and never count in rankings until a coach verifies them.</p>
+            </div>
+          </Card>
+        </>
+      )}
+
+      {step === 3 && sel && !manualOnly && (
         <>
           <div>
             <p className="text-sm font-semibold text-primary">{sel.name} · {getAssessmentName(sel.id)}</p>

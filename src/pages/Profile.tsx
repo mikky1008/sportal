@@ -2,7 +2,7 @@ import { Link } from "@/router-compat";
 import { Page } from "@/components/Page";
 import { Award, Ruler, School, Share2, Sparkles } from "lucide-react";
 import { toast } from "sonner";
-import { skills } from "@/lib/skills";
+import { skillsForSport } from "@/lib/skills";
 import { summarizeSkills } from "@/lib/performanceStats";
 import { useAthleteProfile } from "@/lib/profileStore";
 import { useMyHeadlineRank } from "@/lib/useRankings";
@@ -67,7 +67,7 @@ function Profile() {
           </Card>
           <Card title="Skills">
             <ul className="grid gap-4 sm:grid-cols-2">
-              {skills.map((s) => (
+              {skillsForSport(a.sport).map((s) => (
                 <li key={s.id}>
                   <div className="mb-1 flex justify-between text-sm"><span className="font-semibold">{s.emoji} {s.name}</span><span className="font-display font-bold">{skillStats[s.id]?.primaryValue ?? "—"}</span></div>
                   <ProgressBar value={skillStats[s.id]?.consistency ?? 0} />

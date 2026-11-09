@@ -3,9 +3,7 @@ import { Link } from "@/router-compat";
 import { ArrowLeft, Bookmark, BookmarkCheck, Send, X } from "lucide-react";
 import type { DirectoryAthlete, Inquiry, InquiryStatus, ThreadMessage } from "@/types";
 import { Pill, btn } from "@/components/common";
-import { MAX_NOTE_LENGTH } from "@/lib/recruitmentStore";
-import { currentRecruiter } from "@/data/mock";
-import { useHeadlineRanks } from "@/lib/useRankings";
+import { NOTE_MAX } from "@/lib/recruitingApi";
 import { cn } from "@/lib/utils";
 
 const avatarTones = [
@@ -33,7 +31,7 @@ export function inquiryTone(status: InquiryStatus) {
 }
 
 export function AthleteCard({ a, watched, onToggleWatch, footer }: { a: DirectoryAthlete; watched: boolean; onToggleWatch: () => void; footer?: ReactNode }) {
-  const rank = useHeadlineRanks().get(a.id);
+  const rank = a.rank > 0 ? a.rank : undefined;
   return (
     <article className="surface flex flex-col p-5">
       <div className="flex items-start justify-between gap-3">
@@ -153,13 +151,16 @@ export function ThreadView({ inquiry, title, subtitle, messages, side, onBack, o
   );
 }
 
-export function InquiryModal({ athlete, open, onClose, onSend }: {
+export function InquiryModal({ athlete, open, onClose, onSend, defaultOrganization = "", busy = false }: {
   athlete: DirectoryAthlete;
   open: boolean;
   onClose: () => void;
   onSend: (message: string, organization: string) => void;
+  /** pre-filled from the coach's profile */
+  defaultOrganization?: string;
+  busy?: boolean;
 }) {
-  const [org, setOrg] = useState(currentRecruiter.organization);
+  const [org, setOrg] = useState(defaultOrganization);
   const [msg, setMsg] = useState("");
   if (!open) return null;
   return (
@@ -179,16 +180,16 @@ export function InquiryModal({ athlete, open, onClose, onSend }: {
         >
           <label className="flex flex-col gap-1.5 text-sm font-medium">
             Your organization / program
-            <input required value={org} onChange={(e) => setOrg(e.target.value)} className="h-11 rounded-xl border bg-background px-3 font-normal outline-none focus:ring-2 focus:ring-ring" />
+            <input required maxLength={120} value={org} onChange={(e) => setOrg(e.target.value)} className="h-11 rounded-xl border bg-background px-3 font-normal outline-none focus:ring-2 focus:ring-ring" />
           </label>
           <label className="flex flex-col gap-1.5 text-sm font-medium">
             Message
-            <textarea required rows={4} value={msg} onChange={(e) => setMsg(e.target.value)} placeholder="Introduce your program and why this athlete fits it…" className="rounded-xl border bg-background p-3 font-normal outline-none focus:ring-2 focus:ring-ring" />
+            <textarea required rows={4} maxLength={1000} value={msg} onChange={(e) => setMsg(e.target.value)} placeholder="Introduce your program and why this athlete fits it…" className="rounded-xl border bg-background p-3 font-normal outline-none focus:ring-2 focus:ring-ring" />
           </label>
           <p className="rounded-xl bg-muted p-3 text-xs text-muted-foreground">
             Controlled messaging: the athlete reviews your inquiry first. A conversation only opens after they accept, and they can decline at any time.
           </p>
-          <button type="submit" className={btn.primary}>Send Inquiry</button>
+          <button type="submit" disabled={busy} className={btn.primary}>{busy ? "Sending…" : "Send Inquiry"}</button>
         </form>
       </div>
     </div>
@@ -205,7 +206,7 @@ export function WatchNote({ athleteId, value, onSave }: { athleteId: string; val
       <textarea
         id={id}
         rows={2}
-        maxLength={MAX_NOTE_LENGTH}
+        maxLength={NOTE_MAX}
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={() => { if (draft.trim() !== value) onSave(draft); }}

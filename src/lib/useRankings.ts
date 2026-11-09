@@ -1,38 +1,21 @@
-import { useMemo } from "react";
-import {
-  competitorResults,
-  competitorSessions,
-  directoryAthletes,
-  currentAthlete,
-} from "@/data/mock";
+import { useEffect, useState } from "react";
 import { useSessions } from "@/lib/sessionStore";
-import { useAthleteProfile, withProfile } from "@/lib/profileStore";
-import { buildCandidates, headlineRanks, type RankingCandidate } from "@/lib/rankings";
+import { fetchHeadline } from "@/lib/rankingsApi";
 
-/** Every athlete that can appear in rankings, with the signed-in athlete's live sessions and profile. */
-export function useRankingCandidates(): RankingCandidate[] {
-  const sessions = useSessions();
-  const profile = useAthleteProfile();
-  return useMemo(
-    () =>
-      buildCandidates({
-        directory: directoryAthletes.map((a) => withProfile(a, profile)),
-        currentUserId: currentAthlete.id,
-        currentUserSessions: sessions,
-        sessionsByAthlete: competitorSessions,
-        resultsByAthlete: competitorResults,
-      }),
-    [sessions, profile],
-  );
-}
-
-/** The signed-in athlete's own nationwide rank. They appear in the sample pool as the entry `currentAthlete.id` until the directory comes from the API. */
+/**
+ * The signed-in athlete's own nationwide rank in their sport's headline metric, from the server
+ * (real sessions, same rules as the Rankings page). Undefined until loaded or when not ranked yet.
+ * It is fetched again whenever the athlete's sessions change.
+ */
 export function useMyHeadlineRank(): number | undefined {
-  return useHeadlineRanks().get(currentAthlete.id);
-}
-
-/** Nationwide headline rank for an athlete, or null when they don't have enough counted sessions. */
-export function useHeadlineRanks(): Map<string, number> {
-  const candidates = useRankingCandidates();
-  return useMemo(() => headlineRanks(candidates), [candidates]);
+  const sessions = useSessions();
+  const [rank, setRank] = useState<number | undefined>(undefined);
+  useEffect(() => {
+    const ctrl = new AbortController();
+    void fetchHeadline([], ctrl.signal).then((r) => {
+      if (!ctrl.signal.aborted) setRank(r.ok ? (r.data.me?.position ?? undefined) : undefined);
+    });
+    return () => ctrl.abort();
+  }, [sessions]);
+  return rank;
 }

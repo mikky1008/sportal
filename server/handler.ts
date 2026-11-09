@@ -91,6 +91,26 @@
 // Header search:
 //   GET  /api/search                                ?q&limit -> { ok, athletes, scholarships }   q needs 2+ characters; athletes only for verified coaches
 //
+// Rankings (every route needs a signed-in account):
+//   GET  /api/rankings                              ?sport&metric&province&municipality&school&limit -> { ok, sport, metric, minCountedSessions, rows, total, notEnoughSessions, me?, options }
+//                                                    sport defaults to Basketball; me (athletes only) is the caller's own standing in this view
+//   GET  /api/rankings/headline                     ?ids=a,b,c (up to 100) -> { ok, me, ranks }   nationwide headline rank per athlete; me.position null = not ranked yet
+//   GET  /api/athletes/me/visibility                student-athlete -> { ok, visible }
+//   PUT  /api/athletes/me/visibility                student-athlete { visible } -> { ok, visible }   false = hidden from everyone else's rankings
+//
+// Recruiting (every route needs a signed-in account; discovery needs a VERIFIED coach):
+//   GET  /api/recruiting/athletes                   verified coach ?q&sport&position&school&skill&verifiedOnly&sort(score|verified|name)&limit&offset
+//                                                    -> { ok, items, total, watchlist: ids, options }   hidden showcases never appear
+//   GET  /api/recruiting/athletes/:id               verified coach, or the athlete themself -> { ok, athlete, own, watched, note, inquiry }   404 when hidden / missing
+//   GET  /api/recruiting/watchlist                  verified coach -> { ok, items: athlete + note }   (add / remove with PUT / DELETE /api/coach/shortlist/:id)
+//   PUT  /api/recruiting/watchlist/:id/note         verified coach { note <= 500 } -> { ok, note }   409 not_saved if not on the watchlist
+//   GET  /api/recruiting/inquiries                  coach: ones they sent; athlete: ones they received -> { ok, items }
+//   POST /api/recruiting/inquiries                  verified coach { athleteId, organization, message } -> 201 { ok, inquiry }
+//                                                    409 already_open | showcase_hidden, 429 rate_limited
+//   POST /api/recruiting/inquiries/:id/respond      the athlete { decision: "accepted" | "declined" } -> { ok, inquiry }   409 already_answered
+//   GET  /api/recruiting/inquiries/:id/messages     the two people in it -> { ok, items }   marks the other side's messages read
+//   POST /api/recruiting/inquiries/:id/messages     the two people in it { body <= 2000 } -> 201 { ok, message }   409 not_accepted until the athlete accepts
+//
 // The session token is returned in the JSON body and sent back as an `Authorization: Bearer`
 // header (a native app has no browser cookie jar). Only a SHA-256 hash of it is stored.
 
@@ -155,6 +175,29 @@ import {
   unreadCount,
 } from "./notifications.server.ts";
 import { globalSearch } from "./search.server.ts";
+import {
+  DIRECTORY_LIMIT_DEFAULT,
+  DIRECTORY_LIMIT_MAX,
+  getAthlete,
+  listAthletes,
+  listInquiries,
+  listMessages,
+  listWatchlist,
+  RecruitingError,
+  respondToInquiry,
+  sendInquiry,
+  sendMessage,
+  setNote,
+} from "./recruiting.server.ts";
+import {
+  getHeadline,
+  getRankings,
+  getShowcaseVisible,
+  RankingError,
+  RANKINGS_LIMIT_DEFAULT,
+  RANKINGS_LIMIT_MAX,
+  setShowcaseVisible,
+} from "./rankings.server.ts";
 import { PLAN_STATUSES, type PlanStatus } from "../src/lib/trainingPlanRules.ts";
 
 const TRUST_PROXY = process.env["TRUST_PROXY"] === "true" || !!process.env["VERCEL"];
@@ -509,6 +552,112 @@ async function handleGlobalSearch(req: Request, path: string): Promise<Response 
   return send(req, 200, { ok: true, ...(await globalSearch(user, q, Number(params.get("limit") ?? 5))) });
 }
 
+/** Returns null when the path is not a rankings route, so the caller can keep matching. */
+async function handleRankings(req: Request, path: string): Promise<Response | null> {
+  const isList = req.method === "GET" && path === "/api/rankings";
+  const isHeadline = req.method === "GET" && path === "/api/rankings/headline";
+  const isVisibility = (req.method === "GET" || req.method === "PUT") && path === "/api/athletes/me/visibility";
+  if (!isList && !isHeadline && !isVisibility) return null;
+
+  const user = await getUserBySessionToken(bearer(req));
+  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
+  const params = new URL(req.url).searchParams;
+  try {
+    if (isList) {
+      const limit = Number(params.get("limit") ?? RANKINGS_LIMIT_DEFAULT);
+      return send(req, 200, {
+        ok: true,
+        ...(await getRankings(user, {
+          sport: params.get("sport") ?? "Basketball",
+          metric: params.get("metric") ?? undefined,
+          province: params.get("province") ?? undefined,
+          municipality: params.get("municipality") ?? undefined,
+          school: params.get("school") ?? undefined,
+          limit: Number.isInteger(limit) && limit >= 1 ? Math.min(limit, RANKINGS_LIMIT_MAX) : RANKINGS_LIMIT_DEFAULT,
+        })),
+      });
+    }
+    if (isHeadline) {
+      const ids = (params.get("ids") ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+      return send(req, 200, { ok: true, ...(await getHeadline(user, ids)) });
+    }
+    if (req.method === "GET") return send(req, 200, { ok: true, visible: await getShowcaseVisible(user) });
+    const parsed = z.object({ visible: z.boolean() }).safeParse(await readJson(req));
+    if (!parsed.success) return send(req, 400, { ok: false, code: "validation", message: "Send { visible: true | false }." });
+    return send(req, 200, { ok: true, visible: await setShowcaseVisible(user, parsed.data.visible) });
+  } catch (err) {
+    if (err instanceof RankingError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
+    throw err;
+  }
+}
+
+/** Returns null when the path is not a recruiting route, so the caller can keep matching. */
+async function handleRecruiting(req: Request, path: string): Promise<Response | null> {
+  if (!path.startsWith("/api/recruiting/")) return null;
+  const m = req.method;
+  const athleteOne = /^\/api\/recruiting\/athletes\/([^/]+)$/.exec(path);
+  const noteRoute = /^\/api\/recruiting\/watchlist\/([^/]+)\/note$/.exec(path);
+  const respondRoute = /^\/api\/recruiting\/inquiries\/([^/]+)\/respond$/.exec(path);
+  const messagesRoute = /^\/api\/recruiting\/inquiries\/([^/]+)\/messages$/.exec(path);
+  const known =
+    (m === "GET" && (path === "/api/recruiting/athletes" || !!athleteOne || path === "/api/recruiting/watchlist" || path === "/api/recruiting/inquiries" || !!messagesRoute)) ||
+    (m === "PUT" && !!noteRoute) ||
+    (m === "POST" && (path === "/api/recruiting/inquiries" || !!respondRoute || !!messagesRoute));
+  if (!known) return null;
+
+  const user = await getUserBySessionToken(bearer(req));
+  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
+  const meta = requestMeta(req);
+  const params = new URL(req.url).searchParams;
+  const bad = (message: string) => send(req, 400, { ok: false, code: "validation", message });
+  try {
+    if (m === "GET" && path === "/api/recruiting/athletes") {
+      const limit = Number(params.get("limit") ?? DIRECTORY_LIMIT_DEFAULT);
+      const offset = Number(params.get("offset") ?? 0);
+      const sort = params.get("sort");
+      return send(req, 200, {
+        ok: true,
+        ...(await listAthletes(user, {
+          q: params.get("q") ?? undefined,
+          sport: params.get("sport") || undefined,
+          position: params.get("position") || undefined,
+          school: params.get("school") || undefined,
+          skill: params.get("skill") || undefined,
+          verifiedOnly: params.get("verifiedOnly") === "true",
+          sort: sort === "verified" || sort === "name" || sort === "score" ? sort : undefined,
+          limit: Number.isInteger(limit) && limit >= 1 ? Math.min(limit, DIRECTORY_LIMIT_MAX) : DIRECTORY_LIMIT_DEFAULT,
+          offset: Number.isInteger(offset) && offset >= 0 ? offset : 0,
+        })),
+      });
+    }
+    if (athleteOne) return send(req, 200, { ok: true, ...(await getAthlete(user, athleteOne[1] ?? "")) });
+    if (m === "GET" && path === "/api/recruiting/watchlist") return send(req, 200, { ok: true, ...(await listWatchlist(user)) });
+    if (noteRoute) {
+      const parsed = z.object({ note: z.string() }).safeParse(await readJson(req));
+      if (!parsed.success) return bad("Send { note: text }.");
+      return send(req, 200, { ok: true, ...(await setNote(user, noteRoute[1] ?? "", parsed.data.note)) });
+    }
+    if (m === "GET" && path === "/api/recruiting/inquiries") return send(req, 200, { ok: true, ...(await listInquiries(user)) });
+    if (m === "POST" && path === "/api/recruiting/inquiries") {
+      const parsed = z.object({ athleteId: z.string(), organization: z.string(), message: z.string() }).safeParse(await readJson(req));
+      if (!parsed.success) return bad("Send { athleteId, organization, message }.");
+      return send(req, 201, { ok: true, inquiry: await sendInquiry(user, parsed.data, meta) });
+    }
+    if (respondRoute) {
+      const parsed = z.object({ decision: z.enum(["accepted", "declined"]) }).safeParse(await readJson(req));
+      if (!parsed.success) return bad('Send { decision: "accepted" | "declined" }.');
+      return send(req, 200, { ok: true, inquiry: await respondToInquiry(user, respondRoute[1] ?? "", parsed.data.decision, meta) });
+    }
+    if (m === "GET") return send(req, 200, { ok: true, ...(await listMessages(user, (messagesRoute as RegExpExecArray)[1] ?? "")) });
+    const parsed = z.object({ body: z.string() }).safeParse(await readJson(req));
+    if (!parsed.success) return bad("Send { body: text }.");
+    return send(req, 201, { ok: true, message: await sendMessage(user, (messagesRoute as RegExpExecArray)[1] ?? "", parsed.data.body) });
+  } catch (err) {
+    if (err instanceof RecruitingError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
+    throw err;
+  }
+}
+
 /** Returns null when the path is not a training-plans route, so the caller can keep matching. */
 async function handleTrainingPlans(req: Request, path: string): Promise<Response | null> {
   if (path !== "/api/training-plans" && !path.startsWith("/api/training-plans/")) return null;
@@ -710,6 +859,10 @@ export async function handle(req: Request): Promise<Response> {
     if (notifications) return notifications;
     const search = await handleGlobalSearch(req, path);
     if (search) return search;
+    const rankings = await handleRankings(req, path);
+    if (rankings) return rankings;
+    const recruiting = await handleRecruiting(req, path);
+    if (recruiting) return recruiting;
     return send(req, 404, { error: "not_found" });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";

@@ -8,7 +8,8 @@ import { Switch } from "@/components/ui/switch";
 import { ScholarshipInterestsCard, ShowcaseCard } from "@/components/profile-extras-cards";
 import { athleteCompletionNow, toastSaved } from "@/components/profile-completion-cards";
 import { ATHLETE_SECTION_IDS, type AthleteSectionId } from "@/lib/profileCompletion";
-import { recruitmentStore, useRecruitment } from "@/lib/recruitmentStore";
+import { MUNICIPALITIES } from "@/lib/athleteProfileRules";
+import { getShowcaseVisibility, setShowcaseVisibility } from "@/lib/rankingsApi";
 import {
   LIMITS, ProfileValidationError, TEAM_STATUSES, hasErrors, profileStore, toDraft, useAthleteProfile, validateProfile,
   type ProfileDraft,
@@ -37,7 +38,6 @@ function Settings() {
     el.scrollIntoView({ block: "start", behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
     el.querySelector<HTMLElement>("input,select,textarea,button")?.focus({ preventScroll: true });
   }, [section]);
-  const recruitment = useRecruitment();
   // `draft` is null until the athlete edits something, so the form always shows the saved profile.
   const [draft, setDraft] = useState<ProfileDraft | null>(null);
   const [tried, setTried] = useState(false);
@@ -69,7 +69,15 @@ function Settings() {
   const discard = () => { setDraft(null); setTried(false); };
   const [prefs, setPrefs] = useState({ analysis: true, recruitment: true, scholarships: true });
   // Showcase visibility is real shared state: it controls whether recruiters can find you.
-  const showcaseVisible = recruitment.showcaseVisible !== false;
+  // Whether verified coaches can find this athlete, and whether they appear in other people's
+  // rankings. It is saved on the server (that is what recruiting and rankings read).
+  const [visible, setVisible] = useState<boolean | null>(null);
+  const showcaseVisible = visible !== false;
+  useEffect(() => {
+    let live = true;
+    void getShowcaseVisibility().then((r) => { if (live && r.ok) setVisible(r.data.visible); });
+    return () => { live = false; };
+  }, []);
   const toggles: { key: keyof typeof prefs; label: string; desc: string }[] = [
     { key: "analysis", label: "Analysis notifications", desc: "Get notified when a practice analysis is complete." },
     { key: "recruitment", label: "Recruitment messages", desc: "Messages and invitations from coaches." },
@@ -102,6 +110,14 @@ function Settings() {
           <label className="flex flex-col gap-1.5 text-sm font-medium sm:col-span-2">School
             <input className={field} value={d.school} onChange={(e) => edit({ school: e.target.value })} aria-invalid={!!shown.school} aria-describedby="e-school" />
             <FieldError id="e-school" msg={shown.school} />
+          </label>
+          <label className="flex flex-col gap-1.5 text-sm font-medium sm:col-span-2">Municipality
+            <Select value={d.municipality} onChange={(e) => edit({ municipality: e.target.value })} aria-describedby="e-muni">
+              <option value="">Not set</option>
+              {MUNICIPALITIES.map((m) => <option key={m} value={m}>{m}</option>)}
+            </Select>
+            <span id="e-muni" className="text-xs font-normal text-muted-foreground">Where your school is. It puts you in the Municipality filter on Rankings.</span>
+            <FieldError id="e-muni-err" msg={shown.municipality} />
           </label>
           <label className="flex flex-col gap-1.5 text-sm font-medium sm:col-span-2">Year level
             <input className={field} value={d.year} onChange={(e) => edit({ year: e.target.value })} aria-invalid={!!shown.year} placeholder="e.g. Grade 12 · STEM" />
@@ -167,16 +183,22 @@ function Settings() {
               <p className="font-medium">Visible to coaches &amp; universities</p>
               <p className="text-sm text-muted-foreground">
                 {showcaseVisible
-                  ? "Verified coaches can discover your showcase and send you inquiries."
-                  : "Your showcase is hidden from search and new inquiries are closed. Existing conversations stay open."}
+                  ? "Verified coaches can discover your showcase and send you inquiries, and you appear in rankings."
+                  : "Your showcase is hidden from search and from other people's rankings, and new inquiries are closed. Existing conversations stay open."}
               </p>
             </div>
             <Switch
               aria-label="Visible to coaches and universities"
               checked={showcaseVisible}
-              onCheckedChange={(v) => {
-                recruitmentStore.setShowcaseVisible(v, { role: "athlete", name: `${a.firstName} ${a.lastName}` });
-                toast.success(v ? "Showcase is visible to recruiters" : "Showcase hidden from recruiters");
+              disabled={visible === null}
+              onCheckedChange={async (v) => {
+                const r = await setShowcaseVisibility(v);
+                if (!r.ok) {
+                  toast.error(r.message || "Couldn't change your visibility. Please try again.");
+                  return;
+                }
+                setVisible(v);
+                toast.success(v ? "Showcase is visible to coaches and in rankings" : "Showcase hidden from coaches and from others' rankings");
               }}
             />
           </li>
@@ -190,7 +212,7 @@ function Settings() {
       </Card>
       <Card title="Account type">
         <p className="text-sm text-muted-foreground">
-          Signed in as <b className="text-foreground">Student-Athlete</b>. Coach/University and Administrator accounts are coming soon — you can preview the recruiter console under <b className="text-foreground">Recruiting</b>. Inquiries from coaches stay locked until you accept them.
+          Signed in as <b className="text-foreground">Student-Athlete</b>. Coach/University and Administrator accounts are coming soon — coaches who find your showcase can send you inquiries under <b className="text-foreground">Recruiting</b>. Those stay locked until you accept them.
         </p>
       </Card>
     </div>

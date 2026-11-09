@@ -2,7 +2,6 @@ import type {
   Athlete, Skill, PerformanceSession, RankingResult, SessionStatus, SkillId, Scholarship, Notification, Sport,
   DirectoryAthlete, Inquiry, ThreadMessage,
 } from "@/types";
-import type { RecruitmentState } from "@/lib/recruitmentStore";
 
 export const sports: Sport[] = [
   { id: "basketball", name: "Basketball", aiSupported: true },
@@ -331,24 +330,3 @@ export const competitorResults: Record<string, RankingResult[]> = {
   "a-021": sessionsOf("Spike Accuracy", [[81, "Coach-Verified"], [80, "AI-Assessed"], [82, "AI-Assessed"]]),
 };
 
-// Sample recruitment state. The Accepted inquiry shows a live conversation;
-// the Pending one demonstrates the athlete's accept/decline decision.
-export const recruitmentSeed: RecruitmentState = {
-  watchlist: ["a-006", "a-008"],
-  inquiries: [
-    {
-      id: "i1", athleteId: "a-001", recruiterName: "Coach Miguel Reyes", organization: "FEU Tamaraws — Men's Basketball",
-      message: "Hi Juan — we've been following your shooting sessions on Sportal and would love to invite you to a campus visit and tryout at FEU.",
-      status: "Accepted", createdAt: "Oct 30",
-    },
-    {
-      id: "i2", athleteId: "a-001", recruiterName: "Coach Ramon Santos", organization: "UP Diliman — Men's Basketball",
-      message: "Hi Juan, your mid-range consistency caught our eye. Would you be open to hearing about UP's program?",
-      status: "Pending", createdAt: "Nov 01",
-    },
-  ],
-  messages: [
-    { id: "m1", inquiryId: "i1", from: "recruiter", body: "Hi Juan! Coach Reyes here. Whenever you're free, we can arrange a campus tour and a session with the team.", time: "Oct 30" },
-    { id: "m2", inquiryId: "i1", from: "athlete", body: "Thank you, Coach! Saturdays work best for me.", time: "Oct 31" },
-  ],
-};

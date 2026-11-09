@@ -37,14 +37,14 @@ interface NavEntry {
 const MAIN_NAV: NavEntry[] = [
   { label: "Dashboard", icon: LayoutDashboard, to: COACH_HOME },
   { label: "My Athletes", icon: Users, to: "/coach/athletes" },
-  { label: "Athlete Discovery", icon: Compass },
+  { label: "Athlete Discovery", icon: Compass, to: "/recruiting" },
 ];
 
 const MORE_NAV: NavEntry[] = [
   { label: "Training Plans", icon: ClipboardList, to: "/coach/training-plans/new", activePrefix: "/coach/training-plans" },
   { label: "Affiliation Requests", icon: UserCheck },
-  { label: "Recruitment", icon: Handshake },
-  { label: "Messages", icon: MessageSquare },
+  { label: "Recruitment", icon: Handshake, to: "/recruiting?tab=watchlist" },
+  { label: "Messages", icon: MessageSquare, to: "/recruiting?tab=messages" },
   { label: "My University", icon: Building2 },
 ];
 

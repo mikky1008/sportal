@@ -559,6 +559,39 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX idx_notifications_unread ON notifications (user_id) WHERE read_at IS NULL;
     `,
   },
+  {
+    version: 8,
+    name: "athlete_showcase_visibility",
+    sql: `
+      -- An athlete can hide themselves from public rankings (and, later, from the recruiting directory).
+      -- New and existing athletes are visible by default, which is how rankings behaved before.
+      ALTER TABLE athlete_profiles ADD COLUMN showcase_visible BOOLEAN NOT NULL DEFAULT TRUE;
+    `,
+  },
+  {
+    version: 9,
+    name: "recruiting_inquiries_notes_and_threads",
+    sql: `
+      -- An inquiry now carries what the coach wrote and which program they wrote for.
+      ALTER TABLE recruitment_inquiries
+        ADD COLUMN organization TEXT NOT NULL DEFAULT '',
+        ADD COLUMN message      TEXT NOT NULL DEFAULT '',
+        ADD COLUMN responded_at TIMESTAMPTZ,
+        ADD CONSTRAINT recruitment_inquiries_message_check CHECK (length(message) <= 1000),
+        ADD CONSTRAINT recruitment_inquiries_organization_check CHECK (length(organization) <= 120);
+
+      -- A coach's private note on a shortlisted athlete (the watchlist).
+      ALTER TABLE coach_shortlist
+        ADD COLUMN note TEXT NOT NULL DEFAULT '',
+        ADD CONSTRAINT coach_shortlist_note_check CHECK (length(note) <= 500);
+
+      -- Messages belong to an inquiry, so each inquiry is its own conversation. Older messages
+      -- (no inquiry) keep working on the coach dashboard.
+      ALTER TABLE coach_messages ADD COLUMN inquiry_id TEXT REFERENCES recruitment_inquiries(id) ON DELETE CASCADE;
+      CREATE INDEX idx_coach_messages_inquiry ON coach_messages (inquiry_id, created_at);
+      CREATE INDEX idx_recruitment_inquiries_athlete ON recruitment_inquiries (athlete_id, updated_at DESC);
+    `,
+  },
 ];
 
 const MIGRATION_LOCK_ID = 727_274_001;

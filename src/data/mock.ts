@@ -330,3 +330,13 @@ export const competitorResults: Record<string, RankingResult[]> = {
   "a-021": sessionsOf("Spike Accuracy", [[81, "Coach-Verified"], [80, "AI-Assessed"], [82, "AI-Assessed"]]),
 };
 
+
+/**
+ * Starting state for the browser-side recruitment store (src/lib/recruitmentStore.ts): nothing
+ * saved, no inquiries, no messages. Real inquiries and the watchlist now come from the API.
+ */
+export const recruitmentSeed: { watchlist: string[]; inquiries: Inquiry[]; messages: ThreadMessage[] } = {
+  watchlist: [],
+  inquiries: [],
+  messages: [],
+};

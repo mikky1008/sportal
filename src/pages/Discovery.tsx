@@ -167,7 +167,10 @@ function Discovery() {
     toast.success(saved.has(a.id) ? `Removed ${a.name} from your shortlist` : `Saved ${a.name} to your shortlist`);
   };
   const toggleCompare = (a: DiscoveryAthlete) => {
-    if (!compare.includes(a.id) && compare.length >= MAX_COMPARE) return toast.error(`You can compare up to ${MAX_COMPARE} athletes at a time.`);
+    if (!compare.includes(a.id) && compare.length >= MAX_COMPARE) {
+      toast.error(`You can compare up to ${MAX_COMPARE} athletes at a time.`);
+      return;
+    }
     setCompare((p) => (p.includes(a.id) ? p.filter((x) => x !== a.id) : [...p, a.id]));
     setDrawerOpen(true);
   };

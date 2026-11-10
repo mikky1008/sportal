@@ -158,10 +158,6 @@ function Hero({ onSignIn, onSignUp }: { onSignIn: () => void; onSignUp: () => vo
           <button type="button" onClick={onSignIn} className={ctaPrimary}>
             <Zap className="h-5 w-5" aria-hidden="true" /> Sign Up Now
           </button>
-          <span className="hidden text-sm font-medium uppercase tracking-widest text-white/60 sm:inline">or</span>
-          <button type="button" onClick={onSignUp} className={ctaSecondary}>
-            Create Account
-          </button>
         </div>
         <p className="mt-5 text-sm text-white/60">
           Don't have an account?{" "}

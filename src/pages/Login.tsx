@@ -86,7 +86,18 @@ function TopNav() {
 }
 
 /** The sign-in card on its own, so it can sit on the login page or inside the landing page popup. */
-export function LoginForm() {
+const inputDark =
+  "h-12 w-full rounded-xl border border-slate-700 bg-slate-800 pl-11 text-sm text-white shadow-sm outline-none transition placeholder:text-slate-500 hover:border-slate-500 focus:border-sky-400 focus:ring-4 focus:ring-sky-400/20 disabled:cursor-not-allowed disabled:opacity-60";
+
+interface LoginFormProps {
+  /** "dark" is the navy look used in the landing page drawer */
+  tone?: "light" | "dark";
+  /** when given, "Create one" switches to the sign up view instead of leaving the page */
+  onSwitchToSignup?: () => void;
+}
+
+export function LoginForm({ tone = "light", onSwitchToSignup }: LoginFormProps = {}) {
+  const dark = tone === "dark";
   const location = useLocation();
   const redirect = new URLSearchParams(location.search).get("redirect") ?? undefined;
   const { signIn, accept } = useAuth();
@@ -131,12 +142,12 @@ export function LoginForm() {
 
   return (
         <div className="w-full max-w-md">
-          <div className="surface p-6 sm:p-8">
-            <h1 className="m-0! font-sans text-3xl! font-normal! tracking-tight">Welcome back</h1>
-            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">Sign in to continue to your dashboard.</p>
+          <div className={dark ? undefined : "surface p-6 sm:p-8"}>
+            <h1 className={cn("m-0! font-sans text-3xl! font-normal! tracking-tight", dark && "text-white!")}>Welcome back</h1>
+            <p className={cn("mt-2 text-sm leading-relaxed", dark ? "text-slate-400" : "text-muted-foreground")}>Sign in to continue to your dashboard.</p>
 
             {formError && (
-              <div role="alert" className="mt-5 flex items-start gap-2.5 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+              <div role="alert" className={cn("mt-5 flex items-start gap-2.5 rounded-xl border p-3 text-sm", dark ? "border-red-400/30 bg-red-500/10 text-red-300" : "border-destructive/30 bg-destructive/10 text-destructive")}>
                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                 <span>{formError}</span>
               </div>
@@ -144,9 +155,9 @@ export function LoginForm() {
 
             <form onSubmit={onSubmit} noValidate className="mt-6 flex flex-col gap-5">
               <div>
-                <label htmlFor="identifier" className="mb-1.5 block text-sm font-semibold">Username or email</label>
+                <label htmlFor="identifier" className={cn("mb-1.5 block text-sm font-semibold", dark && "text-slate-200")}>Username or email</label>
                 <div className="relative">
-                  <User className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <User className={cn("pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2", dark ? "text-slate-400" : "text-muted-foreground")} />
                   <input
                     id="identifier"
                     name="identifier"
@@ -164,25 +175,25 @@ export function LoginForm() {
                     aria-invalid={!!fieldErrors.identifier}
                     aria-describedby={fieldErrors.identifier ? "identifier-error" : undefined}
                     placeholder="you@university.edu"
-                    className={cn(inputBase, "pr-4", fieldErrors.identifier && "border-destructive focus:border-destructive focus:ring-destructive/20")}
+                    className={cn(dark ? inputDark : inputBase, "pr-4", fieldErrors.identifier && (dark ? "border-red-400 focus:border-red-400 focus:ring-red-400/20" : "border-destructive focus:border-destructive focus:ring-destructive/20"))}
                   />
                 </div>
-                {fieldErrors.identifier && <p id="identifier-error" className="mt-1.5 text-xs font-medium text-destructive">{fieldErrors.identifier}</p>}
+                {fieldErrors.identifier && <p id="identifier-error" className={cn("mt-1.5 text-xs font-medium", dark ? "text-red-300" : "text-destructive")}>{fieldErrors.identifier}</p>}
               </div>
 
               <div>
                 <div className="mb-1.5 flex items-center justify-between">
-                  <label htmlFor="password" className="block text-sm font-semibold">Password</label>
+                  <label htmlFor="password" className={cn("block text-sm font-semibold", dark && "text-slate-200")}>Password</label>
                   <button
                     type="button"
                     onClick={() => toast.info("Password reset isn't available yet. Please contact your administrator.")}
-                    className="rounded text-xs font-semibold text-primary transition hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className={cn("rounded text-xs font-semibold transition hover:underline focus-visible:outline-none focus-visible:ring-2", dark ? "text-sky-400 focus-visible:ring-sky-400" : "text-primary focus-visible:ring-ring")}
                   >
                     Forgot password?
                   </button>
                 </div>
                 <div className="relative">
-                  <Lock className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Lock className={cn("pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2", dark ? "text-slate-400" : "text-muted-foreground")} />
                   <input
                     id="password"
                     name="password"
@@ -196,22 +207,22 @@ export function LoginForm() {
                     aria-invalid={!!fieldErrors.password}
                     aria-describedby={fieldErrors.password ? "password-error" : undefined}
                     placeholder="Enter your password"
-                    className={cn(inputBase, "pr-12", fieldErrors.password && "border-destructive focus:border-destructive focus:ring-destructive/20")}
+                    className={cn(dark ? inputDark : inputBase, "pr-12", fieldErrors.password && (dark ? "border-red-400 focus:border-red-400 focus:ring-red-400/20" : "border-destructive focus:border-destructive focus:ring-destructive/20"))}
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword((v) => !v)}
                     aria-label={showPassword ? "Hide password" : "Show password"}
                     aria-pressed={showPassword}
-                    className="absolute right-2 top-1/2 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-lg text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className={cn("absolute right-2 top-1/2 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-lg transition focus-visible:outline-none focus-visible:ring-2", dark ? "text-slate-400 hover:bg-slate-700 hover:text-white focus-visible:ring-sky-400" : "text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring")}
                   >
                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
-                {fieldErrors.password && <p id="password-error" className="mt-1.5 text-xs font-medium text-destructive">{fieldErrors.password}</p>}
+                {fieldErrors.password && <p id="password-error" className={cn("mt-1.5 text-xs font-medium", dark ? "text-red-300" : "text-destructive")}>{fieldErrors.password}</p>}
               </div>
 
-              <label className="flex cursor-pointer select-none items-center gap-2.5 text-sm">
+              <label className={cn("flex cursor-pointer select-none items-center gap-2.5 text-sm", dark && "text-slate-300")}>
                 <input
                   type="checkbox"
                   checked={remember}
@@ -222,7 +233,7 @@ export function LoginForm() {
                 <span>Remember me for 30 days</span>
               </label>
 
-              <button type="submit" disabled={loading} className={cn(btn.primary, "h-12 w-full rounded-full text-base")}>
+              <button type="submit" disabled={loading} className={dark ? "inline-flex h-12 w-full items-center justify-center gap-2 rounded-full bg-sky-400 text-base font-semibold text-slate-900 outline-none transition hover:bg-sky-300 focus-visible:ring-4 focus-visible:ring-sky-400/40 active:translate-y-px disabled:pointer-events-none disabled:opacity-60" : cn(btn.primary, "h-12 w-full rounded-full text-base")}>
                 {loading ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" /> Signing in…
@@ -233,9 +244,15 @@ export function LoginForm() {
               </button>
             </form>
           </div>
-          <p className="mt-5 text-center text-sm text-muted-foreground">
+          <p className={cn("mt-5 text-center text-sm", dark ? "text-slate-400" : "text-muted-foreground")}>
             Don't have an account?{" "}
-            <Link to="/signup" direction="none" className="font-semibold text-primary hover:underline">Create one</Link>
+            {onSwitchToSignup ? (
+              <button type="button" onClick={onSwitchToSignup} className={cn("font-semibold hover:underline", dark ? "text-sky-400" : "text-primary")}>
+                Create one
+              </button>
+            ) : (
+              <Link to="/signup" direction="none" className="font-semibold text-primary hover:underline">Create one</Link>
+            )}
           </p>
         </div>
   );

@@ -2,8 +2,7 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "rea
 import { Landmark, Loader2, Menu, Target, Trophy, UserRound, X, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { useLocation } from "react-router-dom";
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { LoginForm } from "@/pages/Login";
+import { AuthDrawer, type AuthMode } from "@/components/auth-drawer";
 import { Link } from "@/router-compat";
 import { Page } from "@/components/Page";
 import { cn } from "@/lib/utils";
@@ -64,7 +63,7 @@ function SectionHeading({ eyebrow, title, intro, dark }: { eyebrow: string; titl
   );
 }
 
-function Header({ onJump, onSignIn }: { onJump: (id: SectionId) => void; onSignIn: () => void }) {
+function Header({ onJump, onSignIn, onSignUp }: { onJump: (id: SectionId) => void; onSignIn: () => void; onSignUp: () => void }) {
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -100,9 +99,9 @@ function Header({ onJump, onSignIn }: { onJump: (id: SectionId) => void; onSignI
           <button type="button" onClick={onSignIn} className="hidden rounded-full border border-white/60 px-5 py-2 text-sm font-semibold text-white transition hover:border-white hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 sm:inline-flex">
             Sign In
           </button>
-          <Link to="/signup" direction="forward" className="inline-flex items-center rounded-full bg-sky-400 px-5 py-2 text-sm font-semibold text-[#0d2340] transition hover:bg-sky-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-200">
-            Sign Up
-          </Link>
+          <button type="button" onClick={onSignUp} className="inline-flex items-center rounded-full bg-sky-400 px-5 py-2 text-sm font-semibold text-[#0d2340] transition hover:bg-sky-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-200">
+            Create Account
+          </button>
           <button
             type="button"
             onClick={() => setOpen((v) => !v)}
@@ -126,13 +125,16 @@ function Header({ onJump, onSignIn }: { onJump: (id: SectionId) => void; onSignI
           <button type="button" onClick={() => { setOpen(false); onSignIn(); }} className="mt-1 block w-full rounded-xl px-3 py-3 text-left text-base font-medium text-white/90 hover:bg-white/10 sm:hidden">
             Sign In
           </button>
+          <button type="button" onClick={() => { setOpen(false); onSignUp(); }} className="block w-full rounded-xl px-3 py-3 text-left text-base font-semibold text-sky-300 hover:bg-white/10">
+            Create Account
+          </button>
         </nav>
       )}
     </header>
   );
 }
 
-function Hero({ onSignIn }: { onSignIn: () => void }) {
+function Hero({ onSignIn, onSignUp }: { onSignIn: () => void; onSignUp: () => void }) {
   return (
     <section className="relative isolate overflow-hidden" style={{ backgroundColor: NAVY }}>
       {/* dark blue court at 50% over the navy */}
@@ -153,13 +155,13 @@ function Hero({ onSignIn }: { onSignIn: () => void }) {
           Connecting student-athletes, coaches, and recruiters across universities in real-time.
         </p>
         <div className="mt-10 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:gap-4">
-          <Link to="/signup" direction="forward" className={ctaPrimary}>
+          <button type="button" onClick={onSignUp} className={ctaPrimary}>
             <Zap className="h-5 w-5" aria-hidden="true" /> Sign Up Now
-          </Link>
+          </button>
           <span className="hidden text-sm font-medium uppercase tracking-widest text-white/60 sm:inline">or</span>
-          <Link to="/signup" direction="forward" className={ctaSecondary}>
+          <button type="button" onClick={onSignUp} className={ctaSecondary}>
             Create Account
-          </Link>
+          </button>
         </div>
         <p className="mt-5 text-sm text-white/60">
           Already have an account?{" "}
@@ -303,7 +305,7 @@ function Field({ label, id, error, children }: { label: string; id: string; erro
   );
 }
 
-function Footer({ onJump, onSignIn }: { onJump: (id: SectionId) => void; onSignIn: () => void }) {
+function Footer({ onJump, onSignIn, onSignUp }: { onJump: (id: SectionId) => void; onSignIn: () => void; onSignUp: () => void }) {
   const linkClass = "rounded text-sm text-white/70 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400";
   return (
     <footer className="border-t border-white/10 px-4 py-14 sm:px-8" style={{ backgroundColor: "#091a31" }}>
@@ -315,7 +317,7 @@ function Footer({ onJump, onSignIn }: { onJump: (id: SectionId) => void; onSignI
         <nav aria-label="Platform">
           <h4 className="font-display text-sm font-bold uppercase tracking-[0.18em] text-white">Platform</h4>
           <ul className="mt-4 space-y-3">
-            <li><Link to="/signup" direction="forward" className={linkClass}>Sign Up</Link></li>
+            <li><button type="button" onClick={onSignUp} className={linkClass}>Create Account</button></li>
             <li><button type="button" onClick={onSignIn} className={linkClass}>Sign In</button></li>
           </ul>
         </nav>
@@ -343,13 +345,13 @@ function Footer({ onJump, onSignIn }: { onJump: (id: SectionId) => void; onSignI
 export default function Landing() {
   const rootRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
-  const [signInOpen, setSignInOpen] = useState(false);
+  const [auth, setAuth] = useState<AuthMode | null>(null);
 
   // Arriving from a protected page (?redirect=...) or from "Login" on the sign up page: open the popup straight away.
   useEffect(() => {
     if (location.pathname !== "/login") return;
     const q = new URLSearchParams(location.search);
-    if (q.has("redirect") || q.has("signin")) setSignInOpen(true);
+    if (q.has("redirect") || q.has("signin")) setAuth("login");
   }, [location.pathname, location.search]);
 
   const jump = (id: SectionId) => {
@@ -362,23 +364,17 @@ export default function Landing() {
   return (
     <Page shell={false}>
       <div ref={rootRef} className="min-h-[100dvh]" style={{ backgroundColor: NAVY }}>
-        <Header onJump={jump} onSignIn={() => setSignInOpen(true)} />
+        <Header onJump={jump} onSignIn={() => setAuth("login")} onSignUp={() => setAuth("signup")} />
         <main>
-          <Hero onSignIn={() => setSignInOpen(true)} />
+          <Hero onSignIn={() => setAuth("login")} onSignUp={() => setAuth("signup")} />
           <Services />
           <div style={{ backgroundColor: NAVY }}>
             <About />
           </div>
           <Contact />
         </main>
-        <Footer onJump={jump} onSignIn={() => setSignInOpen(true)} />
-        <Dialog open={signInOpen} onOpenChange={setSignInOpen}>
-          <DialogContent className="max-h-[100dvh] w-[calc(100%-2rem)] max-w-md overflow-y-auto border-0 bg-transparent p-0 shadow-none sm:rounded-none">
-            <DialogTitle className="sr-only">Sign in</DialogTitle>
-            <DialogDescription className="sr-only">Sign in to continue to your dashboard.</DialogDescription>
-            <LoginForm />
-          </DialogContent>
-        </Dialog>
+        <Footer onJump={jump} onSignIn={() => setAuth("login")} onSignUp={() => setAuth("signup")} />
+        <AuthDrawer mode={auth} onModeChange={setAuth} onClose={() => setAuth(null)} />
       </div>
     </Page>
   );

@@ -1,3 +1,4 @@
+import { useLocation } from "react-router-dom";
 import { Link } from "@/router-compat";
 import { Page } from "@/components/Page";
 import { useAuth } from "@/auth/AuthContext";
@@ -18,13 +19,13 @@ import court from "@/assets/court.jpg";
 const inputBase =
   "h-12 w-full rounded-xl border bg-card px-4 text-sm shadow-sm outline-none transition placeholder:text-muted-foreground/70 hover:border-success/50 focus:border-success focus:ring-4 focus:ring-success/20 disabled:cursor-not-allowed disabled:opacity-60";
 
-type Role = "athlete" | "coach" | "university";
+export type Role = "athlete" | "coach" | "university";
 type Field =
   | "firstName" | "lastName" | "email" | "password" | "confirm"
   | "organization" | "position" | "sport" | "designation";
 type Errors = Partial<Record<Field, string>>;
 
-const ROLES: { id: Role; title: string; blurb: string; icon: typeof Trophy }[] = [
+export const ROLES: { id: Role; title: string; blurb: string; icon: typeof Trophy }[] = [
   { id: "athlete", title: "Student-Athlete", blurb: "Build your profile and get discovered.", icon: Trophy },
   { id: "coach", title: "Coach / Recruiter", blurb: "Find and follow talented athletes.", icon: UserSearch },
   { id: "university", title: "University Representative", blurb: "Represent your university's athletics.", icon: Building2 },
@@ -94,7 +95,12 @@ const EMPTY: Record<Field, string> = {
 function SignupScreen() {
   const { signUp, accept } = useAuth();
   // null = still choosing an account type
-  const [role, setRole] = useState<Role | null>(null);
+  const location = useLocation();
+  const [role, setRole] = useState<Role | null>(() => {
+    // the landing page drawer already asked, so it passes ?role=...
+    const r = new URLSearchParams(location.search).get("role");
+    return r === "athlete" || r === "coach" || r === "university" ? r : null;
+  });
   const [values, setValues] = useState<Record<Field, string>>(EMPTY);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);

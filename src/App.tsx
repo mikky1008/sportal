@@ -8,14 +8,15 @@ import { Page } from "@/components/Page";
 import { Link } from "@/router-compat";
 import { homePathFor, primaryRole } from "@/lib/roles";
 
+import Login from "@/pages/Login";
 import Signup from "@/pages/Signup";
-import { TermsPage, PrivacyPage } from "@/pages/Legal";
-import Landing from "@/pages/Landing";
 import CompleteProfile from "@/pages/CompleteProfile";
 import Dashboard from "@/pages/Dashboard";
 import CoachDashboard from "@/pages/CoachDashboard";
 import MyAthletes from "@/pages/MyAthletes";
 import SessionReviews from "@/pages/SessionReviews";
+import CoachApplications from "@/pages/CoachApplications";
+import AdminVerifications from "@/pages/AdminVerifications";
 import TrainingPlans from "@/pages/TrainingPlans";
 import TrainingPlanDetail from "@/pages/TrainingPlanDetail";
 import CreateTrainingPlan from "@/pages/CreateTrainingPlan";
@@ -39,6 +40,8 @@ const PROTECTED: { path: string; component: ComponentType }[] = [
   { path: "/coach/dashboard", component: CoachDashboard },
   { path: "/coach/athletes", component: MyAthletes },
   { path: "/coach/reviews", component: SessionReviews },
+  { path: "/coach/applications", component: CoachApplications },
+  { path: "/admin/verifications", component: AdminVerifications },
   // "new" starts a blank plan; any other value is the id of the plan to edit
   { path: "/coach/training-plans/:planId", component: CreateTrainingPlan },
   { path: "/profile", component: Profile },
@@ -79,7 +82,7 @@ function NotFound() {
 function Splash() {
   return (
     <div className="grid min-h-[100dvh] place-items-center bg-hero">
-      <img src="/icon-192.png" alt="" aria-hidden="true" className="h-16 w-16 shrink-0 rounded-[22%]" />
+      <span className="grid h-16 w-16 place-items-center rounded-2xl bg-electric-gradient font-display text-3xl font-bold text-primary-foreground shadow-glow">S</span>
     </div>
   );
 }
@@ -93,9 +96,7 @@ function Shell() {
     <>
       {/* `key` throws the cached screens away on every sign in / sign out, so one account never sees another's */}
       <IonRouterOutlet id="main" key={epoch}>
-        <Route exact path="/login" render={() => (user ? <Redirect to={landing ?? homePathFor(user.roles)} /> : <Landing />)} />
-        <Route exact path="/terms" component={TermsPage} />
-        <Route exact path="/privacy" component={PrivacyPage} />
+        <Route exact path="/login" render={() => (user ? <Redirect to={landing ?? homePathFor(user.roles)} /> : <Login />)} />
         <Route exact path="/signup" render={() => (user ? <Redirect to={landing ?? homePathFor(user.roles)} /> : <Signup />)} />
         {PROTECTED.map(({ path, component: C }) => (
           <Route
@@ -107,13 +108,14 @@ function Shell() {
               // Coaches have their own dashboard: never show them the athlete one, and vice versa.
               const isCoach = primaryRole(user.roles) === "coach";
               const isRep = primaryRole(user.roles) === "university_representative";
-              if (path === "/dashboard" && (isCoach || isRep)) return <Redirect to={homePathFor(user.roles)} />;
+              const isAdmin = user.roles.includes("admin");
+              if (path === "/dashboard" && (isCoach || isRep || isAdmin)) return <Redirect to={homePathFor(user.roles)} />;
               if (path.startsWith("/coach/") && !isCoach) return <Redirect to={homePathFor(user.roles)} />;
               return <C />;
             }}
           />
         ))}
-        <Route exact path="/" render={() => (user ? <Redirect to={homePathFor(user.roles)} /> : <Landing />)} />
+        <Route exact path="/" render={() => <Redirect to={user ? homePathFor(user.roles) : "/login"} />} />
         <Route render={() => (user ? <NotFound /> : <Redirect to="/login" />)} />
       </IonRouterOutlet>
     </>

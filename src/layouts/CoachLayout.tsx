@@ -4,7 +4,7 @@ import { IonContent, IonPage } from "@ionic/react";
 import { toast } from "sonner";
 import {
   Building2, ClipboardList, Compass, Handshake, LayoutDashboard, LogOut, MessageSquare, Settings, User, UserCheck, Users,
-  type LucideIcon, ClipboardCheck } from "lucide-react";
+  type LucideIcon, ClipboardCheck, UserPlus } from "lucide-react";
 import { Link } from "@/router-compat";
 import { useAuth } from "@/auth/AuthContext";
 import { listNotifications, useUnreadCount, type NotificationView } from "@/lib/notificationsApi";
@@ -43,6 +43,7 @@ const MAIN_NAV: NavEntry[] = [
 const MORE_NAV: NavEntry[] = [
   { label: "Training Plans", icon: ClipboardList, to: "/coach/training-plans/new", activePrefix: "/coach/training-plans" },
   { label: "Affiliation Requests", icon: UserCheck },
+  { label: "Applications", icon: UserPlus, to: "/coach/applications" },
   { label: "Recruitment", icon: Handshake, to: "/recruiting?tab=watchlist" },
   { label: "Messages", icon: MessageSquare, to: "/recruiting?tab=messages" },
   { label: "My University", icon: Building2 },

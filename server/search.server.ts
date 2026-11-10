@@ -29,6 +29,15 @@ export interface SearchAthleteView {
   hasShowcase: boolean;
 }
 
+export interface SearchCoachView {
+  id: string;
+  displayName: string;
+  organization: string;
+  sport: string;
+  /** connected (already your coach), applied (you showed interest) or none */
+  relationship: "connected" | "applied" | "none";
+}
+
 const likeLiteral = (t: string) => t.replace(/[\\%_]/g, (c) => `\\${c}`);
 
 async function searchAthletesForCoach(db: Db, coach: PublicUser, q: string, limit: number): Promise<SearchAthleteView[]> {
@@ -78,20 +87,50 @@ async function searchAthletesForCoach(db: Db, coach: PublicUser, q: string, limi
   }));
 }
 
+/** Verified coaches an athlete can show interest in. Name, organization and sport only. */
+async function searchCoachesForAthlete(db: Db, athlete: PublicUser, q: string, limit: number): Promise<SearchCoachView[]> {
+  if (!athlete.roles.includes(ATHLETE_ROLE)) return [];
+  const words = q.split(/\s+/).filter(Boolean).slice(0, 4);
+  let match = db`TRUE`;
+  for (const w of words) {
+    const prefix = `${likeLiteral(w)}%`;
+    const inner = `% ${likeLiteral(w)}%`;
+    match = db`${match} AND (u.display_name ILIKE ${prefix} OR u.display_name ILIKE ${inner} OR cp.organization ILIKE ${prefix} OR cp.organization ILIKE ${inner})`;
+  }
+  const rows = await db<{ id: string; display_name: string; organization: string | null; sport: string | null; app_status: string | null; conn_status: string | null }[]>`
+    SELECT u.id, u.display_name, cp.organization, cp.sport_specialization AS sport, a.status AS app_status, c.status AS conn_status
+    FROM users u
+    JOIN coach_profiles cp ON cp.user_id = u.id
+    LEFT JOIN athlete_applications a ON a.coach_id = u.id AND a.athlete_id = ${athlete.id}
+    LEFT JOIN coach_athlete_connections c ON c.coach_id = u.id AND c.athlete_id = ${athlete.id}
+    WHERE u.is_active = TRUE AND u.deleted_at IS NULL
+      AND EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id AND r.name = 'verified_coach')
+      AND ${match}
+    ORDER BY u.display_name, u.id LIMIT ${limit}`;
+  return rows.map((r) => ({
+    id: r.id,
+    displayName: r.display_name,
+    organization: r.organization ?? "",
+    sport: r.sport ?? "",
+    relationship: r.conn_status === "accepted" ? "connected" : r.app_status ? "applied" : "none",
+  }));
+}
+
 export async function globalSearch(
   user: PublicUser,
   rawQuery: string,
   rawLimit = 5,
   dbArg?: Db,
-): Promise<{ athletes: SearchAthleteView[]; scholarships: ScholarshipView[] }> {
+): Promise<{ athletes: SearchAthleteView[]; scholarships: ScholarshipView[]; coaches: SearchCoachView[] }> {
   const q = rawQuery.trim().slice(0, GLOBAL_SEARCH_MAX_CHARS);
-  if (q.length < GLOBAL_SEARCH_MIN_CHARS) return { athletes: [], scholarships: [] };
+  if (q.length < GLOBAL_SEARCH_MIN_CHARS) return { athletes: [], scholarships: [], coaches: [] };
   const limit = Math.min(Math.max(Math.trunc(Number.isFinite(rawLimit) ? rawLimit : 5), 1), 10);
   const db = dbArg ?? (await getDb());
 
-  const [scholarships, athletes] = await Promise.all([
+  const [scholarships, athletes, coaches] = await Promise.all([
     listScholarships(user, { q, limit, offset: 0 }, db).then((r) => r.items),
     searchAthletesForCoach(db, user, q, limit),
+    searchCoachesForAthlete(db, user, q, limit),
   ]);
-  return { athletes, scholarships };
+  return { athletes, scholarships, coaches };
 }

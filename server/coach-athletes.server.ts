@@ -12,6 +12,7 @@
 //  - Emails and usernames are never returned.
 //  - Every list is scoped by the signed-in user's id taken from the session, never from the request.
 
+import { standingFor } from "./rankings.server.ts";
 import { getDb, type Db } from "./db.server.ts";
 import type { PublicUser } from "./auth.server.ts";
 import { ATHLETE_ROLE, COACH_ROLE, ConnectionError, PAGE_DEFAULT, PAGE_MAX } from "./connections.server.ts";
@@ -46,7 +47,7 @@ export interface AthleteDetail {
   sport: string;
   position: string;
   school: string;
-  /** null until a ranking has been set */
+  /** null until the athlete has enough counted sessions to be ranked */
   rank: number | null;
   performance: number | null;
   consistency: number | null;
@@ -67,9 +68,6 @@ interface AthleteRow {
   playing_position: string | null;
   school: string | null;
   bio: string | null;
-  ranking: number | null;
-  performance: number | null;
-  consistency: number | null;
 }
 
 function clampPaging(paging: { limit?: number; offset?: number }) {
@@ -97,8 +95,7 @@ export async function listMyAthletes(
 
   const rows = await db<AthleteRow[]>`
     SELECT u.id, u.display_name, up.first_name, up.last_name, up.avatar_url,
-           ap.sport, ap.playing_position, ap.school, ap.bio, ap.ranking,
-           ap.performance::float8 AS performance, ap.consistency::float8 AS consistency
+           ap.sport, ap.playing_position, ap.school, ap.bio
     FROM coach_athlete_connections c
     JOIN users u ON u.id = c.athlete_id
     LEFT JOIN user_profiles up ON up.user_id = u.id
@@ -138,6 +135,8 @@ export async function listMyAthletes(
     return m;
   };
   const skillsBy = group(skills);
+  // Worked out from each athlete's counted sessions, never read from a stored column.
+  const standings = await standingFor(db, ids, me);
   const achievementsBy = group(achievements);
   const recordsBy = group(records);
 
@@ -154,9 +153,9 @@ export async function listMyAthletes(
       sport: r.sport ?? "",
       position: r.playing_position ?? "",
       school: r.school ?? "",
-      rank: r.ranking,
-      performance: r.performance,
-      consistency: r.consistency,
+      rank: standings.get(r.id)?.rank ?? null,
+      performance: standings.get(r.id)?.performance ?? null,
+      consistency: standings.get(r.id)?.consistency ?? null,
       bio: r.bio ?? "",
       skills: (skillsBy.get(r.id) ?? []).map((s) => s.name),
       achievements: (achievementsBy.get(r.id) ?? []).map((a) => ({ title: a.title, year: a.year })),

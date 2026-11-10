@@ -19,9 +19,20 @@ export interface SearchAthlete {
   hasShowcase: boolean;
 }
 
+export interface SearchCoach {
+  id: string;
+  displayName: string;
+  organization: string;
+  sport: string;
+  /** connected = already your coach, applied = you showed interest */
+  relationship: "connected" | "applied" | "none";
+}
+
 export interface SearchResults {
   athletes: SearchAthlete[];
   scholarships: ScholarshipView[];
+  /** verified coaches an athlete can show interest in (athletes only) */
+  coaches: SearchCoach[];
 }
 
 export const MIN_SEARCH_CHARS = 2;

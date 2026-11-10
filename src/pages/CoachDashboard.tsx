@@ -1,4 +1,3 @@
-import { toast } from "sonner";
 import {
   BadgeCheck, Clock, Handshake, Inbox, MessageSquare,
   Send, ShieldX, Star, UserCheck, UserPlus, Users, type LucideIcon,
@@ -26,8 +25,6 @@ import { cn } from "@/lib/utils";
    Everything else (pending actions, Recruitment Overview, Team Performance Snapshot) comes from
    GET /api/coach/dashboard (useCoachDashboard).
 --------------------------------------------------------------------------------------------- */
-
-const comingSoon = (what: string) => toast(`${what} is coming soon`, { description: "This coach page hasn't been built yet." });
 
 /* ---- helpers ---- */
 
@@ -112,14 +109,15 @@ function PendingActions({ conn, dash }: { conn: CoachConnections; dash: Dash }) 
   const live = conn.state === "ready" ? conn.incoming.total : null;
   const p = dash.data?.pendingActions;
   const total = (live ?? 0) + (p ? p.unansweredInquiries + p.unreadMessages + p.newApplications : 0);
+  const navigate = useNavigate();
   const goToRequests = () => document.getElementById("connection-requests")?.scrollIntoView({ behavior: "smooth", block: "start" });
   const row = "flex w-full items-center gap-3 rounded-2xl border bg-card p-3 text-left transition hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
   const iconBox = "grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-accent text-accent-foreground";
   const badge = "grid h-7 min-w-7 place-items-center rounded-full bg-primary px-2 text-xs font-bold text-primary-foreground";
-  const others: { label: string; detail: string; count: number | null; icon: LucideIcon }[] = [
-    { label: "Unanswered recruitment inquiries", detail: "Waiting for your reply", count: p?.unansweredInquiries ?? null, icon: Inbox },
-    { label: "Unread messages", detail: "From athletes and recruiters", count: p?.unreadMessages ?? null, icon: MessageSquare },
-    { label: "New athlete applications", detail: "Athletes showing interest in your program", count: p?.newApplications ?? null, icon: UserPlus },
+  const others: { label: string; detail: string; count: number | null; icon: LucideIcon; to: string }[] = [
+    { label: "Unanswered recruitment inquiries", detail: "Waiting for your reply", count: p?.unansweredInquiries ?? null, icon: Inbox, to: "/recruiting?tab=messages" },
+    { label: "Unread messages", detail: "From athletes and recruiters", count: p?.unreadMessages ?? null, icon: MessageSquare, to: "/recruiting?tab=messages" },
+    { label: "New athlete applications", detail: "Athletes showing interest in your program", count: p?.newApplications ?? null, icon: UserPlus, to: "/coach/applications" },
   ];
 
   return (
@@ -137,9 +135,9 @@ function PendingActions({ conn, dash }: { conn: CoachConnections; dash: Dash }) 
             <span className={badge}>{live === null ? "—" : live}</span>
           </button>
         </li>
-        {others.map(({ label, detail, count, icon: Icon }) => (
+        {others.map(({ label, detail, count, icon: Icon, to }) => (
           <li key={label}>
-            <button type="button" onClick={() => (dash.state === "error" ? dash.reload() : comingSoon(label))} className={row}>
+            <button type="button" onClick={() => (dash.state === "error" ? dash.reload() : navigate({ to }))} className={row}>
               <span className={iconBox}><Icon className="h-5 w-5" /></span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-semibold">{label}</span>
@@ -213,8 +211,9 @@ function RecruitmentBody({ data }: { data: CoachDashboardData["recruitment"] }) 
 }
 
 function RecruitmentOverview({ dash }: { dash: Dash }) {
+  const navigate = useNavigate();
   return (
-    <Card title="Recruitment Overview" action={<SectionLink label="Open" onClick={() => comingSoon("Recruitment")} />}>
+    <Card title="Recruitment Overview" action={<SectionLink label="Open" onClick={() => navigate({ to: "/recruiting?tab=messages" })} />}>
       {dash.data ? <RecruitmentBody data={dash.data.recruitment} /> : <DashState dash={dash} />}
     </Card>
   );

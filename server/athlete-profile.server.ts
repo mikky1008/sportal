@@ -20,6 +20,7 @@ import { z } from "zod";
 import { getDb, type Db } from "./db.server.ts";
 import type { PublicUser } from "./auth.server.ts";
 import { ATHLETE_ROLE, ConnectionError } from "./connections.server.ts";
+import { standingFor } from "./rankings.server.ts";
 import {
   LIMITS, PROVINCE, TEAM_STATUSES, validateProfile, type ProfileDraft,
 } from "../src/lib/athleteProfileRules.ts";
@@ -78,9 +79,6 @@ interface ProfileRow {
   team_status: string | null;
   team_name: string | null;
   bio: string | null;
-  ranking: number | null;
-  performance: number | null;
-  consistency: number | null;
   municipality: string | null;
   province: string | null;
   category: string | null;
@@ -93,8 +91,7 @@ export async function getMyProfile(actor: PublicUser, dbArg?: Db): Promise<Athle
     SELECT up.first_name, up.last_name, u.display_name,
            ap.sport, ap.playing_position, ap.school, ap.year_level,
            ap.height_cm::float8 AS height_cm, ap.weight_kg::float8 AS weight_kg,
-           ap.team_status, ap.team_name, ap.bio, ap.ranking,
-           ap.performance::float8 AS performance, ap.consistency::float8 AS consistency,
+           ap.team_status, ap.team_name, ap.bio,
            ap.municipality, ap.province, ap.category
     FROM users u
     LEFT JOIN user_profiles up ON up.user_id = u.id
@@ -104,6 +101,7 @@ export async function getMyProfile(actor: PublicUser, dbArg?: Db): Promise<Athle
   const achievements = await db<{ title: string; year: string }[]>`
     SELECT title, year FROM athlete_achievements WHERE athlete_id = ${actor.id} ORDER BY position`;
   const [first, ...rest] = r.display_name.trim().split(/\s+/);
+  const standing = (await standingFor(db, [actor.id], actor.id)).get(actor.id);
   return {
     id: actor.id,
     firstName: r.first_name?.trim() || first || "",
@@ -118,9 +116,9 @@ export async function getMyProfile(actor: PublicUser, dbArg?: Db): Promise<Athle
     teamName: r.team_name ?? "",
     bio: r.bio ?? "",
     achievements,
-    rank: r.ranking,
-    performanceScore: r.performance,
-    consistency: r.consistency,
+    rank: standing?.rank ?? null,
+    performanceScore: standing?.performance ?? null,
+    consistency: standing?.consistency ?? null,
     municipality: r.municipality ?? "",
     province: r.province ?? "",
     category: r.category ?? "",

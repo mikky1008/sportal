@@ -3,6 +3,7 @@ import { useLocation } from "react-router-dom";
 import { Bell, Menu, Search, type LucideIcon } from "lucide-react";
 import { Link } from "@/router-compat";
 import { toast } from "sonner";
+import { showInterestInCoach } from "@/lib/coachApplicationsApi";
 import { MIN_SEARCH_CHARS, searchEverything, sendConnectionRequest, type Relationship, type SearchResults } from "@/lib/searchApi";
 import { PersonAvatar } from "@/components/avatar";
 import { cn } from "@/lib/utils";
@@ -35,7 +36,7 @@ export function AppHeader({ children, below }: { children: ReactNode; below?: Re
 export function HeaderBrand({ to, label }: { to: string; label: string }) {
   return (
     <Link to={to} direction="root" className="flex shrink-0 items-center gap-2.5 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shell-focus" aria-label={label}>
-      <img src="/icon-192.png" alt="" aria-hidden="true" className="h-10 w-10 shrink-0 rounded-[22%]" />
+      <span className="grid h-10 w-10 place-items-center rounded-full bg-shell-logo font-display text-xl font-bold text-shell-logo-fg">S</span>
       <span className="font-display text-2xl font-bold tracking-wide text-shell-fg">SPORTAL</span>
     </Link>
   );
@@ -180,7 +181,7 @@ export function HeaderSearch({ placeholder }: { placeholder: string }) {
     return () => { document.removeEventListener("pointerdown", onPointer); document.removeEventListener("keydown", onKey); };
   }, [open]);
 
-  const empty = !!results && !results.athletes.length && !results.scholarships.length;
+  const empty = !!results && !results.athletes.length && !results.scholarships.length && !results.coaches.length;
   const showPanel = open && term.length >= MIN_SEARCH_CHARS;
   const rowClass = "block rounded-xl px-3 py-2.5 text-sm hover:bg-muted";
   const [connecting, setConnecting] = useState<string | null>(null);
@@ -195,6 +196,17 @@ export function HeaderSearch({ placeholder }: { placeholder: string }) {
     }
     setResults((cur) => (cur ? { ...cur, athletes: cur.athletes.map((a) => (a.id === id ? { ...a, relationship: "request_sent" as Relationship } : a)) } : cur));
     toast.success("Request sent", { description: `${name} will see it and can accept.` });
+  };
+  const showInterest = async (id: string, name: string) => {
+    setConnecting(id);
+    const r = await showInterestInCoach(id);
+    setConnecting(null);
+    if (!r.ok) {
+      toast.error(r.message || "Could not send your interest.");
+      return;
+    }
+    setResults((cur) => (cur ? { ...cur, coaches: cur.coaches.map((c) => (c.id === id ? { ...c, relationship: "applied" as const } : c)) } : cur));
+    toast.success("Interest sent", { description: `${name} was told you are interested in their program.` });
   };
   const relationshipLabel: Record<Relationship, string | null> = {
     connected: "In My Athletes",
@@ -228,6 +240,29 @@ export function HeaderSearch({ placeholder }: { placeholder: string }) {
                   <span className="block font-semibold">{s.name}</span>
                   <span className="block text-xs text-muted-foreground">{s.university} · {s.sport}</span>
                 </Link>
+              ))}
+            </div>
+          )}
+          {!!results?.coaches.length && (
+            <div>
+              <p className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Coaches</p>
+              {results.coaches.map((c) => (
+                <div key={c.id} className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm hover:bg-muted">
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-semibold">{c.displayName}</span>
+                    <span className="block truncate text-xs text-muted-foreground">{[c.organization, c.sport].filter(Boolean).join(" · ") || "Verified coach"}</span>
+                  </span>
+                  {c.relationship === "connected" && <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs font-semibold text-muted-foreground">Your coach</span>}
+                  {c.relationship === "applied" && <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs font-semibold text-muted-foreground">Interest sent</span>}
+                  {c.relationship === "none" && (
+                    <button
+                      type="button"
+                      disabled={connecting === c.id}
+                      onClick={() => void showInterest(c.id, c.displayName)}
+                      className="shrink-0 rounded-full border border-primary px-3 py-1 text-xs font-semibold text-primary hover:bg-primary hover:text-primary-foreground disabled:opacity-60"
+                    >{connecting === c.id ? "Sending…" : "Show interest"}</button>
+                  )}
+                </div>
               ))}
             </div>
           )}
@@ -299,7 +334,7 @@ export function HeaderUser({ name, shortName, src }: { name: string; shortName?:
     <span className="flex items-center gap-2">
       <span className="relative">
         <PersonAvatar name={name} src={src} size="header" tone="onDark" className="ring-2 ring-shell-ring" />
-        <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-shell-dot-border bg-sky-400" />
+        <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-shell-dot-border bg-emerald-400" />
       </span>
       <span className="hidden max-w-[9rem] truncate text-sm font-medium text-shell-fg lg:inline">{shortName ?? name}</span>
     </span>

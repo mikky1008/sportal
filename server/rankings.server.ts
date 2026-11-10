@@ -18,6 +18,7 @@
 // Rankings are recomputed on every request, which is fine for a prototype-sized pool.
 
 import { getDb, type Db } from "./db.server.ts";
+import { skillById } from "../src/lib/skills.ts";
 import type { PublicUser } from "./auth.server.ts";
 import { ATHLETE_ROLE } from "./connections.server.ts";
 import {
@@ -233,4 +234,49 @@ export async function setShowcaseVisible(user: PublicUser, visible: boolean, dbA
 /** Nationwide headline position per athlete (absent = not ranked yet), for the recruiting directory. */
 export async function headlinePositions(db: Db, viewerId: string): Promise<Map<string, number>> {
   return headlineRanks(await loadCandidates(db, viewerId));
+}
+
+/* ---- an athlete's own numbers: rank, performance and consistency ----
+   Worked out from the athlete's counted sessions every time they are asked for, so they are never
+   stale and never typed in by hand. (The old athlete_profiles.ranking / performance / consistency
+   columns are no longer read.) */
+
+export interface Standing {
+  /** nationwide headline rank in the athlete's sport; null = not ranked yet (or hidden from rankings) */
+  rank: number | null;
+  /** average of the athlete's counted percentage results; null when there are none */
+  performance: number | null;
+  /** average consistency of their counted Basketball sessions; null when there are none */
+  consistency: number | null;
+}
+
+const round1 = (n: number) => Math.round(n * 10) / 10;
+
+export async function standingFor(db: Db, athleteIds: string[], viewerId: string): Promise<Map<string, Standing>> {
+  const out = new Map<string, Standing>();
+  if (athleteIds.length === 0) return out;
+  const positions = await headlinePositions(db, viewerId);
+  const rows = await db<{ athlete_id: string; skill: string; n: number; total: number; cn: number; ctotal: number }[]>`
+    SELECT athlete_id, skill, count(*)::int AS n, sum(result)::float8 AS total,
+           count(consistency)::int AS cn, COALESCE(sum(consistency), 0)::float8 AS ctotal
+    FROM practice_sessions
+    WHERE status IN ('ai_assessed', 'coach_verified') AND athlete_id = ANY(${athleteIds}::text[])
+    GROUP BY athlete_id, skill`;
+  const acc = new Map<string, { pn: number; pt: number; cn: number; ct: number }>();
+  for (const r of rows) {
+    const def = skillById(r.skill);
+    const a = acc.get(r.athlete_id) ?? { pn: 0, pt: 0, cn: 0, ct: 0 };
+    if (def?.unit === "%") { a.pn += r.n; a.pt += r.total; }
+    if (def?.sport === "Basketball") { a.cn += r.cn; a.ct += r.ctotal; }
+    acc.set(r.athlete_id, a);
+  }
+  for (const id of athleteIds) {
+    const a = acc.get(id);
+    out.set(id, {
+      rank: positions.get(id) ?? null,
+      performance: a && a.pn ? round1(a.pt / a.pn) : null,
+      consistency: a && a.cn ? round1(a.ct / a.cn) : null,
+    });
+  }
+  return out;
 }

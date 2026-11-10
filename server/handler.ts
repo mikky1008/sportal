@@ -91,7 +91,7 @@
 //   POST /api/notifications/:id/read                -> { ok, notification }
 //
 // Header search:
-//   GET  /api/search                                ?q&limit -> { ok, athletes, scholarships }   q needs 2+ characters; athletes only for verified coaches
+//   GET  /api/search                                ?q&limit -> { ok, athletes, scholarships, coaches }   q needs 2+ characters; athletes (with relationship) only for verified coaches; coaches only for athletes
 //
 // Rankings (every route needs a signed-in account):
 //   GET  /api/rankings                              ?sport&metric&province&municipality&school&category&limit -> { ok, sport, metric, minCountedSessions, rows, total, notEnoughSessions, me?, options }
@@ -99,6 +99,11 @@
 //   GET  /api/rankings/headline                     ?ids=a,b,c (up to 100) -> { ok, me, ranks }   nationwide headline rank per athlete; me.position null = not ranked yet
 //   GET  /api/athletes/me/visibility                student-athlete -> { ok, visible }
 //   PUT  /api/athletes/me/visibility                student-athlete { visible } -> { ok, visible }   false = hidden from everyone else's rankings
+//
+// Athlete applications to a coach's program ("show interest"):
+//   POST /api/coach-applications                    student-athlete { coachId } -> 201 { ok, application }   409 already_applied | already_connected, 429 rate_limited
+//   GET  /api/coach-applications                    verified coach -> { ok, received }   /   student-athlete -> { ok, sent }
+//   POST /api/coach-applications/:id/status         verified coach { status: "reviewed" | "dismissed" } -> { ok, status }
 //
 // Recruiting (every route needs a signed-in account; discovery needs a VERIFIED coach):
 //   GET  /api/recruiting/athletes                   verified coach ?q&sport&position&school&skill&verifiedOnly&sort(score|verified|name)&limit&offset
@@ -179,6 +184,12 @@ import {
   unreadCount,
 } from "./notifications.server.ts";
 import { globalSearch } from "./search.server.ts";
+import {
+  applyToCoach,
+  CoachApplicationError,
+  listApplications,
+  setApplicationStatus as setCoachApplicationStatus,
+} from "./coach-applications.server.ts";
 import {
   DIRECTORY_LIMIT_DEFAULT,
   DIRECTORY_LIMIT_MAX,
@@ -604,6 +615,29 @@ async function handleRankings(req: Request, path: string): Promise<Response | nu
   }
 }
 
+/** Returns null when the path is not a coach-applications route, so the caller can keep matching. */
+async function handleCoachApplications(req: Request, path: string): Promise<Response | null> {
+  const statusRoute = /^\/api\/coach-applications\/([^/]+)\/status$/.exec(path);
+  const isRoot = path === "/api/coach-applications";
+  if (!(isRoot && (req.method === "GET" || req.method === "POST")) && !(statusRoute && req.method === "POST")) return null;
+  const user = await getUserBySessionToken(bearer(req));
+  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
+  try {
+    if (isRoot && req.method === "GET") return send(req, 200, { ok: true, ...(await listApplications(user)) });
+    if (isRoot) {
+      const parsed = z.object({ coachId: z.string() }).safeParse(await readJson(req));
+      if (!parsed.success) return send(req, 400, { ok: false, code: "validation", message: "Send { coachId }." });
+      return send(req, 201, { ok: true, application: await applyToCoach(user, parsed.data.coachId, requestMeta(req)) });
+    }
+    const parsed = z.object({ status: z.enum(["reviewed", "dismissed"]) }).safeParse(await readJson(req));
+    if (!parsed.success) return send(req, 400, { ok: false, code: "validation", message: 'Send { status: "reviewed" | "dismissed" }.' });
+    return send(req, 200, { ok: true, status: await setCoachApplicationStatus(user, (statusRoute as RegExpExecArray)[1] ?? "", parsed.data.status) });
+  } catch (err) {
+    if (err instanceof CoachApplicationError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
+    throw err;
+  }
+}
+
 /** Returns null when the path is not a recruiting route, so the caller can keep matching. */
 async function handleRecruiting(req: Request, path: string): Promise<Response | null> {
   if (!path.startsWith("/api/recruiting/")) return null;
@@ -876,6 +910,8 @@ export async function handle(req: Request): Promise<Response> {
     if (rankings) return rankings;
     const recruiting = await handleRecruiting(req, path);
     if (recruiting) return recruiting;
+    const coachApps = await handleCoachApplications(req, path);
+    if (coachApps) return coachApps;
     return send(req, 404, { error: "not_found" });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";

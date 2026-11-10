@@ -155,14 +155,18 @@ function Hero({ onSignIn, onSignUp }: { onSignIn: () => void; onSignUp: () => vo
           Connecting student-athletes, coaches, and recruiters across universities in real-time.
         </p>
         <div className="mt-10 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:gap-4">
-          <button type="button" onClick={onSignIn} className={ctaPrimary}>
+          <button type="button" onClick={onSignUp} className={ctaPrimary}>
             <Zap className="h-5 w-5" aria-hidden="true" /> Sign Up Now
+          </button>
+          <span className="hidden text-sm font-medium uppercase tracking-widest text-white/60 sm:inline">or</span>
+          <button type="button" onClick={onSignUp} className={ctaSecondary}>
+            Create Account
           </button>
         </div>
         <p className="mt-5 text-sm text-white/60">
-          Don't have an account?{" "}
-          <button type="button" onClick={onSignUp} className="font-semibold text-white underline-offset-4 hover:underline">
-            Create one
+          Already have an account?{" "}
+          <button type="button" onClick={onSignIn} className="font-semibold text-white underline-offset-4 hover:underline">
+            Sign in
           </button>
         </p>
       </div>
@@ -333,10 +337,6 @@ function Footer({ onJump, onSignIn, onSignUp }: { onJump: (id: SectionId) => voi
       <div className="mx-auto mt-12 flex max-w-7xl items-center gap-2 border-t border-white/10 pt-6 text-xs text-white/50">
         <UserRound className="h-4 w-4" aria-hidden="true" />
         <span>© {new Date().getFullYear()} Sportal. All rights reserved.</span>
-        <span className="ml-auto flex items-center gap-4">
-          <Link to="/terms" className="hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400">Terms</Link>
-          <Link to="/privacy" className="hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400">Privacy</Link>
-        </span>
       </div>
     </footer>
   );

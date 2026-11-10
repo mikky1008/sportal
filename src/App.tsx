@@ -10,6 +10,7 @@ import { homePathFor, primaryRole } from "@/lib/roles";
 
 import Login from "@/pages/Login";
 import Signup from "@/pages/Signup";
+import Landing from "@/pages/Landing";
 import CompleteProfile from "@/pages/CompleteProfile";
 import Dashboard from "@/pages/Dashboard";
 import CoachDashboard from "@/pages/CoachDashboard";
@@ -110,7 +111,7 @@ function Shell() {
             }}
           />
         ))}
-        <Route exact path="/" render={() => <Redirect to={user ? homePathFor(user.roles) : "/login"} />} />
+        <Route exact path="/" render={() => (user ? <Redirect to={homePathFor(user.roles)} /> : <Landing />)} />
         <Route render={() => (user ? <NotFound /> : <Redirect to="/login" />)} />
       </IonRouterOutlet>
     </>

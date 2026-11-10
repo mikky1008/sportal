@@ -9,6 +9,7 @@ import { Link } from "@/router-compat";
 import { homePathFor, primaryRole } from "@/lib/roles";
 
 import Signup from "@/pages/Signup";
+import { TermsPage, PrivacyPage } from "@/pages/Legal";
 import Landing from "@/pages/Landing";
 import CompleteProfile from "@/pages/CompleteProfile";
 import Dashboard from "@/pages/Dashboard";
@@ -93,6 +94,8 @@ function Shell() {
       {/* `key` throws the cached screens away on every sign in / sign out, so one account never sees another's */}
       <IonRouterOutlet id="main" key={epoch}>
         <Route exact path="/login" render={() => (user ? <Redirect to={landing ?? homePathFor(user.roles)} /> : <Landing />)} />
+        <Route exact path="/terms" component={TermsPage} />
+        <Route exact path="/privacy" component={PrivacyPage} />
         <Route exact path="/signup" render={() => (user ? <Redirect to={landing ?? homePathFor(user.roles)} /> : <Signup />)} />
         {PROTECTED.map(({ path, component: C }) => (
           <Route

@@ -299,7 +299,7 @@ export function HeaderUser({ name, shortName, src }: { name: string; shortName?:
     <span className="flex items-center gap-2">
       <span className="relative">
         <PersonAvatar name={name} src={src} size="header" tone="onDark" className="ring-2 ring-shell-ring" />
-        <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-shell-dot-border bg-emerald-400" />
+        <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-shell-dot-border bg-sky-400" />
       </span>
       <span className="hidden max-w-[9rem] truncate text-sm font-medium text-shell-fg lg:inline">{shortName ?? name}</span>
     </span>

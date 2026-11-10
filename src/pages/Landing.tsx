@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { ArrowRight, Check, GraduationCap, Loader2, Menu, Search, Trophy, UserRound, X } from "lucide-react";
+import { Landmark, Loader2, Menu, Target, Trophy, UserRound, X, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "@/router-compat";
 import { Page } from "@/components/Page";
@@ -18,30 +18,9 @@ const NAV_LINKS: { id: SectionId; label: string }[] = [
 ];
 
 const SERVICES = [
-  {
-    icon: Trophy,
-    title: "Athlete Showcase",
-    body: "Build a verified profile with your stats, highlights and training history. Every session shows how far to trust it: AI-assessed, coach-verified or self-reported.",
-    points: ["Performance tracking and rankings", "Verification status on every session"],
-  },
-  {
-    icon: Search,
-    title: "Coach Recruitment",
-    body: "Coaches search athletes across universities by sport, position and skill, save the ones they like and reach out directly.",
-    points: ["Search and filter by what matters", "Compare athletes side by side"],
-  },
-  {
-    icon: GraduationCap,
-    title: "University Roster Hub",
-    body: "Universities keep rosters, scholarships and recruiting activity in one place, so staff spend less time chasing spreadsheets and more time with athletes.",
-    points: ["Roster and scholarship management", "Connections between coaches and athletes"],
-  },
-];
-
-const PILLARS = [
-  { title: "For student-athletes", body: "Be seen for your work on the court, not just the school you attend." },
-  { title: "For collegiate coaches", body: "Find talent you would never have scouted, with data you can judge for yourself." },
-  { title: "Across universities", body: "One shared platform, so opportunities are not limited by who you already know." },
+  { icon: Trophy, title: "Athlete Showcase", body: "Build verified profiles and share performance logs." },
+  { icon: Target, title: "Coach Recruitment", body: "Discover talented athletes with custom filters." },
+  { icon: Landmark, title: "University Hub", body: "Manage team rosters and collegiate analytics." },
 ];
 
 const ROLES = ["Student-athlete", "Coach", "University representative", "Other"];
@@ -74,7 +53,7 @@ function Section({ id, children, className }: { id: SectionId; children: ReactNo
 
 function SectionHeading({ eyebrow, title, intro, dark }: { eyebrow: string; title: string; intro?: string; dark?: boolean }) {
   return (
-    <div className="max-w-2xl">
+    <div className={cn(dark ? "max-w-4xl" : "max-w-2xl")}>
       <p className="text-sm font-semibold uppercase tracking-[0.2em] text-sky-500">{eyebrow}</p>
       <h2 className={cn("mt-3 font-display text-4xl font-bold uppercase leading-tight sm:text-5xl", dark ? "text-white" : "text-[#0d2340]")}>{title}</h2>
       {intro && <p className={cn("mt-4 text-base leading-relaxed sm:text-lg", dark ? "text-white/70" : "text-muted-foreground")}>{intro}</p>}
@@ -115,7 +94,7 @@ function Header({ onJump }: { onJump: (id: SectionId) => void }) {
         </nav>
 
         <div className="ml-auto flex items-center gap-2">
-          <Link to="/login" direction="forward" className="hidden rounded-full px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 sm:inline-flex">
+          <Link to="/login" direction="forward" className="hidden rounded-full border border-white/60 px-5 py-2 text-sm font-semibold text-white transition hover:border-white hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 sm:inline-flex">
             Sign In
           </Link>
           <Link to="/signup" direction="forward" className="inline-flex items-center rounded-full bg-sky-400 px-5 py-2 text-sm font-semibold text-[#0d2340] transition hover:bg-sky-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-200">
@@ -168,12 +147,13 @@ function Hero() {
           <span className="text-sky-400">Get discovered.</span>
         </h1>
         <p className="mt-6 max-w-xl text-lg leading-relaxed text-white/75">
-          Track your training, show verified performance and get in front of coaches at universities across the country.
+          Connecting student-athletes, coaches, and recruiters across universities in real-time.
         </p>
-        <div className="mt-10 flex flex-col gap-3 sm:flex-row sm:gap-4">
+        <div className="mt-10 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:gap-4">
           <Link to="/signup" direction="forward" className={ctaPrimary}>
-            Sign Up Now <ArrowRight className="h-5 w-5" />
+            <Zap className="h-5 w-5" aria-hidden="true" /> Sign Up Now
           </Link>
+          <span className="hidden text-sm font-medium uppercase tracking-widest text-white/60 sm:inline">or</span>
           <Link to="/signup" direction="forward" className={ctaSecondary}>
             Create Account
           </Link>
@@ -192,22 +172,15 @@ function Hero() {
 function Services() {
   return (
     <Section id="services" className="bg-background">
-      <SectionHeading eyebrow="Services" title="Everything between the court and the roster" intro="One platform for the three groups that make recruiting work." />
+      <SectionHeading eyebrow="Services" title="Our Services" />
       <div className="mt-12 grid gap-6 md:grid-cols-3">
-        {SERVICES.map(({ icon: Icon, title, body, points }) => (
-          <article key={title} className="group surface flex flex-col p-7 transition hover:-translate-y-1 hover:shadow-glow">
+        {SERVICES.map(({ icon: Icon, title, body }) => (
+          <article key={title} className="surface flex flex-col items-start p-7 transition hover:-translate-y-1 hover:shadow-glow">
             <span className="grid h-12 w-12 place-items-center rounded-2xl bg-electric-gradient text-primary-foreground shadow-glow">
               <Icon className="h-6 w-6" aria-hidden="true" />
             </span>
             <h3 className="mt-6 font-display text-2xl font-bold uppercase text-[#0d2340]">{title}</h3>
-            <p className="mt-3 text-sm leading-relaxed text-muted-foreground">{body}</p>
-            <ul className="mt-5 space-y-2 border-t pt-5 text-sm text-foreground">
-              {points.map((p) => (
-                <li key={p} className="flex items-start gap-2">
-                  <Check className="mt-0.5 h-4 w-4 shrink-0 text-sky-500" aria-hidden="true" /> {p}
-                </li>
-              ))}
-            </ul>
+            <p className="mt-3 text-base leading-relaxed text-muted-foreground">{body}</p>
           </article>
         ))}
       </div>
@@ -218,30 +191,10 @@ function Services() {
 function About() {
   return (
     <Section id="about" className="text-white">
-      <div className="grid items-start gap-12 lg:grid-cols-2 lg:gap-16">
-        <div>
-          <SectionHeading
-            dark
-            eyebrow="About Us"
-            title="Bridging student-athletes and collegiate coaches"
-            intro="Great athletes get missed when recruiting depends on who knows whom. Sportal's mission is to close that gap: give student-athletes a credible profile of their performance, and give coaches at every university a clear, searchable way to find them."
-          />
-          <Link to="/signup" direction="forward" className={cn(ctaPrimary, "mt-8")}>
-            Join Sportal <ArrowRight className="h-5 w-5" />
-          </Link>
-        </div>
-        <ul className="space-y-4">
-          {PILLARS.map(({ title, body }, i) => (
-            <li key={title} className="flex gap-4 rounded-2xl border border-white/10 bg-white/5 p-6">
-              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-sky-400/15 font-display text-lg font-bold text-sky-300">{i + 1}</span>
-              <div>
-                <h3 className="font-display text-xl font-bold uppercase text-white">{title}</h3>
-                <p className="mt-1 text-sm leading-relaxed text-white/70">{body}</p>
-              </div>
-            </li>
-          ))}
-        </ul>
-      </div>
+      <SectionHeading dark eyebrow="About Us" title="Empowering Philippine collegiate sports through real-time data tracking and unified recruitment." />
+      <p className="mt-6 max-w-2xl text-base leading-relaxed text-white/70 sm:text-lg">
+        Sportal bridges student-athletes and collegiate coaches across universities, so great athletes get found for their performance, not just who they know.
+      </p>
     </Section>
   );
 }
@@ -256,6 +209,7 @@ function Contact() {
   const [values, setValues] = useState({ name: "", email: "", role: ROLES[0], message: "" });
   const [errors, setErrors] = useState<ContactErrors>({});
   const [sending, setSending] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
   const set = (k: keyof typeof values) => (e: { target: { value: string } }) => setValues((v) => ({ ...v, [k]: e.target.value }));
 
   async function onSubmit(e: FormEvent) {
@@ -278,12 +232,21 @@ function Contact() {
 
   return (
     <Section id="contact" className="bg-background">
-      <div className="grid gap-10 lg:grid-cols-5 lg:gap-16">
-        <div className="lg:col-span-2">
-          <SectionHeading eyebrow="Contact Us" title="Questions? Let's talk" intro="Whether you are an athlete, a coach or run a university program, send us a note and we'll point you in the right direction." />
-        </div>
+      <div className="flex flex-col items-start gap-6 sm:flex-row sm:items-center sm:justify-between">
+        <SectionHeading eyebrow="Contact Us" title="Have questions?" intro="Whether you are an athlete, a coach or run a university program, we'll point you in the right direction." />
+        <button
+          type="button"
+          onClick={() => setFormOpen((v) => !v)}
+          aria-expanded={formOpen}
+          aria-controls="contact-form"
+          className={cn(ctaPrimary, "shrink-0")}
+        >
+          Contact Support Team
+        </button>
+      </div>
 
-        <form onSubmit={onSubmit} noValidate className="rounded-3xl p-6 sm:p-8 lg:col-span-3" style={{ backgroundColor: NAVY }} aria-label="Contact form">
+      {formOpen && (
+        <form id="contact-form" onSubmit={onSubmit} noValidate className="mt-10 max-w-3xl rounded-3xl p-6 sm:p-8" style={{ backgroundColor: NAVY }} aria-label="Contact form">
           <div className="grid gap-5 sm:grid-cols-2">
             <Field label="Name" id="c-name" error={errors.name}>
               <input id="c-name" name="name" autoComplete="name" maxLength={100} value={values.name} onChange={set("name")} disabled={sending} placeholder="Your name" className={field} aria-invalid={!!errors.name} aria-describedby={errors.name ? "c-name-err" : undefined} />
@@ -316,7 +279,7 @@ function Contact() {
             )}
           </button>
         </form>
-      </div>
+      )}
     </Section>
   );
 }

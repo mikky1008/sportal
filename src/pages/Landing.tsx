@@ -164,9 +164,9 @@ function Hero({ onSignIn, onSignUp }: { onSignIn: () => void; onSignUp: () => vo
           </button>
         </div>
         <p className="mt-5 text-sm text-white/60">
-          Already have an account?{" "}
-          <button type="button" onClick={onSignIn} className="font-semibold text-white underline-offset-4 hover:underline">
-            Sign in
+          Don't have an account?{" "}
+          <button type="button" onClick={onSignUp} className="font-semibold text-white underline-offset-4 hover:underline">
+            Create one
           </button>
         </p>
       </div>

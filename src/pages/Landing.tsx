@@ -155,7 +155,7 @@ function Hero({ onSignIn, onSignUp }: { onSignIn: () => void; onSignUp: () => vo
           Connecting student-athletes, coaches, and recruiters across universities in real-time.
         </p>
         <div className="mt-10 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:gap-4">
-          <button type="button" onClick={onSignUp} className={ctaPrimary}>
+          <button type="button" onClick={onSignIn} className={ctaPrimary}>
             <Zap className="h-5 w-5" aria-hidden="true" /> Sign Up Now
           </button>
           <span className="hidden text-sm font-medium uppercase tracking-widest text-white/60 sm:inline">or</span>

@@ -1,8 +1,8 @@
 import * as Dialog from "@radix-ui/react-dialog";
+import { useEffect, useState } from "react";
 import { ArrowRight, X } from "lucide-react";
-import { useNavigate } from "@/router-compat";
 import { LoginForm } from "@/pages/Login";
-import { ROLES, type Role } from "@/pages/Signup";
+import { ROLES, SignupForm, type Role } from "@/pages/Signup";
 import { cn } from "@/lib/utils";
 
 export type AuthMode = "login" | "signup";
@@ -16,13 +16,11 @@ interface AuthDrawerProps {
 
 /** Right-hand slide-over for signing in or choosing an account type, so visitors never leave the landing page. */
 export function AuthDrawer({ mode, onModeChange, onClose }: AuthDrawerProps) {
-  const navigate = useNavigate();
-
-  // Close first: Ionic keeps this page mounted underneath the next one, so an open drawer would stay on top of it.
-  const chooseRole = (role: Role) => {
-    onClose();
-    navigate({ to: "/signup", search: { role }, direction: "forward" });
-  };
+  // which account type was picked in the sign up view (null = still choosing)
+  const [role, setRole] = useState<Role | null>(null);
+  useEffect(() => {
+    if (mode !== "signup") setRole(null);
+  }, [mode]);
 
   return (
     <Dialog.Root open={mode !== null} onOpenChange={(open) => !open && onClose()}>
@@ -46,7 +44,13 @@ export function AuthDrawer({ mode, onModeChange, onClose }: AuthDrawerProps) {
           </div>
 
           <div className="flex flex-1 flex-col justify-center px-6 py-10">
-            {mode === "signup" ? (
+            {mode === "signup" && role ? (
+              <>
+                <Dialog.Title className="sr-only">Create your account</Dialog.Title>
+                <Dialog.Description className="sr-only">Fill in your details to create a Sportal account.</Dialog.Description>
+                <SignupForm role={role} tone="dark" onBack={() => setRole(null)} onSwitchToLogin={() => onModeChange("login")} />
+              </>
+            ) : mode === "signup" ? (
               <div data-testid="drawer-signup-roles">
                 <Dialog.Title className="font-sans text-3xl font-normal tracking-tight">Create your account</Dialog.Title>
                 <Dialog.Description className="mt-2 text-sm leading-relaxed text-slate-400">Choose how you'll use Sportal.</Dialog.Description>
@@ -56,7 +60,7 @@ export function AuthDrawer({ mode, onModeChange, onClose }: AuthDrawerProps) {
                     <button
                       key={id}
                       type="button"
-                      onClick={() => chooseRole(id)}
+                      onClick={() => setRole(id)}
                       className={cn(
                         "group flex items-center gap-4 rounded-xl border border-slate-700 bg-slate-800/60 p-4 text-left transition",
                         "hover:border-sky-400 hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400",

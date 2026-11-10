@@ -2,7 +2,7 @@ import { useLocation } from "react-router-dom";
 import { Link } from "@/router-compat";
 import { Page } from "@/components/Page";
 import { useAuth } from "@/auth/AuthContext";
-import { useState, type FormEvent, type ReactNode } from "react";
+import { createContext, useContext, useState, type FormEvent, type ReactNode } from "react";
 import { AlertCircle, ArrowLeft, ArrowRight, Building2, Eye, EyeOff, Loader2, Trophy, UserSearch } from "lucide-react";
 import { toast } from "sonner";
 import { btn } from "@/components/common";
@@ -61,26 +61,31 @@ function validate(role: Role, v: Record<Field, string>): Errors {
   return e;
 }
 
+/** true inside the dark drawer, so labels, errors and toggles pick the dark colors */
+const ToneContext = createContext(false);
+
 function TextField({
   id, label, error, children,
 }: { id: string; label: string; error: string | undefined; children: ReactNode }) {
+  const dark = useContext(ToneContext);
   return (
     <div>
-      <label htmlFor={id} className="mb-1.5 block text-sm font-semibold">{label}</label>
+      <label htmlFor={id} className={cn("mb-1.5 block text-sm font-semibold", dark && "text-slate-200")}>{label}</label>
       {children}
-      {error && <p id={`${id}-error`} role="alert" className="mt-1.5 text-xs font-medium text-destructive">{error}</p>}
+      {error && <p id={`${id}-error`} role="alert" className={cn("mt-1.5 text-xs font-medium", dark ? "text-red-300" : "text-destructive")}>{error}</p>}
     </div>
   );
 }
 
 function PasswordToggle({ shown, onToggle }: { shown: boolean; onToggle: () => void }) {
+  const dark = useContext(ToneContext);
   return (
     <button
       type="button"
       onClick={onToggle}
       aria-label={shown ? "Hide password" : "Show password"}
       aria-pressed={shown}
-      className="absolute right-2 top-1/2 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-lg text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+      className={cn("absolute right-2 top-1/2 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-lg transition focus-visible:outline-none focus-visible:ring-2", dark ? "text-slate-400 hover:bg-slate-700 hover:text-white focus-visible:ring-sky-400" : "text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-primary")}
     >
       {shown ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
     </button>
@@ -92,15 +97,25 @@ const EMPTY: Record<Field, string> = {
   organization: "", position: "", sport: "", designation: "",
 };
 
-function SignupScreen() {
+const inputDark =
+  "h-12 w-full rounded-xl border border-slate-700 bg-slate-800 px-4 text-sm text-white shadow-sm outline-none transition placeholder:text-slate-500 hover:border-slate-500 focus:border-sky-400 focus:ring-4 focus:ring-sky-400/20 disabled:cursor-not-allowed disabled:opacity-60 [&>option]:bg-slate-800 [&>option]:text-white";
+
+interface SignupFormProps {
+  role: Role;
+  /** "dark" is the navy look used in the landing page drawer */
+  tone?: "light" | "dark";
+  onBack: () => void;
+  /** when given, "Login" switches views instead of leaving the page */
+  onSwitchToLogin?: () => void;
+}
+
+/** The account form for one role. Used on the sign up page and inside the landing page drawer. */
+export function SignupForm({ role, tone = "light", onBack, onSwitchToLogin }: SignupFormProps) {
+  const dark = tone === "dark";
+  const secondaryBtn = dark
+    ? "inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-800/60 px-5 py-3 text-sm font-semibold text-slate-200 transition hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 disabled:pointer-events-none disabled:opacity-60"
+    : btn.secondary;
   const { signUp, accept } = useAuth();
-  // null = still choosing an account type
-  const location = useLocation();
-  const [role, setRole] = useState<Role | null>(() => {
-    // the landing page drawer already asked, so it passes ?role=...
-    const r = new URLSearchParams(location.search).get("role");
-    return r === "athlete" || r === "coach" || r === "university" ? r : null;
-  });
   const [values, setValues] = useState<Record<Field, string>>(EMPTY);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
@@ -122,23 +137,8 @@ function SignupScreen() {
     disabled: loading || redirecting,
     "aria-invalid": !!errors[k],
     "aria-describedby": errors[k] ? `${k}-error` : undefined,
-    className: cn(inputBase, errors[k] && "border-destructive focus:border-destructive focus:ring-destructive/20"),
+    className: cn(dark ? inputDark : inputBase, errors[k] && (dark ? "border-red-400 focus:border-red-400 focus:ring-red-400/20" : "border-destructive focus:border-destructive focus:ring-destructive/20")),
   });
-
-  function choose(r: Role) {
-    setRole(r);
-    setErrors({});
-    setFormError(null);
-    window.scrollTo({ top: 0 });
-  }
-  function back() {
-    setRole(null);
-    setErrors({});
-    setFormError(null);
-    setValues(EMPTY);
-    setShowPassword(false);
-    setShowConfirm(false);
-  }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -201,7 +201,132 @@ function SignupScreen() {
   }
 
   const current = ROLES.find((r) => r.id === role);
-  const extra = role ? EXTRA_FIELDS[role] : [];
+  const extra = EXTRA_FIELDS[role];
+
+  return (
+    <ToneContext.Provider value={dark}>
+          <div className="w-full max-w-md">
+            <div className={dark ? undefined : "surface p-6 sm:p-8"}>
+              <div className="flex items-center gap-3">
+                {current && (
+                  <span className={cn("grid h-10 w-10 shrink-0 place-items-center rounded-xl", dark ? "bg-sky-400/10 text-sky-400" : "bg-primary/10 text-primary")}>
+                    <current.icon className="h-5 w-5" aria-hidden="true" />
+                  </span>
+                )}
+                <div>
+                  <h1 className={dark ? "font-sans text-2xl font-normal tracking-tight text-white" : "text-2xl font-bold sm:text-3xl"}>{current?.title}</h1>
+                  <p className={cn("text-sm", dark ? "text-slate-400" : "text-muted-foreground")}>Create your account.</p>
+                </div>
+              </div>
+
+              {formError && (
+                <div role="alert" className={cn("mt-5 flex items-start gap-2.5 rounded-xl border p-3 text-sm", dark ? "border-red-400/30 bg-red-500/10 text-red-300" : "border-destructive/30 bg-destructive/10 text-destructive")}>
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>{formError}</span>
+                </div>
+              )}
+
+              <form onSubmit={onSubmit} noValidate className="mt-6 flex flex-col gap-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <TextField id="firstName" label="First name" error={errors.firstName}>
+                    <input {...bind("firstName")} type="text" autoComplete="given-name" maxLength={40} autoFocus />
+                  </TextField>
+                  <TextField id="lastName" label="Last name" error={errors.lastName}>
+                    <input {...bind("lastName")} type="text" autoComplete="family-name" maxLength={40} />
+                  </TextField>
+                </div>
+
+                <TextField id="email" label="Email address" error={errors.email}>
+                  <input {...bind("email")} type="email" inputMode="email" autoComplete="email" autoCapitalize="none" spellCheck={false} maxLength={254} placeholder="you@example.com" />
+                </TextField>
+
+                {extra.includes("organization") && (
+                  <TextField id="organization" label={role === "university" ? "University name" : "University / Organization"} error={errors.organization}>
+                    <input {...bind("organization")} type="text" autoComplete="organization" maxLength={100} />
+                  </TextField>
+                )}
+                {extra.includes("position") && (
+                  <TextField id="position" label="Coaching position" error={errors.position}>
+                    <select {...bind("position")}>
+                      <option value="">Select a position</option>
+                      {POSITION_TITLES.map((p) => <option key={p} value={p}>{p}</option>)}
+                    </select>
+                  </TextField>
+                )}
+                {extra.includes("sport") && (
+                  <TextField id="sport" label="Sport specialization" error={errors.sport}>
+                    <select {...bind("sport")}>
+                      <option value="">Select a sport</option>
+                      {sports.map((sp) => <option key={sp.name} value={sp.name}>{sp.name}</option>)}
+                    </select>
+                  </TextField>
+                )}
+                {extra.includes("designation") && (
+                  <TextField id="designation" label="Position / Designation" error={errors.designation}>
+                    <input {...bind("designation")} type="text" autoComplete="organization-title" maxLength={80} />
+                  </TextField>
+                )}
+
+                <TextField id="password" label="Password" error={errors.password}>
+                  <div className="relative">
+                    <input {...bind("password")} type={showPassword ? "text" : "password"} autoComplete="new-password" maxLength={128} placeholder="At least 10 characters, letters and numbers" className={cn(bind("password").className, "pr-12")} />
+                    <PasswordToggle shown={showPassword} onToggle={() => setShowPassword((v) => !v)} />
+                  </div>
+                </TextField>
+
+                <TextField id="confirm" label="Confirm password" error={errors.confirm}>
+                  <div className="relative">
+                    <input {...bind("confirm")} type={showConfirm ? "text" : "password"} autoComplete="new-password" maxLength={128} placeholder="Type it again" className={cn(bind("confirm").className, "pr-12")} />
+                    <PasswordToggle shown={showConfirm} onToggle={() => setShowConfirm((v) => !v)} />
+                  </div>
+                </TextField>
+
+                <button type="submit" disabled={loading || redirecting} className={dark ? "mt-1 inline-flex h-12 w-full items-center justify-center gap-2 rounded-full bg-sky-400 text-base font-semibold text-slate-900 outline-none transition hover:bg-sky-300 focus-visible:ring-4 focus-visible:ring-sky-400/40 active:translate-y-px disabled:pointer-events-none disabled:opacity-60" : cn(btn.primary, "mt-1 h-12 w-full bg-primary bg-none text-base text-white shadow-none")}>
+                  {redirecting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" /> Account created — redirecting…
+                    </>
+                  ) : loading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" /> Creating account…
+                    </>
+                  ) : (
+                    <>
+                      Create account <ArrowRight className="h-4 w-4" />
+                    </>
+                  )}
+                </button>
+
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <button type="button" onClick={onBack} disabled={loading || redirecting} className={cn(secondaryBtn, "flex-1")}>
+                    <ArrowLeft className="h-4 w-4" /> Back
+                  </button>
+                  {onSwitchToLogin ? (
+                    <button type="button" onClick={onSwitchToLogin} disabled={loading || redirecting} className={cn(secondaryBtn, "flex-1")}>Login</button>
+                  ) : (
+                    <Link to="/login" search={{ signin: 1 }} direction="none" className={cn(secondaryBtn, "flex-1")}>Login</Link>
+                  )}
+                </div>
+              </form>
+            </div>
+          </div>
+    </ToneContext.Provider>
+  );
+}
+
+function SignupScreen() {
+  const location = useLocation();
+  // null = still choosing an account type
+  const [role, setRole] = useState<Role | null>(() => {
+    // the landing page can pass ?role=... when it already asked
+    const r = new URLSearchParams(location.search).get("role");
+    return r === "athlete" || r === "coach" || r === "university" ? r : null;
+  });
+
+  function choose(r: Role) {
+    setRole(r);
+    window.scrollTo({ top: 0 });
+  }
 
   return (
     <div className="grid min-h-[100dvh] bg-background lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
@@ -269,107 +394,7 @@ function SignupScreen() {
             </div>
           </div>
         ) : (
-          <div className="w-full max-w-md">
-            <div className="surface p-6 sm:p-8">
-              <div className="flex items-center gap-3">
-                {current && (
-                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
-                    <current.icon className="h-5 w-5" aria-hidden="true" />
-                  </span>
-                )}
-                <div>
-                  <h1 className="text-2xl font-bold sm:text-3xl">{current?.title}</h1>
-                  <p className="text-sm text-muted-foreground">Create your account.</p>
-                </div>
-              </div>
-
-              {formError && (
-                <div role="alert" className="mt-5 flex items-start gap-2.5 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
-                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span>{formError}</span>
-                </div>
-              )}
-
-              <form onSubmit={onSubmit} noValidate className="mt-6 flex flex-col gap-4">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <TextField id="firstName" label="First name" error={errors.firstName}>
-                    <input {...bind("firstName")} type="text" autoComplete="given-name" maxLength={40} autoFocus />
-                  </TextField>
-                  <TextField id="lastName" label="Last name" error={errors.lastName}>
-                    <input {...bind("lastName")} type="text" autoComplete="family-name" maxLength={40} />
-                  </TextField>
-                </div>
-
-                <TextField id="email" label="Email address" error={errors.email}>
-                  <input {...bind("email")} type="email" inputMode="email" autoComplete="email" autoCapitalize="none" spellCheck={false} maxLength={254} placeholder="you@example.com" />
-                </TextField>
-
-                {extra.includes("organization") && (
-                  <TextField id="organization" label={role === "university" ? "University name" : "University / Organization"} error={errors.organization}>
-                    <input {...bind("organization")} type="text" autoComplete="organization" maxLength={100} />
-                  </TextField>
-                )}
-                {extra.includes("position") && (
-                  <TextField id="position" label="Coaching position" error={errors.position}>
-                    <select {...bind("position")}>
-                      <option value="">Select a position</option>
-                      {POSITION_TITLES.map((p) => <option key={p} value={p}>{p}</option>)}
-                    </select>
-                  </TextField>
-                )}
-                {extra.includes("sport") && (
-                  <TextField id="sport" label="Sport specialization" error={errors.sport}>
-                    <select {...bind("sport")}>
-                      <option value="">Select a sport</option>
-                      {sports.map((sp) => <option key={sp.name} value={sp.name}>{sp.name}</option>)}
-                    </select>
-                  </TextField>
-                )}
-                {extra.includes("designation") && (
-                  <TextField id="designation" label="Position / Designation" error={errors.designation}>
-                    <input {...bind("designation")} type="text" autoComplete="organization-title" maxLength={80} />
-                  </TextField>
-                )}
-
-                <TextField id="password" label="Password" error={errors.password}>
-                  <div className="relative">
-                    <input {...bind("password")} type={showPassword ? "text" : "password"} autoComplete="new-password" maxLength={128} placeholder="At least 10 characters, letters and numbers" className={cn(bind("password").className, "pr-12")} />
-                    <PasswordToggle shown={showPassword} onToggle={() => setShowPassword((v) => !v)} />
-                  </div>
-                </TextField>
-
-                <TextField id="confirm" label="Confirm password" error={errors.confirm}>
-                  <div className="relative">
-                    <input {...bind("confirm")} type={showConfirm ? "text" : "password"} autoComplete="new-password" maxLength={128} placeholder="Type it again" className={cn(bind("confirm").className, "pr-12")} />
-                    <PasswordToggle shown={showConfirm} onToggle={() => setShowConfirm((v) => !v)} />
-                  </div>
-                </TextField>
-
-                <button type="submit" disabled={loading || redirecting} className={cn(btn.primary, "mt-1 h-12 w-full bg-primary bg-none text-base text-white shadow-none")}>
-                  {redirecting ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" /> Account created — redirecting…
-                    </>
-                  ) : loading ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" /> Creating account…
-                    </>
-                  ) : (
-                    <>
-                      Create account <ArrowRight className="h-4 w-4" />
-                    </>
-                  )}
-                </button>
-
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <button type="button" onClick={back} disabled={loading || redirecting} className={cn(btn.secondary, "flex-1")}>
-                    <ArrowLeft className="h-4 w-4" /> Back
-                  </button>
-                  <Link to="/login" search={{ signin: 1 }} direction="none" className={cn(btn.secondary, "flex-1")}>Login</Link>
-                </div>
-              </form>
-            </div>
-          </div>
+          <SignupForm role={role} onBack={() => setRole(null)} />
         )}
       </main>
     </div>

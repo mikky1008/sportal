@@ -35,7 +35,7 @@ export function AppHeader({ children, below }: { children: ReactNode; below?: Re
 export function HeaderBrand({ to, label }: { to: string; label: string }) {
   return (
     <Link to={to} direction="root" className="flex shrink-0 items-center gap-2.5 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shell-focus" aria-label={label}>
-      <span className="grid h-10 w-10 place-items-center rounded-full bg-shell-logo font-display text-xl font-bold text-shell-logo-fg">S</span>
+      <img src="/icon-192.png" alt="" aria-hidden="true" className="h-10 w-10 shrink-0 rounded-[22%]" />
       <span className="font-display text-2xl font-bold tracking-wide text-shell-fg">SPORTAL</span>
     </Link>
   );

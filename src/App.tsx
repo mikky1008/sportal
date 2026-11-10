@@ -78,7 +78,7 @@ function NotFound() {
 function Splash() {
   return (
     <div className="grid min-h-[100dvh] place-items-center bg-hero">
-      <span className="grid h-16 w-16 place-items-center rounded-2xl bg-electric-gradient font-display text-3xl font-bold text-primary-foreground shadow-glow">S</span>
+      <img src="/icon-192.png" alt="" aria-hidden="true" className="h-16 w-16 shrink-0 rounded-[22%]" />
     </div>
   );
 }

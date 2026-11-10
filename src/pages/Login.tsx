@@ -43,7 +43,7 @@ function TopNav() {
     <header className="sticky top-0 z-30 border-b bg-white">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-8">
         <div className="flex items-center gap-2.5">
-          <span className="grid h-9 w-9 place-items-center rounded-full bg-electric-gradient font-display text-lg font-bold text-primary-foreground shadow-glow">S</span>
+          <img src="/icon-192.png" alt="" aria-hidden="true" className="h-9 w-9 shrink-0 rounded-[22%]" />
           <span className="font-display text-xl font-bold tracking-wide text-foreground">SPORTAL</span>
         </div>
 

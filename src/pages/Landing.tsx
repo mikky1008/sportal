@@ -39,7 +39,7 @@ const ctaSecondary =
 function Brand({ className }: { className?: string }) {
   return (
     <span className={cn("flex items-center gap-2.5", className)}>
-      <span className="grid h-9 w-9 place-items-center rounded-full bg-electric-gradient font-display text-lg font-bold text-primary-foreground shadow-glow">S</span>
+      <img src="/icon-192.png" alt="" aria-hidden="true" className="h-9 w-9 shrink-0 rounded-[22%]" />
       <span className="font-display text-xl font-bold tracking-wide text-white">SPORTAL</span>
     </span>
   );

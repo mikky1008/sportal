@@ -85,7 +85,8 @@ function TopNav() {
   );
 }
 
-function LoginScreen() {
+/** The sign-in card on its own, so it can sit on the login page or inside the landing page popup. */
+export function LoginForm() {
   const location = useLocation();
   const redirect = new URLSearchParams(location.search).get("redirect") ?? undefined;
   const { signIn, accept } = useAuth();
@@ -129,9 +130,6 @@ function LoginScreen() {
   }
 
   return (
-    <div className="min-h-[100dvh]" style={{ background: "linear-gradient(180deg, oklch(0.985 0.004 250) 0%, oklch(0.95 0.016 250) 100%)" }}>
-      <TopNav />
-      <main className="grid min-h-[calc(100dvh-4rem)] place-items-center px-4 py-10 sm:px-8">
         <div className="w-full max-w-md">
           <div className="surface p-6 sm:p-8">
             <h1 className="m-0! font-sans text-3xl! font-normal! tracking-tight">Welcome back</h1>
@@ -240,6 +238,15 @@ function LoginScreen() {
             <Link to="/signup" direction="none" className="font-semibold text-primary hover:underline">Create one</Link>
           </p>
         </div>
+  );
+}
+
+function LoginScreen() {
+  return (
+    <div className="min-h-[100dvh]" style={{ background: "linear-gradient(180deg, oklch(0.985 0.004 250) 0%, oklch(0.95 0.016 250) 100%)" }}>
+      <TopNav />
+      <main className="grid min-h-[calc(100dvh-4rem)] place-items-center px-4 py-10 sm:px-8">
+        <LoginForm />
       </main>
     </div>
   );

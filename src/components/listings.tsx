@@ -57,7 +57,7 @@ const APPLICATION_LABEL: Record<ApplicationStatus, { text: string; tone: "succes
  * are not student-athletes, so they never see an Apply button that can only fail.
  */
 export function ScholarshipCard({
-  s, canApply, onApply, onWithdraw, onToggleOpen,
+  s, canApply, onApply, onWithdraw, onToggleOpen, onApplicants, highlighted,
 }: {
   s: ScholarshipView;
   canApply: boolean;
@@ -65,6 +65,10 @@ export function ScholarshipCard({
   onWithdraw: (id: string) => Promise<string | null>;
   /** Only used when the signed-in user posted this scholarship. */
   onToggleOpen?: (id: string, open: boolean) => Promise<string | null>;
+  /** Only used when the signed-in user posted this scholarship: opens the list of applicants. */
+  onApplicants?: (s: ScholarshipView) => void;
+  /** the card a search result pointed at */
+  highlighted?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -94,7 +98,7 @@ export function ScholarshipCard({
   };
 
   return (
-    <article className="surface flex flex-col p-5">
+    <article id={`scholarship-${s.id}`} className={cn("surface flex flex-col p-5", highlighted && "ring-2 ring-primary")}>
       <div className="mb-3 flex items-center justify-between">
         <Pill tone="gold">{s.coverage || "Scholarship"}</Pill>
         {!s.isOpen ? <Pill tone="gold">Closed</Pill> : label && active && <Pill tone={label.tone}>{label.text}</Pill>}
@@ -110,6 +114,9 @@ export function ScholarshipCard({
       )}
       <div className="mt-auto flex items-center justify-between gap-3 pt-4">
         <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground"><Calendar className="h-4 w-4" />Due {formatDeadline(s.deadline)}</span>
+        {s.postedByMe && onApplicants && (
+          <button onClick={() => onApplicants(s)} className={cn(btn.secondary, "px-4 py-2")}>Applicants</button>
+        )}
         {s.postedByMe && onToggleOpen && (
           <button
             disabled={busy}

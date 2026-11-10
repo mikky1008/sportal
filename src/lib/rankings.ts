@@ -26,6 +26,7 @@ export const SPORT_METRICS: Record<string, string[]> = {
   Basketball: ["Shooting Accuracy", "Overall Performance", "Consistency"],
   Volleyball: ["Spike Accuracy", "Serve Accuracy"],
   "Track & Field": ["100m Sprint (s)"],
+  Football: ["Passing Accuracy", "Kick Accuracy"],
 };
 
 /** The metric used for an athlete's single headline "Basketball Rank" style number. */
@@ -33,6 +34,7 @@ export const PRIMARY_METRIC: Record<string, string> = {
   Basketball: "Overall Performance",
   Volleyball: "Spike Accuracy",
   "Track & Field": "100m Sprint (s)",
+  Football: "Passing Accuracy",
 };
 
 export const ALL = "All";
@@ -48,6 +50,8 @@ const SKILL_METRIC: Partial<Record<SkillId, string>> = {
   spiking: "Spike Accuracy",
   serving: "Serve Accuracy",
   sprint100: "100m Sprint (s)",
+  fbpassing: "Passing Accuracy",
+  fbkicking: "Kick Accuracy",
 };
 
 /**

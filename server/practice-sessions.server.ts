@@ -19,6 +19,7 @@ import { getDb, type Db } from "./db.server.ts";
 import { audit, type PublicUser, type RequestMeta } from "./auth.server.ts";
 import { ATHLETE_ROLE, COACH_ROLE, ConnectionError, PAGE_DEFAULT, PAGE_MAX } from "./connections.server.ts";
 import { skillById, skills } from "../src/lib/skills.ts";
+import { notify } from "./notifications.server.ts";
 import { statusForNewSession } from "../src/lib/verification.ts";
 import type { SessionStatus } from "../src/types/index.ts";
 
@@ -238,11 +239,13 @@ export async function verifySession(actor: PublicUser, id: string, meta: Partial
   if (!UUID_RE.test(id)) throw notFound;
   const db = dbArg ?? (await getDb());
   const ts = new Date();
+  let athleteId = "";
+  let skillName = "";
 
   await db.begin(async (tx) => {
     // Locks the session row; the connection must be accepted, otherwise it is simply "not found".
-    const [row] = await tx<{ status: DbStatus; athlete_id: string }[]>`
-      SELECT s.status, s.athlete_id
+    const [row] = await tx<{ status: DbStatus; athlete_id: string; skill: string }[]>`
+      SELECT s.status, s.athlete_id, s.skill
       FROM practice_sessions s
       JOIN coach_athlete_connections c ON c.athlete_id = s.athlete_id AND c.coach_id = ${actor.id} AND c.status = 'accepted'
       WHERE s.id = ${id}
@@ -252,8 +255,11 @@ export async function verifySession(actor: PublicUser, id: string, meta: Partial
     await tx`
       UPDATE practice_sessions SET status = 'coach_verified', verified_by = ${actor.id}, verified_at = ${ts}
       WHERE id = ${id}`;
+    athleteId = row.athlete_id;
+    skillName = skillById(row.skill)?.name ?? row.skill;
   });
   await audit("practice_session.verified", { userId: actor.id, ...meta, detail: { sessionId: id } }, db);
+  await notify(athleteId, { category: "verification", title: "Result verified", message: `${actor.displayName} verified your ${skillName} result. It now counts in rankings.`, link: "/performance" }, db);
   const view = await viewById(db, id);
   if (!view) throw notFound;
   return view;

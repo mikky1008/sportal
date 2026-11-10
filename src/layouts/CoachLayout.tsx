@@ -4,8 +4,7 @@ import { IonContent, IonPage } from "@ionic/react";
 import { toast } from "sonner";
 import {
   Building2, ClipboardList, Compass, Handshake, LayoutDashboard, LogOut, MessageSquare, Settings, User, UserCheck, Users,
-  type LucideIcon,
-} from "lucide-react";
+  type LucideIcon, ClipboardCheck } from "lucide-react";
 import { Link } from "@/router-compat";
 import { useAuth } from "@/auth/AuthContext";
 import { listNotifications, useUnreadCount, type NotificationView } from "@/lib/notificationsApi";
@@ -37,6 +36,7 @@ interface NavEntry {
 const MAIN_NAV: NavEntry[] = [
   { label: "Dashboard", icon: LayoutDashboard, to: COACH_HOME },
   { label: "My Athletes", icon: Users, to: "/coach/athletes" },
+  { label: "Session Reviews", icon: ClipboardCheck, to: "/coach/reviews" },
   { label: "Athlete Discovery", icon: Compass, to: "/recruiting" },
 ];
 

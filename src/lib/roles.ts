@@ -28,7 +28,8 @@ export const POST_SIGNUP_PATH: Record<AccountRole, string> = {
   university_representative: "/scholarships",
 };
 
-/** Where a signed-in user lands by default (no saved redirect): coaches get their own dashboard. */
+/** Where a signed-in user lands by default (no saved redirect): coaches get their own dashboard, university representatives their scholarships. */
 export function homePathFor(roles: readonly string[]): string {
-  return primaryRole(roles) === "coach" ? "/coach/dashboard" : "/dashboard";
+  const role = primaryRole(roles);
+  return role === "coach" ? "/coach/dashboard" : role === "university_representative" ? "/scholarships" : "/dashboard";
 }

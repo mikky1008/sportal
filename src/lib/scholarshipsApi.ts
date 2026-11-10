@@ -68,3 +68,18 @@ export const createScholarship = (d: ScholarshipDraft) =>
 
 export const setScholarshipOpen = (id: string, open: boolean) =>
   apiRequest<{ scholarship: ScholarshipView }>(`/api/scholarships/${encodeURIComponent(id)}/${open ? "open" : "close"}`, { method: "POST" });
+
+export interface ApplicantView {
+  id: string;
+  status: ApplicationStatus;
+  appliedAt: string;
+  updatedAt: string;
+  athlete: { id: string; displayName: string; sport: string; school: string };
+}
+
+/** The poster (or an admin) only. */
+export const listApplicants = (scholarshipId: string) =>
+  apiRequest<{ items: ApplicantView[] }>(`/api/scholarships/${encodeURIComponent(scholarshipId)}/applications`);
+
+export const setApplicationStatus = (applicationId: string, status: "under_review" | "accepted" | "rejected") =>
+  apiRequest<{ status: ApplicationStatus }>(`/api/scholarships/applications/${encodeURIComponent(applicationId)}/status`, { method: "POST", body: { status } });

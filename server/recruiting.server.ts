@@ -279,6 +279,8 @@ export interface AthleteDetail {
   athlete: DirectoryAthleteView;
   /** the signed-in athlete is looking at their own showcase (shown even when hidden) */
   own: boolean;
+  /** a university is looking at the showcase of someone who applied to its scholarship (shown even when hidden) */
+  applicant: boolean;
   watched: boolean;
   note: string;
   /** the signed-in coach's open or accepted inquiry with this athlete, if any */
@@ -289,16 +291,26 @@ export async function getAthlete(user: PublicUser, athleteId: string, dbArg?: Db
   if (!isUuid(athleteId)) throw notFound();
   const db = dbArg ?? (await getDb());
   const own = user.roles.includes(ATHLETE_ROLE) && user.id === athleteId;
-  if (!own) await requireVerifiedCoach(db, user);
-  const [athlete] = await loadDirectory(db, { onlyId: athleteId, includeHidden: own });
+  // Applying to a scholarship is the athlete's choice to share their showcase with the university that
+  // posted it, so that university may open it (even if the athlete hides their showcase from search).
+  let applicant = false;
+  if (!own && (user.roles.includes("university_representative") || user.roles.includes("admin"))) {
+    const admin = user.roles.includes("admin");
+    const [hit] = await db`
+      SELECT 1 FROM scholarship_applications a JOIN scholarships s ON s.id = a.scholarship_id
+      WHERE a.athlete_id = ${athleteId} AND a.status <> 'withdrawn' AND (${admin} OR s.posted_by = ${user.id}) LIMIT 1`;
+    applicant = !!hit;
+  }
+  if (!own && !applicant) await requireVerifiedCoach(db, user);
+  const [athlete] = await loadDirectory(db, { onlyId: athleteId, includeHidden: own || applicant });
   if (!athlete) throw notFound(); // missing, inactive and hidden all look the same
-  if (own) return { athlete, own: true, watched: false, note: "", inquiry: null };
+  if (own || applicant) return { athlete, own, applicant, watched: false, note: "", inquiry: null };
 
   const [w] = await db<{ note: string }[]>`SELECT note FROM coach_shortlist WHERE coach_id = ${user.id} AND athlete_id = ${athleteId}`;
   const [inq] = await db<{ id: string; status: string }[]>`
     SELECT id, status FROM recruitment_inquiries
     WHERE coach_id = ${user.id} AND athlete_id = ${athleteId} AND status <> 'declined' ORDER BY created_at DESC LIMIT 1`;
-  return { athlete, own: false, watched: !!w, note: w?.note ?? "", inquiry: inq ? { id: inq.id, status: STATUS[inq.status] ?? "Pending" } : null };
+  return { athlete, own: false, applicant: false, watched: !!w, note: w?.note ?? "", inquiry: inq ? { id: inq.id, status: STATUS[inq.status] ?? "Pending" } : null };
 }
 
 // ---------- watchlist ----------

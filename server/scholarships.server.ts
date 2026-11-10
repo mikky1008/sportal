@@ -235,3 +235,75 @@ export async function listUniversities(dbArg?: Db): Promise<string[]> {
     SELECT DISTINCT university FROM scholarships WHERE is_open = TRUE AND deadline >= CURRENT_DATE ORDER BY university`;
   return rows.map((r) => r.university);
 }
+
+// ---------- reviewing applicants (the poster, or an admin) ----------
+
+export interface ApplicantView {
+  id: string;
+  status: ApplicationStatus;
+  appliedAt: string;
+  updatedAt: string;
+  athlete: { id: string; displayName: string; sport: string; school: string };
+}
+
+/** A scholarship the signed-in user posted (any, for an admin). Anything else looks like it does not exist. */
+async function ownedScholarship(db: Db, user: PublicUser, scholarshipId: string): Promise<{ id: string; name: string }> {
+  const admin = hasRole(user, ADMIN_ROLE);
+  const [s] = await db<{ id: string; name: string }[]>`
+    SELECT id, name FROM scholarships WHERE id = ${scholarshipId} AND (${admin} OR posted_by = ${user.id})`;
+  if (!s) throw new ScholarshipError(404, "not_found", "Scholarship not found.");
+  return s;
+}
+
+export async function listApplicants(user: PublicUser, scholarshipId: string, dbArg?: Db): Promise<{ items: ApplicantView[] }> {
+  const db = dbArg ?? (await getDb());
+  await ownedScholarship(db, user, scholarshipId);
+  const rows = await db<{ id: string; status: ApplicationStatus; created_at: Date; updated_at: Date; athlete_id: string; name: string; sport: string; school: string }[]>`
+    SELECT a.id, a.status, a.created_at, a.updated_at, u.id AS athlete_id,
+           COALESCE(NULLIF(btrim(concat_ws(' ', up.first_name, up.last_name)), ''), u.display_name) AS name,
+           COALESCE(ap.sport, '') AS sport, COALESCE(ap.school, '') AS school
+    FROM scholarship_applications a
+    JOIN users u ON u.id = a.athlete_id
+    LEFT JOIN user_profiles up ON up.user_id = u.id
+    LEFT JOIN athlete_profiles ap ON ap.user_id = u.id
+    WHERE a.scholarship_id = ${scholarshipId}
+    ORDER BY (a.status = 'withdrawn'), a.created_at DESC, a.id`;
+  return {
+    items: rows.map((r) => ({
+      id: r.id,
+      status: r.status,
+      appliedAt: r.created_at.toISOString(),
+      updatedAt: r.updated_at.toISOString(),
+      athlete: { id: r.athlete_id, displayName: r.name, sport: r.sport, school: r.school },
+    })),
+  };
+}
+
+const STATUS_PHRASE: Record<"under_review" | "accepted" | "rejected", string> = {
+  under_review: "is now under review",
+  accepted: "was accepted",
+  rejected: "was not selected",
+};
+
+/** Moves an application between under review, accepted and not selected, and tells the athlete. */
+export async function setApplicationStatus(
+  user: PublicUser,
+  applicationId: string,
+  status: "under_review" | "accepted" | "rejected",
+  meta: Partial<RequestMeta> = {},
+  dbArg?: Db,
+): Promise<ApplicantView["status"]> {
+  const db = dbArg ?? (await getDb());
+  const admin = hasRole(user, ADMIN_ROLE);
+  const [a] = await db<{ id: string; status: ApplicationStatus; athlete_id: string; scholarship_id: string; name: string }[]>`
+    SELECT a.id, a.status, a.athlete_id, a.scholarship_id, s.name
+    FROM scholarship_applications a JOIN scholarships s ON s.id = a.scholarship_id
+    WHERE a.id = ${applicationId} AND (${admin} OR s.posted_by = ${user.id})`;
+  if (!a) throw new ScholarshipError(404, "not_found", "Application not found.");
+  if (a.status === "withdrawn") throw new ScholarshipError(409, "withdrawn", "The athlete withdrew this application.");
+  if (a.status === status) return status; // nothing changed, so nobody is notified twice
+  await db`UPDATE scholarship_applications SET status = ${status}, updated_at = ${new Date()} WHERE id = ${applicationId}`;
+  await audit("scholarship.application_status", { userId: user.id, ...meta, detail: { applicationId, status } }, db);
+  await notify(a.athlete_id, { category: "scholarship", title: "Application update", message: `Your application to ${a.name} ${STATUS_PHRASE[status]}.`, link: "/scholarships" }, db);
+  return status;
+}

@@ -76,6 +76,8 @@
 //                                                    each item has myApplication ({ id, status } or null) for the caller
 //   POST /api/scholarships                          university representative or admin
 //                                                   { name, university?, sport, coverage, details, eligibility[], deadline } -> 201 { ok, scholarship }
+//   GET  /api/scholarships/:id/applications         the poster (or an admin) -> { ok, items }   everyone who applied, withdrawn ones last
+//   POST /api/scholarships/applications/:appId/status   the poster (or an admin) { status: "under_review" | "accepted" | "rejected" } -> { ok, status }   409 withdrawn; the athlete is notified
 //   GET  /api/scholarships/universities            -> { ok, items: string[] }   universities with an open scholarship
 //   POST /api/scholarships/:id/open | /close        poster or admin -> { ok, scholarship }
 //   POST /api/scholarships/:id/apply                student-athlete -> 201 { ok, application }   (409 already_applied | closed)
@@ -156,8 +158,10 @@ import {
 import {
   applyToScholarship,
   createScholarship,
+  listApplicants,
   listMyApplications,
   listScholarships,
+  setApplicationStatus,
   listUniversities,
   ScholarshipError,
   setScholarshipOpen,
@@ -472,10 +476,12 @@ async function handleScholarships(req: Request, path: string): Promise<Response 
   const action = /^\/api\/scholarships\/([^/]+)\/(open|close|apply|withdraw)$/.exec(path);
   const isMine = path === "/api/athletes/me/applications";
   const isUnis = path === "/api/scholarships/universities";
-  if (!isList && !action && !isMine && !isUnis) return null;
+  const applicants = /^\/api\/scholarships\/([^/]+)\/applications$/.exec(path);
+  const setStatus = /^\/api\/scholarships\/applications\/([^/]+)\/status$/.exec(path);
+  if (!isList && !action && !isMine && !isUnis && !applicants && !setStatus) return null;
   const get = req.method === "GET";
   const post = req.method === "POST";
-  if (!((isList && (get || post)) || (action && post) || ((isMine || isUnis) && get))) return null;
+  if (!((isList && (get || post)) || (action && post) || ((isMine || isUnis || applicants) && get) || (setStatus && post))) return null;
 
   const user = await getUserBySessionToken(bearer(req));
   if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
@@ -494,6 +500,12 @@ async function handleScholarships(req: Request, path: string): Promise<Response 
       });
     }
     if (isUnis) return send(req, 200, { ok: true, items: await listUniversities() });
+    if (applicants) return send(req, 200, { ok: true, ...(await listApplicants(user, applicants[1] ?? "")) });
+    if (setStatus) {
+      const parsed = z.object({ status: z.enum(["under_review", "accepted", "rejected"]) }).safeParse(await readJson(req));
+      if (!parsed.success) return send(req, 400, { ok: false, code: "validation", message: 'Send { status: "under_review" | "accepted" | "rejected" }.' });
+      return send(req, 200, { ok: true, status: await setApplicationStatus(user, setStatus[1] ?? "", parsed.data.status, meta) });
+    }
     if (isMine) {
       const { limit, offset } = pageFrom(req, SCHOLARSHIP_PAGE_DEFAULT, SCHOLARSHIP_PAGE_MAX);
       return send(req, 200, { ok: true, ...(await listMyApplications(user, limit, offset)) });

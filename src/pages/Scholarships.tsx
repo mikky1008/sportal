@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useSearch } from "@/router-compat";
 import { toast } from "sonner";
 import { PageHeader, btn } from "@/components/common";
 import { Modal, ScholarshipCard } from "@/components/listings";
@@ -6,8 +7,8 @@ import { Page } from "@/components/Page";
 import { useAuth } from "@/auth/AuthContext";
 import { sports } from "@/data/mock";
 import {
-  applyToScholarship, createScholarship, listScholarships, setScholarshipOpen, withdrawApplication,
-  type ScholarshipDraft, type ScholarshipView,
+  applyToScholarship, createScholarship, listApplicants, listScholarships, setApplicationStatus, setScholarshipOpen, withdrawApplication,
+  type ApplicantView, type ApplicationStatus, type ScholarshipDraft, type ScholarshipView,
 } from "@/lib/scholarshipsApi";
 import { cn } from "@/lib/utils";
 
@@ -81,7 +82,85 @@ function PostScholarshipModal({ open, onClose, onPosted }: { open: boolean; onCl
   );
 }
 
+const APPLICANT_STATUS: Record<ApplicationStatus, string> = {
+  submitted: "New",
+  under_review: "Under review",
+  accepted: "Accepted",
+  rejected: "Not selected",
+  withdrawn: "Withdrawn",
+};
+
+/** The people who applied to one scholarship, with the three decisions the university can make. */
+function ApplicantsModal({ scholarship, onClose }: { scholarship: ScholarshipView | null; onClose: () => void }) {
+  const [items, setItems] = useState<ApplicantView[] | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const load = useCallback(async (id: string) => {
+    const r = await listApplicants(id);
+    if (r.ok) { setItems(r.data.items); setError(""); } else setError(r.message);
+  }, []);
+  useEffect(() => {
+    setItems(null);
+    setError("");
+    if (scholarship) void load(scholarship.id);
+  }, [scholarship, load]);
+
+  const decide = async (a: ApplicantView, status: "under_review" | "accepted" | "rejected") => {
+    setBusy(a.id);
+    const r = await setApplicationStatus(a.id, status);
+    setBusy(null);
+    if (!r.ok) toast.error(r.message || "Could not update this application.");
+    else toast.success(`Marked ${APPLICANT_STATUS[status].toLowerCase()} — ${a.athlete.displayName} was notified.`);
+    if (scholarship) void load(scholarship.id);
+  };
+
+  return (
+    <Modal open={!!scholarship} onClose={onClose} title={scholarship ? `Applicants: ${scholarship.name}` : "Applicants"}>
+      {error && <p className="text-sm text-muted-foreground">{error}</p>}
+      {!error && items === null && <p className="py-4 text-center text-sm text-muted-foreground">Loading…</p>}
+      {items && items.length === 0 && <p className="py-4 text-center text-sm text-muted-foreground">Nobody has applied yet.</p>}
+      {items && items.length > 0 && (
+        <ul className="flex max-h-[60vh] flex-col gap-3 overflow-y-auto">
+          {items.map((a) => {
+            const withdrawn = a.status === "withdrawn";
+            return (
+              <li key={a.id} className={cn("rounded-xl border bg-card p-3", withdrawn && "opacity-60")}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="font-semibold">{a.athlete.displayName}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {[a.athlete.sport, a.athlete.school].filter(Boolean).join(" · ") || "No profile yet"} · applied {new Date(a.appliedAt).toLocaleDateString("en-US", { month: "short", day: "2-digit" })}
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-semibold">{APPLICANT_STATUS[a.status]}</span>
+                </div>
+                {!withdrawn && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Link to={`/recruiting/${a.athlete.id}`} className={cn(btn.secondary, "px-3 py-1.5 text-xs")}>View showcase</Link>
+                    {(["under_review", "accepted", "rejected"] as const).map((st) => (
+                      <button key={st} disabled={busy === a.id || a.status === st} onClick={() => void decide(a, st)} className={cn(st === "accepted" ? btn.primary : btn.secondary, "px-3 py-1.5 text-xs")}>
+                        {st === "under_review" ? "Under review" : st === "accepted" ? "Accept" : "Not selected"}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </Modal>
+  );
+}
+
+const parseScholarshipSearch = (search: Record<string, unknown>) => ({
+  highlight: typeof search["highlight"] === "string" ? search["highlight"] : undefined,
+});
+
 export default function ScholarshipsPage() {
+  const { highlight } = useSearch(parseScholarshipSearch);
+  const [viewing, setViewing] = useState<ScholarshipView | null>(null);
   const { user } = useAuth();
   const canApply = !!user?.roles.includes("student_athlete");
   const canPost = !!user?.roles.some((r) => r === "university_representative" || r === "admin");
@@ -113,6 +192,12 @@ export default function ScholarshipsPage() {
       await load();
       return null;
     };
+
+  // A search result pointed at one scholarship: scroll to it once the list is on screen.
+  useEffect(() => {
+    if (!highlight || state.kind !== "ready") return;
+    document.getElementById(`scholarship-${highlight}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [highlight, state.kind]);
 
   const sports_ = useMemo(() => (state.kind === "ready" ? [...new Set(state.items.map((s) => s.sport))].sort() : []), [state]);
   const shown = state.kind === "ready" ? state.items.filter((s) => sport === "all" || s.sport === sport) : [];
@@ -148,10 +233,11 @@ export default function ScholarshipsPage() {
       {state.kind === "ready" && shown.length > 0 && (
         <div className="grid gap-4 md:grid-cols-2">
           {shown.map((s) => (
-            <ScholarshipCard key={s.id} s={s} canApply={canApply} onApply={act(applyToScholarship)} onWithdraw={act(withdrawApplication)} onToggleOpen={act(setScholarshipOpen)} />
+            <ScholarshipCard key={s.id} s={s} canApply={canApply} onApply={act(applyToScholarship)} onWithdraw={act(withdrawApplication)} onToggleOpen={act(setScholarshipOpen)} onApplicants={setViewing} highlighted={s.id === highlight} />
           ))}
         </div>
       )}
+      {canPost && <ApplicantsModal scholarship={viewing} onClose={() => setViewing(null)} />}
       {canPost && <PostScholarshipModal open={posting} onClose={() => setPosting(false)} onPosted={() => void load()} />}
     </Page>
   );

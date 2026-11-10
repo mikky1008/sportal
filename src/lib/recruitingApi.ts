@@ -51,6 +51,8 @@ export interface AthleteDetail {
   athlete: DirectoryAthlete;
   /** the signed-in athlete is looking at their own showcase */
   own: boolean;
+  /** a university is looking at the showcase of someone who applied to its scholarship */
+  applicant: boolean;
   watched: boolean;
   note: string;
   inquiry: { id: string; status: InquiryStatus } | null;

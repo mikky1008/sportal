@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import { Bell, Menu, Search, type LucideIcon } from "lucide-react";
 import { Link } from "@/router-compat";
-import { MIN_SEARCH_CHARS, searchEverything, type SearchResults } from "@/lib/searchApi";
+import { toast } from "sonner";
+import { MIN_SEARCH_CHARS, searchEverything, sendConnectionRequest, type Relationship, type SearchResults } from "@/lib/searchApi";
 import { PersonAvatar } from "@/components/avatar";
 import { cn } from "@/lib/utils";
 
@@ -182,6 +183,25 @@ export function HeaderSearch({ placeholder }: { placeholder: string }) {
   const empty = !!results && !results.athletes.length && !results.scholarships.length;
   const showPanel = open && term.length >= MIN_SEARCH_CHARS;
   const rowClass = "block rounded-xl px-3 py-2.5 text-sm hover:bg-muted";
+  const [connecting, setConnecting] = useState<string | null>(null);
+
+  const connect = async (id: string, name: string) => {
+    setConnecting(id);
+    const r = await sendConnectionRequest(id);
+    setConnecting(null);
+    if (!r.ok) {
+      toast.error(r.message || "Could not send the request.");
+      return;
+    }
+    setResults((cur) => (cur ? { ...cur, athletes: cur.athletes.map((a) => (a.id === id ? { ...a, relationship: "request_sent" as Relationship } : a)) } : cur));
+    toast.success("Request sent", { description: `${name} will see it and can accept.` });
+  };
+  const relationshipLabel: Record<Relationship, string | null> = {
+    connected: "In My Athletes",
+    request_sent: "Request sent",
+    request_received: "Wants to connect",
+    none: null,
+  };
 
   return (
     <div ref={boxRef} className="relative ml-2 hidden max-w-xl flex-1 xl:block">
@@ -204,7 +224,7 @@ export function HeaderSearch({ placeholder }: { placeholder: string }) {
             <div>
               <p className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Scholarships</p>
               {results.scholarships.map((s) => (
-                <Link key={s.id} to="/scholarships" className={rowClass}>
+                <Link key={s.id} to="/scholarships" search={{ highlight: s.id }} className={rowClass}>
                   <span className="block font-semibold">{s.name}</span>
                   <span className="block text-xs text-muted-foreground">{s.university} · {s.sport}</span>
                 </Link>
@@ -215,10 +235,23 @@ export function HeaderSearch({ placeholder }: { placeholder: string }) {
             <div>
               <p className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Athletes</p>
               {results.athletes.map((a) => (
-                <Link key={a.id} to="/coach/athletes" className={rowClass}>
-                  <span className="block font-semibold">{a.displayName}</span>
-                  <span className="block text-xs text-muted-foreground">Open My Athletes to connect</span>
-                </Link>
+                <div key={a.id} className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm hover:bg-muted">
+                  <Link to={a.hasShowcase ? `/recruiting/${a.id}` : "/coach/athletes"} className="min-w-0 flex-1">
+                    <span className="block truncate font-semibold">{a.displayName}</span>
+                    <span className="block truncate text-xs text-muted-foreground">{[a.sport, a.school].filter(Boolean).join(" · ") || "No profile yet"}</span>
+                  </Link>
+                  {relationshipLabel[a.relationship] && (
+                    <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs font-semibold text-muted-foreground">{relationshipLabel[a.relationship]}</span>
+                  )}
+                  {a.relationship === "none" && (
+                    <button
+                      type="button"
+                      disabled={connecting === a.id}
+                      onClick={() => void connect(a.id, a.displayName)}
+                      className="shrink-0 rounded-full border border-primary px-3 py-1 text-xs font-semibold text-primary hover:bg-primary hover:text-primary-foreground disabled:opacity-60"
+                    >{connecting === a.id ? "Sending…" : "Connect"}</button>
+                  )}
+                </div>
               ))}
             </div>
           )}

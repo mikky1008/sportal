@@ -14,7 +14,8 @@ import { AthleteAvatar, InquiryModal } from "@/components/recruiting";
 
 function AthleteShowcase({ detail, onChange }: { detail: AthleteDetail; onChange: (d: AthleteDetail) => void }) {
   const { profile: coach } = useCoachProfile();
-  const { athlete: a, own, watched, inquiry } = detail;
+  const { athlete: a, own, applicant, watched, inquiry } = detail;
+  const canAct = !own && !applicant;
   const [modal, setModal] = useState(false);
   const [busy, setBusy] = useState(false);
   const rank = a.rank > 0 ? a.rank : undefined;
@@ -37,8 +38,8 @@ function AthleteShowcase({ detail, onChange }: { detail: AthleteDetail; onChange
 
   return (
     <div className="flex flex-col gap-6">
-      <Link to="/recruiting" search={{ tab: undefined, thread: undefined }} className="inline-flex items-center gap-2 text-sm font-semibold text-muted-foreground hover:text-foreground">
-        <ArrowLeft className="h-4 w-4" /> Back to recruiting
+      <Link to={applicant ? "/scholarships" : "/recruiting"} search={{ tab: undefined, thread: undefined }} className="inline-flex items-center gap-2 text-sm font-semibold text-muted-foreground hover:text-foreground">
+        <ArrowLeft className="h-4 w-4" /> {applicant ? "Back to scholarships" : "Back to recruiting"}
       </Link>
 
       <section className="surface flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:p-6">
@@ -54,7 +55,7 @@ function AthleteShowcase({ detail, onChange }: { detail: AthleteDetail; onChange
             {a.height && <span className="flex items-center gap-1.5"><Ruler className="h-4 w-4" />{a.height}</span>}
           </div>
         </div>
-        {!own && (
+        {canAct && (
           <div className="flex flex-wrap items-center gap-2">
             <button onClick={() => void toggleWatch()} aria-pressed={watched} className={btn.secondary}>
               {watched ? <BookmarkCheck className="h-4 w-4" /> : <Bookmark className="h-4 w-4" />}
@@ -118,6 +119,9 @@ function AthleteShowcase({ detail, onChange }: { detail: AthleteDetail; onChange
         </div>
       </div>
 
+      {applicant && (
+        <p className="text-xs text-muted-foreground">This athlete applied to one of your scholarships, so their showcase is shared with you for that application.</p>
+      )}
       {own && (
         <p className="text-xs text-muted-foreground">
           This is your own showcase — verified coaches find it exactly like this when "Visible to coaches &amp; universities" is on in Settings.
@@ -125,7 +129,7 @@ function AthleteShowcase({ detail, onChange }: { detail: AthleteDetail; onChange
         </p>
       )}
 
-      {!own && <InquiryModal athlete={a} open={modal} busy={busy} defaultOrganization={coach.organizationName} onClose={() => setModal(false)} onSend={(m, o) => void sendInquiry(m, o)} />}
+      {canAct && <InquiryModal athlete={a} open={modal} busy={busy} defaultOrganization={coach.organizationName} onClose={() => setModal(false)} onSend={(m, o) => void sendInquiry(m, o)} />}
     </div>
   );
 }

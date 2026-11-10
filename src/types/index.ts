@@ -5,7 +5,8 @@ export type UserRole = "athlete" | "coach" | "admin";
 export type SkillId =
   | "shooting" | "dribbling" | "passing" | "layups" | "agility" | "vertical" // Basketball
   | "spiking" | "serving" // Volleyball
-  | "sprint100"; // Track & Field
+  | "sprint100" // Track & Field
+  | "fbpassing" | "fbkicking"; // Football
 
 export interface Sport {
   id: string;

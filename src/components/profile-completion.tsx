@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 export type RenderAction = (section: CompletionSection, className: string, children: ReactNode) => ReactNode;
 
 const continueBtn =
-  "inline-flex items-center justify-center gap-2 rounded-xl bg-[oklch(0.52_0.14_155)] px-5 py-3 text-sm font-semibold text-white shadow-card transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+  "inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white shadow-card transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 /** Horizontal bar that fills from empty on first paint and animates to each new value. */
 export function AnimatedBar({ percent, label }: { percent: number; label: string }) {

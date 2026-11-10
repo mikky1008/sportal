@@ -17,7 +17,7 @@ import court from "@/assets/court.jpg";
 
 
 const inputBase =
-  "h-12 w-full rounded-xl border bg-card px-4 text-sm shadow-sm outline-none transition placeholder:text-muted-foreground/70 hover:border-success/50 focus:border-success focus:ring-4 focus:ring-success/20 disabled:cursor-not-allowed disabled:opacity-60";
+  "h-12 w-full rounded-xl border bg-card px-4 text-sm shadow-sm outline-none transition placeholder:text-muted-foreground/70 hover:border-primary/50 focus:border-primary focus:ring-4 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60";
 
 export type Role = "athlete" | "coach" | "university";
 type Field =
@@ -80,7 +80,7 @@ function PasswordToggle({ shown, onToggle }: { shown: boolean; onToggle: () => v
       onClick={onToggle}
       aria-label={shown ? "Hide password" : "Show password"}
       aria-pressed={shown}
-      className="absolute right-2 top-1/2 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-lg text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-success"
+      className="absolute right-2 top-1/2 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-lg text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
     >
       {shown ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
     </button>
@@ -246,16 +246,16 @@ function SignupScreen() {
                     key={id}
                     type="button"
                     onClick={() => choose(id)}
-                    className="group flex items-center gap-4 rounded-xl border bg-card p-4 text-left shadow-sm transition hover:border-success hover:bg-success/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-success"
+                    className="group flex items-center gap-4 rounded-xl border bg-card p-4 text-left shadow-sm transition hover:border-primary hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                   >
-                    <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-success/10 text-success transition group-hover:bg-success group-hover:text-white">
+                    <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary transition group-hover:bg-primary group-hover:text-white">
                       <Icon className="h-5 w-5" aria-hidden="true" />
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block text-sm font-semibold">{title}</span>
                       <span className="block text-xs text-muted-foreground">{blurb}</span>
                     </span>
-                    <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground transition group-hover:translate-x-0.5 group-hover:text-success" aria-hidden="true" />
+                    <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground transition group-hover:translate-x-0.5 group-hover:text-primary" aria-hidden="true" />
                   </button>
                 ))}
               </div>
@@ -273,7 +273,7 @@ function SignupScreen() {
             <div className="surface p-6 sm:p-8">
               <div className="flex items-center gap-3">
                 {current && (
-                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-success/10 text-success">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
                     <current.icon className="h-5 w-5" aria-hidden="true" />
                   </span>
                 )}
@@ -345,7 +345,7 @@ function SignupScreen() {
                   </div>
                 </TextField>
 
-                <button type="submit" disabled={loading || redirecting} className={cn(btn.primary, "mt-1 h-12 w-full bg-success bg-none text-base text-white shadow-none")}>
+                <button type="submit" disabled={loading || redirecting} className={cn(btn.primary, "mt-1 h-12 w-full bg-primary bg-none text-base text-white shadow-none")}>
                   {redirecting ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin" /> Account created — redirecting…

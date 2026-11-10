@@ -34,11 +34,11 @@ const parseSection = (search: Record<string, unknown>): { section?: AthleteSecti
 
 
 const input =
-  "h-11 w-full rounded-xl border bg-card px-3 text-sm font-normal outline-none transition hover:border-success/50 focus:border-success focus:ring-4 focus:ring-success/20";
-const greenBtn =
-  "inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-success px-5 text-sm font-semibold text-white transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-success disabled:opacity-60";
+  "h-11 w-full rounded-xl border bg-card px-3 text-sm font-normal outline-none transition hover:border-primary/50 focus:border-primary focus:ring-4 focus:ring-primary/20";
+const primaryBtn =
+  "inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-primary px-5 text-sm font-semibold text-white transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-60";
 const plainBtn =
-  "inline-flex h-11 items-center justify-center gap-2 rounded-xl border bg-card px-5 text-sm font-semibold transition hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-success disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex h-11 items-center justify-center gap-2 rounded-xl border bg-card px-5 text-sm font-semibold transition hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50";
 
 const SECTION_INFO: Record<AthleteSectionId, { title: string; hint: string }> = {
   basic: { title: "Basic information", hint: "Tell recruiters who you are." },
@@ -198,7 +198,7 @@ function CompleteProfileBody() {
         <section className="surface p-4 sm:p-5" aria-label="Profile progress">
           <div className="flex items-end justify-between gap-4">
             <p className="text-sm font-semibold">Step {index + 1} of {ATHLETE_SECTION_IDS.length}</p>
-            <p className="font-display text-3xl font-bold leading-none text-success" aria-live="polite">
+            <p className="font-display text-3xl font-bold leading-none text-primary" aria-live="polite">
               <span data-testid="completion-percent">{result.percent}</span><span className="text-xl">%</span>
               <span className="ml-1.5 text-xs font-medium text-muted-foreground">complete</span>
             </p>
@@ -212,12 +212,12 @@ function CompleteProfileBody() {
                   onClick={() => goTo(s.id as AthleteSectionId)}
                   aria-current={s.id === current ? "step" : undefined}
                   className={cn(
-                    "flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-left text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-success",
-                    s.id === current ? "border-success bg-success/10" : s.complete ? "border-success/30 bg-success/5 hover:bg-success/10" : "bg-card hover:bg-muted",
+                    "flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-left text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+                    s.id === current ? "border-primary bg-primary/10" : s.complete ? "border-primary/30 bg-primary/5 hover:bg-primary/10" : "bg-card hover:bg-muted",
                   )}
                 >
                   {s.complete ? (
-                    <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-success text-white"><Check className="h-3 w-3" strokeWidth={3} aria-hidden="true" /></span>
+                    <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-primary text-white"><Check className="h-3 w-3" strokeWidth={3} aria-hidden="true" /></span>
                   ) : (
                     <span className="h-5 w-5 shrink-0 rounded-full border-2 border-muted-foreground/40" aria-hidden="true" />
                   )}
@@ -244,7 +244,7 @@ function CompleteProfileBody() {
                   <input className={input} value={d.lastName} onChange={(e) => edit({ lastName: e.target.value })} aria-invalid={!!shown("lastName")} autoComplete="family-name" />
                 </Field>
                 <Field label="Athletic bio" error={shown("bio")} className="sm:col-span-2">
-                  <textarea rows={4} className="rounded-xl border bg-card p-3 text-sm font-normal outline-none transition hover:border-success/50 focus:border-success focus:ring-4 focus:ring-success/20" value={d.bio} onChange={(e) => edit({ bio: e.target.value })} aria-invalid={!!shown("bio")} />
+                  <textarea rows={4} className="rounded-xl border bg-card p-3 text-sm font-normal outline-none transition hover:border-primary/50 focus:border-primary focus:ring-4 focus:ring-primary/20" value={d.bio} onChange={(e) => edit({ bio: e.target.value })} aria-invalid={!!shown("bio")} />
                   <span className={cn("ml-auto text-xs font-normal", d.bio.length > LIMITS.bio ? "text-destructive" : "text-muted-foreground")}>{d.bio.length}/{LIMITS.bio}</span>
                 </Field>
               </div>
@@ -335,8 +335,8 @@ function CompleteProfileBody() {
                         key={u} type="button" aria-pressed={sch.universities.includes(u)}
                         onClick={() => editSch({ universities: sch.universities.includes(u) ? sch.universities.filter((x) => x !== u) : [...sch.universities, u] })}
                         className={cn(
-                          "rounded-full border px-3.5 py-2 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-success",
-                          sch.universities.includes(u) ? "border-success bg-success/15 text-foreground" : "bg-card text-muted-foreground hover:text-foreground",
+                          "rounded-full border px-3.5 py-2 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+                          sch.universities.includes(u) ? "border-primary bg-primary/15 text-foreground" : "bg-card text-muted-foreground hover:text-foreground",
                         )}
                       >{u}</button>
                     ))}
@@ -371,7 +371,7 @@ function CompleteProfileBody() {
                     <Save className="h-4 w-4" /> Save progress
                   </button>
                 )}
-                <button type="submit" className={greenBtn}>
+                <button type="submit" className={primaryBtn}>
                   {isLast ? "Finish" : "Save & Next"} {isLast ? <Check className="h-4 w-4" /> : <ArrowRight className="h-4 w-4" />}
                 </button>
               </div>

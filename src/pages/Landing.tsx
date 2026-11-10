@@ -333,6 +333,10 @@ function Footer({ onJump, onSignIn, onSignUp }: { onJump: (id: SectionId) => voi
       <div className="mx-auto mt-12 flex max-w-7xl items-center gap-2 border-t border-white/10 pt-6 text-xs text-white/50">
         <UserRound className="h-4 w-4" aria-hidden="true" />
         <span>© {new Date().getFullYear()} Sportal. All rights reserved.</span>
+        <span className="ml-auto flex items-center gap-4">
+          <Link to="/terms" className="hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400">Terms</Link>
+          <Link to="/privacy" className="hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400">Privacy</Link>
+        </span>
       </div>
     </footer>
   );

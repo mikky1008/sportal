@@ -124,6 +124,9 @@ export function SignupForm({ role, tone = "light", onBack, onSwitchToLogin }: Si
   const [formError, setFormError] = useState<string | null>(null);
   // true once the account exists and the browser is on its way to the role's first page
   const [redirecting, setRedirecting] = useState(false);
+  // must tick the box to agree to the Terms and Privacy Policy before the account is created
+  const [agreed, setAgreed] = useState(false);
+  const [agreeError, setAgreeError] = useState(false);
 
   const set = (k: Field) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     setValues((v) => ({ ...v, [k]: e.target.value }));
@@ -146,7 +149,8 @@ export function SignupForm({ role, tone = "light", onBack, onSwitchToLogin }: Si
     const errs = validate(role, values);
     setErrors(errs);
     setFormError(null);
-    if (Object.keys(errs).length) return;
+    setAgreeError(!agreed);
+    if (Object.keys(errs).length || !agreed) return;
 
     setLoading(true);
     try {
@@ -280,6 +284,31 @@ export function SignupForm({ role, tone = "light", onBack, onSwitchToLogin }: Si
                     <PasswordToggle shown={showConfirm} onToggle={() => setShowConfirm((v) => !v)} />
                   </div>
                 </TextField>
+
+                <div>
+                  <label className={cn("flex items-start gap-3 text-sm leading-relaxed", dark ? "text-slate-300" : "text-muted-foreground")}>
+                    <input
+                      type="checkbox"
+                      checked={agreed}
+                      onChange={(e) => { setAgreed(e.target.checked); if (e.target.checked) setAgreeError(false); }}
+                      disabled={loading || redirecting}
+                      aria-invalid={agreeError}
+                      aria-describedby={agreeError ? "agree-error" : undefined}
+                      className="mt-1 h-4 w-4 shrink-0 cursor-pointer accent-sky-400"
+                    />
+                    <span>
+                      I agree to the{" "}
+                      <a href="/terms" target="_blank" rel="noopener noreferrer" className={cn("font-semibold underline-offset-4 hover:underline", dark ? "text-sky-400" : "text-primary")}>Terms and Conditions</a>
+                      {" "}and the{" "}
+                      <a href="/privacy" target="_blank" rel="noopener noreferrer" className={cn("font-semibold underline-offset-4 hover:underline", dark ? "text-sky-400" : "text-primary")}>Privacy Policy</a>.
+                    </span>
+                  </label>
+                  {agreeError && (
+                    <p id="agree-error" role="alert" className={cn("mt-1.5 text-xs font-medium", dark ? "text-red-300" : "text-destructive")}>
+                      Please agree to the Terms and Conditions and Privacy Policy to continue.
+                    </p>
+                  )}
+                </div>
 
                 <button type="submit" disabled={loading || redirecting} className={dark ? "mt-1 inline-flex h-12 w-full items-center justify-center gap-2 rounded-full bg-sky-400 text-base font-semibold text-slate-900 outline-none transition hover:bg-sky-300 focus-visible:ring-4 focus-visible:ring-sky-400/40 active:translate-y-px disabled:pointer-events-none disabled:opacity-60" : cn(btn.primary, "mt-1 h-12 w-full bg-primary bg-none text-base text-white shadow-none")}>
                   {redirecting ? (

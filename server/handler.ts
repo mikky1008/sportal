@@ -100,6 +100,11 @@
 //   GET  /api/athletes/me/visibility                student-athlete -> { ok, visible }
 //   PUT  /api/athletes/me/visibility                student-athlete { visible } -> { ok, visible }   false = hidden from everyone else's rankings
 //
+// My University (read-only; the university is always the signed-in coach's own, never taken from the request):
+//   GET  /api/coach/university                      coach -> { ok, affiliated: true, university } | { ok, affiliated: false, reason: "not_verified" | "no_university" }
+//   GET  /api/coach/university/coaches              coach ?q&limit&offset -> { ok, affiliated, items, total }   verified, active coaches of the same university
+//   GET  /api/coach/university/athletes             coach ?q&limit&offset -> { ok, affiliated, items, total }   athletes with an accepted connection to a verified coach of it
+//
 // Athlete applications to a coach's program ("show interest"):
 //   POST /api/coach-applications                    student-athlete { coachId } -> 201 { ok, application }   409 already_applied | already_connected, 429 rate_limited
 //   GET  /api/coach-applications                    verified coach -> { ok, received }   /   student-athlete -> { ok, sent }
@@ -184,6 +189,14 @@ import {
   unreadCount,
 } from "./notifications.server.ts";
 import { globalSearch } from "./search.server.ts";
+import {
+  getMyUniversity,
+  listUniversityAthletes,
+  listUniversityCoaches,
+  UNIVERSITY_PAGE_DEFAULT,
+  UNIVERSITY_PAGE_MAX,
+  UniversityError,
+} from "./university.server.ts";
 import {
   applyToCoach,
   CoachApplicationError,
@@ -615,6 +628,33 @@ async function handleRankings(req: Request, path: string): Promise<Response | nu
   }
 }
 
+/** Returns null when the path is not a My University route (or not a GET: nothing here can change data). */
+async function handleUniversity(req: Request, path: string): Promise<Response | null> {
+  if (req.method !== "GET") return null;
+  const isInfo = path === "/api/coach/university";
+  const isCoaches = path === "/api/coach/university/coaches";
+  const isAthletes = path === "/api/coach/university/athletes";
+  if (!isInfo && !isCoaches && !isAthletes) return null;
+  const user = await getUserBySessionToken(bearer(req));
+  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
+  const params = new URL(req.url).searchParams;
+  const limit = Number(params.get("limit") ?? UNIVERSITY_PAGE_DEFAULT);
+  const offset = Number(params.get("offset") ?? 0);
+  const page = {
+    limit: Number.isInteger(limit) && limit >= 1 ? Math.min(limit, UNIVERSITY_PAGE_MAX) : UNIVERSITY_PAGE_DEFAULT,
+    offset: Number.isInteger(offset) && offset >= 0 ? offset : 0,
+    q: params.get("q") ?? undefined,
+  };
+  try {
+    if (isInfo) return send(req, 200, { ok: true, ...(await getMyUniversity(user)) });
+    if (isCoaches) return send(req, 200, { ok: true, ...(await listUniversityCoaches(user, page)) });
+    return send(req, 200, { ok: true, ...(await listUniversityAthletes(user, page)) });
+  } catch (err) {
+    if (err instanceof UniversityError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
+    throw err;
+  }
+}
+
 /** Returns null when the path is not a coach-applications route, so the caller can keep matching. */
 async function handleCoachApplications(req: Request, path: string): Promise<Response | null> {
   const statusRoute = /^\/api\/coach-applications\/([^/]+)\/status$/.exec(path);
@@ -912,6 +952,8 @@ export async function handle(req: Request): Promise<Response> {
     if (recruiting) return recruiting;
     const coachApps = await handleCoachApplications(req, path);
     if (coachApps) return coachApps;
+    const university = await handleUniversity(req, path);
+    if (university) return university;
     return send(req, 404, { error: "not_found" });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";

@@ -603,6 +603,54 @@ export const MIGRATIONS: Migration[] = [
         ADD CONSTRAINT athlete_profiles_category_check CHECK (category IN ('', 'Men''s Collegiate', 'Women''s Collegiate', 'Juniors'));
     `,
   },
+  {
+    version: 11,
+    name: "universities_and_coach_affiliation",
+    sql: `
+      -- A university as an entity: the details the My University page shows. Before this, a university
+      -- existed only as free text typed into profiles. The name is matched without case or edge
+      -- spaces (name_key), so "Ateneo " and "ateneo" are one university.
+      CREATE TABLE universities (
+        id          TEXT PRIMARY KEY,
+        name        TEXT NOT NULL,
+        name_key    TEXT NOT NULL UNIQUE,
+        logo_url    TEXT NOT NULL DEFAULT '',
+        location    TEXT NOT NULL DEFAULT '',
+        description TEXT NOT NULL DEFAULT '',
+        website     TEXT NOT NULL DEFAULT '',
+        created_at  TIMESTAMPTZ NOT NULL,
+        updated_at  TIMESTAMPTZ NOT NULL,
+        CONSTRAINT universities_name_check CHECK (length(btrim(name)) BETWEEN 2 AND 120),
+        CONSTRAINT universities_location_check CHECK (length(location) <= 200),
+        CONSTRAINT universities_description_check CHECK (length(description) <= 2000),
+        CONSTRAINT universities_logo_check CHECK (logo_url = '' OR (logo_url ~* '^https?://' AND length(logo_url) <= 500)),
+        CONSTRAINT universities_website_check CHECK (website = '' OR (website ~* '^https?://' AND length(website) <= 300))
+      );
+
+      -- A coach's OFFICIAL university. It is set when a reviewer approves the coach's verification (using
+      -- the organization the reviewer actually saw) and cleared if the approval is withdrawn, so it is
+      -- never just something a coach typed. NULL = no university (or not approved).
+      ALTER TABLE coach_profiles ADD COLUMN university_id TEXT REFERENCES universities(id) ON DELETE SET NULL;
+      CREATE INDEX idx_coach_profiles_university ON coach_profiles (university_id) WHERE university_id IS NOT NULL;
+
+      -- backfill start: coaches who were approved before this existed
+      INSERT INTO universities (id, name, name_key, location, created_at, updated_at)
+      SELECT md5(random()::text || clock_timestamp()::text || lower(btrim(v.organization))),
+             MIN(btrim(v.organization)), lower(btrim(v.organization)),
+             COALESCE(MAX(NULLIF(left(btrim(cp.organization_location), 200), '')), ''), now(), now()
+      FROM coach_verifications v
+      JOIN coach_profiles cp ON cp.user_id = v.coach_id
+      WHERE v.status = 'verified' AND cp.organization_type IN ('University', 'College')
+        AND length(btrim(v.organization)) BETWEEN 2 AND 120
+      GROUP BY lower(btrim(v.organization))
+      ON CONFLICT (name_key) DO NOTHING;
+
+      UPDATE coach_profiles cp SET university_id = u.id
+      FROM coach_verifications v JOIN universities u ON u.name_key = lower(btrim(v.organization))
+      WHERE v.coach_id = cp.user_id AND v.status = 'verified' AND cp.organization_type IN ('University', 'College');
+      -- backfill end
+    `,
+  },
 ];
 
 const MIGRATION_LOCK_ID = 727_274_001;

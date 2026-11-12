@@ -14,6 +14,7 @@
 //  - Nobody reviews their own request. Every decision is written to the audit log.
 //  - The reviewer's request list shows credential details and the coach's email; nobody else sees them.
 
+import { randomUUID } from "node:crypto";
 import { getDb, type Db } from "./db.server.ts";
 import { audit, type PublicUser, type RequestMeta } from "./auth.server.ts";
 import { notify } from "./notifications.server.ts";
@@ -334,10 +335,26 @@ export async function applyReview(
         INSERT INTO user_roles (user_id, role_id, granted_at)
         SELECT ${input.coachId}, id, ${ts} FROM roles WHERE name = ${VERIFIED_COACH_ROLE}
         ON CONFLICT DO NOTHING`;
+      // Official affiliation: a coach at a university or college joins that university, using the
+      // organization the reviewer saw in the request (not whatever the profile says later). The
+      // university row is created the first time anyone from it is approved.
+      await tx`
+        INSERT INTO universities (id, name, name_key, location, created_at, updated_at)
+        SELECT ${randomUUID()}, btrim(v.organization), lower(btrim(v.organization)), left(btrim(cp.organization_location), 200), ${ts}, ${ts}
+        FROM coach_verifications v JOIN coach_profiles cp ON cp.user_id = v.coach_id
+        WHERE v.coach_id = ${input.coachId} AND cp.organization_type IN ('University', 'College')
+          AND length(btrim(v.organization)) BETWEEN 2 AND 120
+        ON CONFLICT (name_key) DO NOTHING`;
+      await tx`
+        UPDATE coach_profiles cp SET university_id = u.id
+        FROM coach_verifications v JOIN universities u ON u.name_key = lower(btrim(v.organization))
+        WHERE cp.user_id = v.coach_id AND v.coach_id = ${input.coachId} AND cp.organization_type IN ('University', 'College')`;
     } else {
       await tx`
         DELETE FROM user_roles
         WHERE user_id = ${input.coachId} AND role_id IN (SELECT id FROM roles WHERE name = ${VERIFIED_COACH_ROLE})`;
+      // Withdrawing (or refusing) the approval also withdraws the affiliation.
+      await tx`UPDATE coach_profiles SET university_id = NULL WHERE user_id = ${input.coachId}`;
     }
   });
   await audit(

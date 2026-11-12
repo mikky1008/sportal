@@ -16,6 +16,9 @@ import Dashboard from "@/pages/Dashboard";
 import CoachDashboard from "@/pages/CoachDashboard";
 import MyAthletes from "@/pages/MyAthletes";
 import SessionReviews from "@/pages/SessionReviews";
+import CoachApplications from "@/pages/CoachApplications";
+import MyUniversity from "@/pages/MyUniversity";
+import AdminVerifications from "@/pages/AdminVerifications";
 import TrainingPlans from "@/pages/TrainingPlans";
 import TrainingPlanDetail from "@/pages/TrainingPlanDetail";
 import CreateTrainingPlan from "@/pages/CreateTrainingPlan";
@@ -39,6 +42,9 @@ const PROTECTED: { path: string; component: ComponentType }[] = [
   { path: "/coach/dashboard", component: CoachDashboard },
   { path: "/coach/athletes", component: MyAthletes },
   { path: "/coach/reviews", component: SessionReviews },
+  { path: "/coach/applications", component: CoachApplications },
+  { path: "/coach/university", component: MyUniversity },
+  { path: "/admin/verifications", component: AdminVerifications },
   // "new" starts a blank plan; any other value is the id of the plan to edit
   { path: "/coach/training-plans/:planId", component: CreateTrainingPlan },
   { path: "/profile", component: Profile },
@@ -107,7 +113,8 @@ function Shell() {
               // Coaches have their own dashboard: never show them the athlete one, and vice versa.
               const isCoach = primaryRole(user.roles) === "coach";
               const isRep = primaryRole(user.roles) === "university_representative";
-              if (path === "/dashboard" && (isCoach || isRep)) return <Redirect to={homePathFor(user.roles)} />;
+              const isAdmin = user.roles.includes("admin");
+              if (path === "/dashboard" && (isCoach || isRep || isAdmin)) return <Redirect to={homePathFor(user.roles)} />;
               if (path.startsWith("/coach/") && !isCoach) return <Redirect to={homePathFor(user.roles)} />;
               return <C />;
             }}

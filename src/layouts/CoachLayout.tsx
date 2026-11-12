@@ -46,7 +46,7 @@ const MORE_NAV: NavEntry[] = [
   { label: "Applications", icon: UserPlus, to: "/coach/applications" },
   { label: "Recruitment", icon: Handshake, to: "/recruiting?tab=watchlist" },
   { label: "Messages", icon: MessageSquare, to: "/recruiting?tab=messages" },
-  { label: "My University", icon: Building2 },
+  { label: "My University", icon: Building2, to: "/coach/university" },
 ];
 
 

@@ -12129,6 +12129,15 @@ var ACTIVITY_EVENTS = [
   "admin.password_rotated",
   "admin.role_revoked"
 ];
+function rolesFromDetail(detail) {
+  if (!detail) return null;
+  try {
+    const roles = JSON.parse(detail).roles;
+    return Array.isArray(roles) ? roles.filter((r) => typeof r === "string") : null;
+  } catch {
+    return null;
+  }
+}
 async function getAdminOverview(actor) {
   requireAdmin(actor);
   const db = await getDb();
@@ -12145,9 +12154,42 @@ async function getAdminOverview(actor) {
   const [bad] = await db`
     SELECT COUNT(*)::int AS n FROM audit_log WHERE event IN ('login.failed', 'admin.login.failed') AND created_at > ${since}`;
   const recent = await db`
-    SELECT event, identifier, created_at FROM audit_log WHERE event IN ${db(ACTIVITY_EVENTS)}
+    SELECT event, identifier, detail, created_at FROM audit_log WHERE event IN ${db(ACTIVITY_EVENTS)}
     ORDER BY created_at DESC, id DESC LIMIT 10`;
+  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1e3);
+  const [totals] = await db`
+    SELECT
+      COUNT(*) FILTER (WHERE NOT is_admin)::int AS users,
+      COUNT(*) FILTER (WHERE is_athlete)::int AS athletes,
+      COUNT(*) FILTER (WHERE NOT is_admin AND created_at > ${weekAgo})::int AS users_week,
+      COUNT(*) FILTER (WHERE is_athlete AND created_at > ${weekAgo})::int AS athletes_week
+    FROM (
+      SELECT u.created_at,
+             EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id AND r.name = 'admin') AS is_admin,
+             EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id AND r.name = 'student_athlete') AS is_athlete
+      FROM users u WHERE u.deleted_at IS NULL
+    ) x`;
+  const [schools] = await db`SELECT COUNT(*)::int AS n FROM universities`;
+  const months = await db`
+    SELECT to_char(m, 'Mon') AS month,
+           COUNT(DISTINCT u.id) FILTER (WHERE r.name = 'student_athlete')::int AS athletes,
+           COUNT(DISTINCT u.id) FILTER (WHERE r.name = 'coach')::int AS coaches,
+           COUNT(DISTINCT u.id) FILTER (WHERE r.name = 'university_representative')::int AS school_reps
+    FROM generate_series(date_trunc('month', now()) - interval '5 months', date_trunc('month', now()), interval '1 month') AS m
+    LEFT JOIN users u ON date_trunc('month', u.created_at) = m AND u.deleted_at IS NULL
+    LEFT JOIN user_roles ur ON ur.user_id = u.id
+    LEFT JOIN roles r ON r.id = ur.role_id
+    GROUP BY m ORDER BY m`;
   return {
+    totals: {
+      users: totals?.users ?? 0,
+      athletes: totals?.athletes ?? 0,
+      schools: schools?.n ?? 0,
+      pending: pending?.n ?? 0,
+      usersThisWeek: totals?.users_week ?? 0,
+      athletesThisWeek: totals?.athletes_week ?? 0
+    },
+    registrations: months.map((m) => ({ month: m.month, athletes: m.athletes, coaches: m.coaches, schoolReps: m.school_reps })),
     users: {
       students: count("student_athlete"),
       coaches: count("coach"),
@@ -12157,7 +12199,7 @@ async function getAdminOverview(actor) {
     },
     pendingVerifications: pending?.n ?? 0,
     signIns24h: { succeeded: ok?.n ?? 0, failed: bad?.n ?? 0 },
-    recentActivity: recent.map((r) => ({ event: r.event, identifier: r.identifier, at: r.created_at.toISOString() }))
+    recentActivity: recent.map((r) => ({ event: r.event, identifier: r.identifier, roles: rolesFromDetail(r.detail), at: r.created_at.toISOString() }))
   };
 }
 

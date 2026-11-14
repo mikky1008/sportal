@@ -58,6 +58,11 @@ t("admin can also sign in by username (case-insensitive)",r.d.ok===true);
 // --- access control
 r=await j("GET","/api/auth/me",adm); t("/auth/me works with the admin token",r.s===200 && r.d.user.roles.includes("admin"));
 r=await j("GET","/api/admin/overview",adm); t("admin sees the dashboard overview",r.s===200 && r.d.ok && typeof r.d.overview.pendingVerifications==="number" && r.d.overview.users.students>=1,r.d);
+const ov=r.d.overview;
+t("overview has the four headline totals",["users","athletes","schools","pending"].every(k=>Number.isInteger(ov.totals[k])),ov.totals);
+t("overview totals never count the administrator",ov.totals.users===+sql("SELECT count(*) FROM users u WHERE u.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=u.id AND r.name='admin')"),ov.totals);
+t("registration analytics covers 6 months, oldest first",ov.registrations.length===6 && ov.registrations.every(m=>["athletes","coaches","schoolReps"].every(k=>Number.isInteger(m[k]))));
+t("pending total matches the pending verification count",ov.totals.pending===+sql("SELECT count(*) FROM coach_verifications WHERE status='pending'"));
 r=await j("GET","/api/admin/coach-verifications?status=pending",adm); t("admin can open coach verifications",r.s===200);
 for(const [who,tok] of [["a student",S.d.token],["a coach",C.d.token]]){
   t(`${who} cannot read the admin overview (403)`,(await j("GET","/api/admin/overview",tok)).s===403);

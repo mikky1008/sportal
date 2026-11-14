@@ -36,10 +36,22 @@ export const rejectCoach = (coachId: string, note: string) =>
   apiRequest<{ status: VerificationStatus }>(`/api/admin/coach-verifications/${encodeURIComponent(coachId)}/reject`, { method: "POST", body: { note } });
 
 export interface AdminOverview {
+  totals: { users: number; athletes: number; schools: number; pending: number; usersThisWeek: number; athletesThisWeek: number };
+  registrations: { month: string; athletes: number; coaches: number; schoolReps: number }[];
   users: { students: number; coaches: number; verifiedCoaches: number; universityReps: number; inactive: number };
   pendingVerifications: number;
   signIns24h: { succeeded: number; failed: number };
-  recentActivity: { event: string; identifier: string | null; at: string }[];
+  recentActivity: { event: string; identifier: string | null; roles: string[] | null; at: string }[];
 }
 
-export const fetchAdminOverview = () => apiRequest<{ overview: AdminOverview }>("/api/admin/overview");
+/**
+ * The top bar (bell badge) and the dashboard both want the overview. Asking twice within a few
+ * seconds shares one request; `fresh` forces a new one (after approving someone, say).
+ */
+let shared: { at: number; promise: Promise<ApiResult<{ overview: AdminOverview }>> } | null = null;
+export function fetchAdminOverview(fresh = false): Promise<ApiResult<{ overview: AdminOverview }>> {
+  if (!fresh && shared && Date.now() - shared.at < 3000) return shared.promise;
+  const promise = apiRequest<{ overview: AdminOverview }>("/api/admin/overview");
+  shared = { at: Date.now(), promise };
+  return promise;
+}

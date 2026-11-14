@@ -2,7 +2,6 @@ import { useState, type FormEvent } from "react";
 import { IonContent, IonPage } from "@ionic/react";
 import { Redirect } from "react-router-dom";
 import { AlertCircle, Eye, EyeOff, Loader2, Lock, ShieldCheck, User } from "lucide-react";
-import { toast } from "sonner";
 import { useAuth } from "@/auth/AuthContext";
 import { ADMIN_HOME_PATH, homePathFor } from "@/lib/roles";
 import { cn } from "@/lib/utils";
@@ -47,7 +46,6 @@ export default function AdminLogin() {
           setLoading(false);
           return;
         }
-        toast.success("Signed in as administrator");
         accept(res.user, ADMIN_HOME_PATH);
         return;
       }

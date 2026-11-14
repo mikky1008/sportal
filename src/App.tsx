@@ -19,6 +19,8 @@ import SessionReviews from "@/pages/SessionReviews";
 import CoachApplications from "@/pages/CoachApplications";
 import MyUniversity from "@/pages/MyUniversity";
 import AdminVerifications from "@/pages/AdminVerifications";
+import AdminLogin from "@/pages/AdminLogin";
+import AdminDashboard from "@/pages/AdminDashboard";
 import TrainingPlans from "@/pages/TrainingPlans";
 import TrainingPlanDetail from "@/pages/TrainingPlanDetail";
 import CreateTrainingPlan from "@/pages/CreateTrainingPlan";
@@ -44,6 +46,7 @@ const PROTECTED: { path: string; component: ComponentType }[] = [
   { path: "/coach/reviews", component: SessionReviews },
   { path: "/coach/applications", component: CoachApplications },
   { path: "/coach/university", component: MyUniversity },
+  { path: "/admin/dashboard", component: AdminDashboard },
   { path: "/admin/verifications", component: AdminVerifications },
   // "new" starts a blank plan; any other value is the id of the plan to edit
   { path: "/coach/training-plans/:planId", component: CreateTrainingPlan },
@@ -94,12 +97,14 @@ function Shell() {
   const { user, epoch, landing } = useAuth();
   const { pathname, search } = useLocation();
   const loginUrl = `/login?redirect=${encodeURIComponent(pathname + search)}`;
+  const adminLoginUrl = "/admin/login";
 
   return (
     <>
       {/* `key` throws the cached screens away on every sign in / sign out, so one account never sees another's */}
       <IonRouterOutlet id="main" key={epoch}>
         <Route exact path="/login" render={() => (user ? <Redirect to={landing ?? homePathFor(user.roles)} /> : <Landing />)} />
+        <Route exact path="/admin/login" component={AdminLogin} />
         <Route exact path="/terms" component={TermsPage} />
         <Route exact path="/privacy" component={PrivacyPage} />
         <Route exact path="/signup" render={() => (user ? <Redirect to={landing ?? homePathFor(user.roles)} /> : <Signup />)} />
@@ -109,7 +114,10 @@ function Shell() {
             exact
             path={path}
             render={() => {
-              if (!user) return <Redirect to={loginUrl} />;
+              const isAdminArea = path.startsWith("/admin/");
+              if (!user) return <Redirect to={isAdminArea ? adminLoginUrl : loginUrl} />;
+              // Administration is for the administrator only; everyone else is sent to their own home.
+              if (isAdminArea && !user.roles.includes("admin")) return <Redirect to={homePathFor(user.roles)} />;
               // Coaches have their own dashboard: never show them the athlete one, and vice versa.
               const isCoach = primaryRole(user.roles) === "coach";
               const isRep = primaryRole(user.roles) === "university_representative";

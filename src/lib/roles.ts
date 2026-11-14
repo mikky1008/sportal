@@ -28,9 +28,12 @@ export const POST_SIGNUP_PATH: Record<AccountRole, string> = {
   university_representative: "/scholarships",
 };
 
+/** The administrator's landing page (the Admin Dashboard). */
+export const ADMIN_HOME_PATH = "/admin/dashboard";
+
 /** Where a signed-in user lands by default (no saved redirect): coaches get their own dashboard, university representatives their scholarships. */
 export function homePathFor(roles: readonly string[]): string {
-  if (roles.includes("admin")) return "/admin/verifications";
+  if (roles.includes("admin")) return ADMIN_HOME_PATH;
   const role = primaryRole(roles);
   return role === "coach" ? "/coach/dashboard" : role === "university_representative" ? "/scholarships" : "/dashboard";
 }

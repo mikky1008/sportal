@@ -1,0 +1,28 @@
+NEW FILES
+  server/admin-config.server.ts
+  server/admin-account.server.ts
+  server/admin.server.ts
+  src/pages/AdminLogin.tsx
+  src/pages/AdminDashboard.tsx
+  tests-api/part8-admin-auth.mjs
+
+MODIFIED FILES (replace your copy)
+  server/auth.server.ts
+  server/handler.ts
+  scripts/create-user.ts
+  src/App.tsx
+  src/auth/AuthContext.tsx
+  src/auth/authClient.ts
+  src/lib/roles.ts
+  src/lib/adminApi.ts
+  src/layouts/AdminLayout.tsx
+  .env.example
+  README.md
+  tests-api/part6-standings-applications-admin.mjs
+  tests-api/part7-my-university.mjs
+  api/index.mjs   (generated; or run: npm run build:api)
+
+AFTER COPYING
+  1. Add ADMIN_EMAIL and ADMIN_PASSWORD to your .env (or Vercel env vars).
+  2. npm run api  and  npm run dev
+  3. Sign in at /admin/login

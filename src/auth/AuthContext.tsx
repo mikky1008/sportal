@@ -18,6 +18,8 @@ interface AuthValue {
   landing: string | null;
   /** Checks the credentials with the API and saves the session. Does not change who is signed in yet. */
   signIn: (data: { identifier: string; password: string; remember: boolean }) => Promise<LoginResponse>;
+  /** Administrator sign-in only (separate endpoint from signIn). Does not change who is signed in yet. */
+  signInAdmin: (data: { identifier: string; password: string }) => Promise<LoginResponse>;
   /** Creates the account and saves the session. Does not change who is signed in yet. */
   signUp: (data: RegisterInput) => Promise<RegisterResponse>;
   /** Make this user the signed-in one and go to `landing`. Call it after signIn / signUp succeeded. */
@@ -79,6 +81,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signIn = useCallback<AuthValue["signIn"]>((data) => client.login(data), []);
+  const signInAdmin = useCallback<AuthValue["signInAdmin"]>((data) => client.adminLogin(data), []);
   const signUp = useCallback<AuthValue["signUp"]>((data) => client.register(data), []);
 
   const accept = useCallback<AuthValue["accept"]>((u, to) => {
@@ -97,8 +100,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ user, ready, epoch, landing, signIn, signUp, accept, signOut }),
-    [user, ready, epoch, landing, signIn, signUp, accept, signOut],
+    () => ({ user, ready, epoch, landing, signIn, signInAdmin, signUp, accept, signOut }),
+    [user, ready, epoch, landing, signIn, signInAdmin, signUp, accept, signOut],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

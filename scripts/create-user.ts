@@ -4,7 +4,8 @@
 //
 // The password is typed at a hidden prompt (or read from the SPORTAL_NEW_PASSWORD environment
 // variable for automation). It is hashed before it is stored and is never printed or logged.
-// Roles: student_athlete (default; "athlete" still works), coach, university_representative, admin. Pass --role more than once to give several roles.
+// Roles: student_athlete (default; "athlete" still works), coach, university_representative. Pass --role more than once to give several roles.
+// The administrator cannot be created here: set ADMIN_EMAIL and ADMIN_PASSWORD (see .env.example) and start the API.
 
 import { createUser, UserInputError } from "../server/auth.server.ts";
 import { closeDb } from "../server/db.server.ts";
@@ -70,7 +71,7 @@ function promptHidden(question: string): Promise<string> {
 
 const args = parseArgs(process.argv.slice(2));
 if (!args.email || !args.username) {
-  console.error('Usage: npm run user:create -- --email <email> --username <name> [--name "Display Name"] [--role student_athlete|coach|university_representative|admin]...');
+  console.error('Usage: npm run user:create -- --email <email> --username <name> [--name "Display Name"] [--role student_athlete|coach|university_representative]...');
   process.exit(2);
 }
 

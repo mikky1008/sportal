@@ -89,9 +89,8 @@ r=await j("GET","/api/coach-applications",Cleo.tok); t("the application now show
 
 // =============== 3. ADMIN VERIFICATION (API behind the new screen) ===============
 const Dan=await coach("Dan",false);
-const Adm=await j("POST","/api/auth/register",null,{...pw,accountType:"student_athlete",firstName:"Adm",lastName:LAST,email:`adm${ts}@t.ph`});
-sql(`INSERT INTO user_roles (user_id, role_id, granted_at) SELECT '${Adm.d.user.id}', id, now() FROM roles WHERE name='admin'`);
-const AdmTok=(await j("POST","/api/auth/login",null,{identifier:`adm${ts}@t.ph`,password:pw.password,remember:false})).d.token;
+// the administrator is the predefined account from ADMIN_EMAIL / ADMIN_PASSWORD and signs in on its own endpoint
+const AdmTok=(await j("POST","/api/admin/auth/login",null,{identifier:process.env.ADMIN_EMAIL||"admin@sportal.test",password:process.env.ADMIN_PASSWORD||"Adm1n-Secret-Pass"})).d.token;
 t("a coach cannot open the admin list (403)",(await j("GET","/api/admin/coach-verifications",Dan.tok)).s===403);
 t("an athlete cannot (403)",(await j("GET","/api/admin/coach-verifications",P.tok)).s===403);
 // the coach submits their details for verification, as the coach screen does
@@ -111,6 +110,6 @@ const DanTok=(await j("POST","/api/auth/login",null,{identifier:Dan.email,passwo
 t("an approved coach can now use recruiting",(await j("GET","/api/recruiting/athletes?q="+LAST,DanTok)).s===200);
 // admin landing
 const roles=await import(new URL("../src/lib/roles.ts",import.meta.url).href);
-t("an administrator lands on the verification screen",roles.homePathFor(["admin"])==="/admin/verifications");
+t("an administrator lands on the Admin Dashboard",roles.homePathFor(["admin"])==="/admin/dashboard");
 t("other roles are unchanged",roles.homePathFor(["coach"])==="/coach/dashboard"&&roles.homePathFor(["university_representative"])==="/scholarships"&&roles.homePathFor(["student_athlete"])==="/dashboard");
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -11,6 +11,7 @@
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { getDb, type Db } from "./db.server.ts";
+import { isConfiguredAdminEmail } from "./admin-config.server.ts";
 import {
   burnPasswordCheck,
   checkPasswordStrength,
@@ -22,6 +23,7 @@ import {
 export const SESSION_COOKIE = "sportal_session";
 export const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // normal sign-in: 12 hours
 export const REMEMBER_TTL_MS = 30 * 24 * 60 * 60 * 1000; // "Remember me": 30 days
+export const ADMIN_SESSION_TTL_MS = 4 * 60 * 60 * 1000; // administrator: 4 hours, never "remember me"
 
 export const RATE_LIMIT = {
   windowMs: 15 * 60 * 1000,
@@ -165,6 +167,10 @@ export async function createUser(input: NewUser, dbArg?: Db): Promise<PublicUser
   if (pwError) throw new UserInputError(pwError, "password");
   const displayName = (input.displayName?.trim() || username).slice(0, 80);
   const roleNames = (input.roles?.length ? input.roles : ["student_athlete"]).map((r) => ROLE_ALIASES[r] ?? r);
+  // The administrator is provisioned from environment variables only (server/admin-account.server.ts).
+  // No caller of createUser - Sign up, scripts, anything - can hand out the role.
+  if (roleNames.includes("admin"))
+    throw new UserInputError("The administrator account is configured through ADMIN_EMAIL and ADMIN_PASSWORD, not created here.");
 
   const roleIds: number[] = [];
   for (const name of roleNames) {
@@ -304,11 +310,12 @@ export async function createSession(
   remember: boolean,
   meta: RequestMeta,
   dbArg?: Db,
+  ttlMs?: number,
 ): Promise<{ token: string; expiresAt: Date }> {
   const db = dbArg ?? (await getDb());
   const token = randomBytes(32).toString("base64url");
   const ts = now();
-  const expiresAt = new Date(Date.now() + (remember ? REMEMBER_TTL_MS : SESSION_TTL_MS));
+  const expiresAt = new Date(Date.now() + (ttlMs ?? (remember ? REMEMBER_TTL_MS : SESSION_TTL_MS)));
   await db`
     INSERT INTO sessions (token_hash, user_id, created_at, last_seen_at, expires_at, remember, ip, user_agent)
     VALUES (${sha256(token)}, ${userId}, ${ts}, ${ts}, ${expiresAt}, ${remember}, ${meta.ip}, ${meta.userAgent?.slice(0, 300) ?? null})`;
@@ -345,18 +352,34 @@ export async function revokeAllSessions(userId: string, dbArg?: Db): Promise<voi
 
 // ---------- login ----------
 
+/**
+ * Which sign-in door the request came through. The two doors are mutually exclusive:
+ *  - "user":  Student-athletes, coaches and university representatives. An administrator's
+ *             credentials are REFUSED here (same message as a wrong password).
+ *  - "admin": Only the one administrator configured through ADMIN_EMAIL / ADMIN_PASSWORD.
+ *             Every other account is refused here, whatever its password.
+ * Refusals look identical to a wrong password, so neither door reveals which accounts exist or
+ * which of them is the administrator.
+ */
+export type LoginScope = "user" | "admin";
+
 export async function authenticate(
-  input: { identifier: string; password: string; remember: boolean },
+  input: { identifier: string; password: string; remember: boolean; scope?: LoginScope },
   meta: RequestMeta,
   dbArg?: Db,
 ): Promise<LoginResult> {
   const db = dbArg ?? (await getDb());
+  const scope: LoginScope = input.scope ?? "user";
   const identifier = normalizeIdentifier(input.identifier);
+  // Administrator attempts are counted in their own bucket so that guessing at the admin form can
+  // never lock a regular user out of the normal form (and the other way round).
+  const bucket = scope === "admin" ? `admin:${identifier}` : identifier;
+  const failEvent = scope === "admin" ? "admin.login.failed" : "login.failed";
   await housekeeping(db);
 
-  const retryAfterSec = await checkRateLimit(db, identifier, meta.ip);
+  const retryAfterSec = await checkRateLimit(db, bucket, meta.ip);
   if (retryAfterSec !== null) {
-    await audit("login.blocked", { identifier, ...meta }, db);
+    await audit(scope === "admin" ? "admin.login.blocked" : "login.blocked", { identifier, ...meta }, db);
     return { ok: false, code: "rate_limited", retryAfterSec };
   }
 
@@ -366,20 +389,34 @@ export async function authenticate(
 
   if (!user) {
     await burnPasswordCheck(input.password);
-    await recordAttempt(db, identifier, meta.ip, false);
-    await audit("login.failed", { identifier, ...meta, detail: { reason: "unknown_account" } }, db);
+    await recordAttempt(db, bucket, meta.ip, false);
+    await audit(failEvent, { identifier, ...meta, detail: { reason: "unknown_account" } }, db);
     return { ok: false, code: "invalid_credentials" };
   }
 
   const passwordOk = await verifyPassword(input.password, user.password_hash);
   if (!passwordOk) {
-    await recordAttempt(db, identifier, meta.ip, false);
-    await audit("login.failed", { userId: user.id, identifier, ...meta, detail: { reason: "bad_password" } }, db);
+    await recordAttempt(db, bucket, meta.ip, false);
+    await audit(failEvent, { userId: user.id, identifier, ...meta, detail: { reason: "bad_password" } }, db);
+    return { ok: false, code: "invalid_credentials" };
+  }
+
+  // The password is right; now check the account is allowed through THIS door. This runs before the
+  // "inactive" answer so a wrong-door attempt never learns anything about the account.
+  const access = await loadAccess(db, user.id);
+  const isAdminAccount = access.roles.includes("admin");
+  const wrongDoor =
+    scope === "admin"
+      ? !(isAdminAccount && isConfiguredAdminEmail(user.email))
+      : isAdminAccount;
+  if (wrongDoor) {
+    await recordAttempt(db, bucket, meta.ip, false);
+    await audit(failEvent, { userId: user.id, identifier, ...meta, detail: { reason: scope === "admin" ? "not_the_administrator" : "administrator_on_user_login" } }, db);
     return { ok: false, code: "invalid_credentials" };
   }
 
   if (!user.is_active) {
-    await audit("login.failed", { userId: user.id, identifier, ...meta, detail: { reason: "inactive" } }, db);
+    await audit(failEvent, { userId: user.id, identifier, ...meta, detail: { reason: "inactive" } }, db);
     return { ok: false, code: "inactive" };
   }
 
@@ -387,10 +424,13 @@ export async function authenticate(
     await db`UPDATE users SET password_hash = ${await hashPassword(input.password)}, updated_at = ${now()} WHERE id = ${user.id}`;
   }
 
-  await db`DELETE FROM login_attempts WHERE identifier = ${identifier} AND success = FALSE`;
-  await recordAttempt(db, identifier, meta.ip, true);
+  // Administrator sessions are short and can never be "remembered".
+  const remember = scope === "admin" ? false : input.remember;
+
+  await db`DELETE FROM login_attempts WHERE identifier = ${bucket} AND success = FALSE`;
+  await recordAttempt(db, bucket, meta.ip, true);
   await db`UPDATE users SET last_login_at = ${now()} WHERE id = ${user.id}`;
-  const { token, expiresAt } = await createSession(user.id, input.remember, meta, db);
-  await audit("login.success", { userId: user.id, identifier, ...meta, detail: { remember: input.remember } }, db);
-  return { ok: true, user: await toPublicUser(db, user), token, expiresAt, remember: input.remember };
+  const { token, expiresAt } = await createSession(user.id, remember, meta, db, scope === "admin" ? ADMIN_SESSION_TTL_MS : undefined);
+  await audit(scope === "admin" ? "admin.login.success" : "login.success", { userId: user.id, identifier, ...meta, detail: { remember } }, db);
+  return { ok: true, user: await toPublicUser(db, user), token, expiresAt, remember };
 }

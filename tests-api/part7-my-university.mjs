@@ -12,9 +12,7 @@ const LAST="Uni"+ts;
 const UNI="Test State University "+ts;
 
 // ----- helpers: everything goes through the real endpoints -----
-const adminTok=await (async()=>{const r=await j("POST","/api/auth/register",null,{...pw,accountType:"student_athlete",firstName:"Adm",lastName:LAST,email:`adm${ts}@t.ph`});
-  sql(`INSERT INTO user_roles (user_id, role_id, granted_at) SELECT '${r.d.user.id}', id, now() FROM roles WHERE name='admin'`);
-  return (await j("POST","/api/auth/login",null,{identifier:`adm${ts}@t.ph`,password:pw.password,remember:false})).d.token;})();
+const adminTok=(await j("POST","/api/admin/auth/login",null,{identifier:process.env.ADMIN_EMAIL||"admin@sportal.test",password:process.env.ADMIN_PASSWORD||"Adm1n-Secret-Pass"})).d.token; // the predefined administrator, via its own sign-in
 const coach=async(first,{org=UNI,type="University",location="Surigao City",sport="Basketball",position="Head coach",submit=true,decision="approve"}={})=>{
   const r=await j("POST","/api/auth/register",null,{...pw,accountType:"coach",firstName:first,lastName:LAST,email:`${first.toLowerCase()}${ts}@t.ph`,organization:org,position:"Head coach",sport});
   const id=r.d.user.id;

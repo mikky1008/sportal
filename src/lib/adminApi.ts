@@ -34,3 +34,12 @@ export const approveCoach = (coachId: string) =>
 
 export const rejectCoach = (coachId: string, note: string) =>
   apiRequest<{ status: VerificationStatus }>(`/api/admin/coach-verifications/${encodeURIComponent(coachId)}/reject`, { method: "POST", body: { note } });
+
+export interface AdminOverview {
+  users: { students: number; coaches: number; verifiedCoaches: number; universityReps: number; inactive: number };
+  pendingVerifications: number;
+  signIns24h: { succeeded: number; failed: number };
+  recentActivity: { event: string; identifier: string | null; at: string }[];
+}
+
+export const fetchAdminOverview = () => apiRequest<{ overview: AdminOverview }>("/api/admin/overview");

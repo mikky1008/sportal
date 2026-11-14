@@ -75,6 +75,19 @@ export async function login(data: { identifier: string; password: string; rememb
   }
 }
 
+/** The administrator's own sign-in (POST /api/admin/auth/login). The regular login refuses administrator accounts. */
+export async function adminLogin(data: { identifier: string; password: string }): Promise<LoginResponse> {
+  try {
+    const res = await call("/api/admin/auth/login", { method: "POST", body: data });
+    const json = (await res.json()) as LoginResponse & { token?: string; expiresAt?: string };
+    if (json.ok && json.token && json.expiresAt) await saveSession(json.token, json.expiresAt);
+    if (json.ok) delete json.token;
+    return json;
+  } catch {
+    return { ok: false, code: "network", message: NETWORK_MESSAGE };
+  }
+}
+
 export async function register(data: RegisterInput): Promise<RegisterResponse> {
   try {
     const res = await call("/api/auth/register", { method: "POST", body: data });

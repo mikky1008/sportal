@@ -3,6 +3,8 @@
 //
 //   POST /api/auth/login      { identifier, password, remember }  -> { ok, user, token, expiresAt }
 //   POST /api/auth/register   { accountType, ... }                -> { ok, user, role, token, expiresAt }
+//   POST /api/admin/auth/login { identifier, password }           -> { ok, user, token, expiresAt }   the ONLY way to sign in as the administrator
+//   GET  /api/admin/overview  administrator                       -> { ok, overview }                 Admin Dashboard numbers
 //   GET  /api/auth/me         Authorization: Bearer <token>       -> { user }
 //   POST /api/auth/logout     Authorization: Bearer <token>       -> { ok }
 //   GET  /api/health
@@ -64,6 +66,8 @@
 //   GET  /api/admin/coach-verifications            reviewer ?status=pending|verified|rejected&limit&offset -> { ok, items, total }
 //   POST /api/admin/coach-verifications/:coachId/approve   reviewer { note? } -> { ok, coachId, status }
 //   POST /api/admin/coach-verifications/:coachId/reject    reviewer { note }  -> { ok, coachId, status }   (the reason is shown to the coach)
+// The administrator is a predefined account from ADMIN_EMAIL / ADMIN_PASSWORD (server/admin-account.server.ts). The
+// regular /api/auth/login refuses it and /api/admin/auth/login refuses everyone else; nothing can grant the role.
 // A reviewer is an account with the `coaches:review` permission (the `admin` role). Approving grants the
 // `verified_coach` role, which carries `sessions:verify`; rejecting removes it.
 //
@@ -189,6 +193,8 @@ import {
   unreadCount,
 } from "./notifications.server.ts";
 import { globalSearch } from "./search.server.ts";
+import { ensureAdminAccount } from "./admin-account.server.ts";
+import { getAdminOverview } from "./admin.server.ts";
 import {
   getMyUniversity,
   listUniversityAthletes,
@@ -336,6 +342,57 @@ async function handleLogin(req: Request): Promise<Response> {
   } catch (err) {
     console.error("[api] login failed unexpectedly:", err instanceof Error ? err.message : "unknown error");
     return send(req, 200, { ok: false, code: "server_error", message: "Something went wrong. Please try again." });
+  }
+}
+
+const adminLoginSchema = z.object({
+  identifier: z.string().trim().min(1, "Enter the administrator email or username.").max(254),
+  password: z.string().min(1, "Enter your password.").max(128),
+});
+
+/** The administrator's own sign-in. Same failure messages as the regular one, never a hint about roles. */
+async function handleAdminLogin(req: Request): Promise<Response> {
+  const parsed = adminLoginSchema.safeParse(await readJson(req));
+  if (!parsed.success) {
+    const flat = parsed.error.flatten().fieldErrors;
+    return send(req, 200, {
+      ok: false,
+      code: "validation",
+      message: "Please fix the highlighted fields.",
+      fieldErrors: {
+        ...(flat.identifier?.[0] ? { identifier: flat.identifier[0] } : {}),
+        ...(flat.password?.[0] ? { password: flat.password[0] } : {}),
+      },
+    });
+  }
+  try {
+    const result = await authenticate({ ...parsed.data, remember: false, scope: "admin" }, requestMeta(req));
+    if (!result.ok) {
+      if (result.code === "rate_limited") {
+        const mins = Math.ceil((result.retryAfterSec ?? 60) / 60);
+        return send(req, 200, {
+          ok: false, code: "rate_limited",
+          message: `Too many failed attempts. Try again in about ${mins} minute${mins === 1 ? "" : "s"}.`,
+          retryAfterSec: result.retryAfterSec ?? 60,
+        });
+      }
+      return send(req, 200, { ok: false, code: "invalid_credentials", message: "Incorrect administrator credentials." });
+    }
+    return send(req, 200, { ok: true, user: result.user, token: result.token, expiresAt: result.expiresAt.toISOString() });
+  } catch (err) {
+    console.error("[api] admin login failed unexpectedly:", err instanceof Error ? err.message : "unknown error");
+    return send(req, 200, { ok: false, code: "server_error", message: "Something went wrong. Please try again." });
+  }
+}
+
+async function handleAdminOverview(req: Request): Promise<Response> {
+  const user = await getUserBySessionToken(bearer(req));
+  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
+  try {
+    return send(req, 200, { ok: true, overview: await getAdminOverview(user) });
+  } catch (err) {
+    if (err instanceof ConnectionError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
+    throw err;
   }
 }
 
@@ -916,6 +973,10 @@ export async function handle(req: Request): Promise<Response> {
     if (req.method === "OPTIONS") return send(req, 204, null);
 
     if (req.method === "GET" && path === "/api/health") return send(req, 200, { ok: true });
+    // Provision the predefined administrator once per process, before any sign in or sign up runs.
+    await ensureAdminAccount();
+    if (req.method === "POST" && path === "/api/admin/auth/login") return await handleAdminLogin(req);
+    if (req.method === "GET" && path === "/api/admin/overview") return await handleAdminOverview(req);
     if (req.method === "POST" && path === "/api/auth/login") return await handleLogin(req);
     if (req.method === "POST" && path === "/api/auth/register") return await handleRegister(req);
     if (req.method === "GET" && path === "/api/auth/me") {

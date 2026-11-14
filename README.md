@@ -30,11 +30,29 @@ npm run api                   # terminal 1: the API on :8787 (creates its tables
 npm run dev                   # terminal 2: the app in your browser (http://localhost:5173)
 ```
 
-Create an admin/test account:
+## Administrator
+
+Sportal has one predefined administrator. There is no administrator sign up, and no screen or API
+can grant the role. The account is configured with environment variables and created when the API
+starts:
 
 ```sh
-npm run user:create -- --email you@school.edu --username you --name "Your Name" --role admin
+ADMIN_EMAIL=admin@yourschool.edu     # must not be an email anyone has registered with
+ADMIN_PASSWORD=...                   # 12+ characters, letters and numbers
 ```
+
+(`ADMIN_USERNAME` and `ADMIN_DISPLAY_NAME` are optional.) The administrator signs in at
+**`/admin/login`** and lands on **`/admin/dashboard`**. The page is deliberately not linked from the
+public site. Regular users sign in at `/login`; that form refuses the administrator's credentials,
+and `/admin/login` refuses everyone else, with the same "incorrect credentials" message. Admin
+sessions last 4 hours and have no "remember me". Failed admin attempts are rate limited separately
+from regular sign-ins, and every admin sign-in is written to the audit log.
+
+To rotate the password, change `ADMIN_PASSWORD` and redeploy; the old admin sessions are revoked.
+If `ADMIN_EMAIL` / `ADMIN_PASSWORD` are unset or invalid, administrator sign-in is off and the API
+logs why. At startup any other account holding the admin role loses it.
+
+To create ordinary test accounts: `npm run user:create -- --email you@school.edu --username you --role coach`
 
 ## Deploy to Vercel (app + API, one project)
 
@@ -45,8 +63,8 @@ route, backed by Postgres. Both live on the same domain, so there is no CORS set
 2. In the project, open **Storage** and connect a **Neon** Postgres database. This adds
    `DATABASE_URL` (and `POSTGRES_URL`) to the project. Tables are created on the first request.
 3. Do **not** set `VITE_API_URL` (the web app then calls `/api` on its own domain). Deploy.
-4. Create your first admin by running `npm run user:create` locally with `DATABASE_URL` set to the
-   same database (copy it from Vercel: Settings, Environment Variables).
+4. Add `ADMIN_EMAIL` and `ADMIN_PASSWORD` under Settings, Environment Variables, then redeploy. The
+   administrator is created on the first request and signs in at `/admin/login`.
 
 `api/index.mjs` is generated from `server/` by `npm run build:api` (the `build` script runs it), and
 is committed so Vercel deploys exactly what was tested. Run `npm run build:api` after editing

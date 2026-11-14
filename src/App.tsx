@@ -21,6 +21,7 @@ import MyUniversity from "@/pages/MyUniversity";
 import AdminVerifications from "@/pages/AdminVerifications";
 import AdminLogin from "@/pages/AdminLogin";
 import AdminDashboard from "@/pages/AdminDashboard";
+import AdminUsers from "@/pages/AdminUsers";
 import TrainingPlans from "@/pages/TrainingPlans";
 import TrainingPlanDetail from "@/pages/TrainingPlanDetail";
 import CreateTrainingPlan from "@/pages/CreateTrainingPlan";
@@ -47,6 +48,7 @@ const PROTECTED: { path: string; component: ComponentType }[] = [
   { path: "/coach/applications", component: CoachApplications },
   { path: "/coach/university", component: MyUniversity },
   { path: "/admin/dashboard", component: AdminDashboard },
+  { path: "/admin/users", component: AdminUsers },
   { path: "/admin/verifications", component: AdminVerifications },
   // "new" starts a blank plan; any other value is the id of the plan to edit
   { path: "/coach/training-plans/:planId", component: CreateTrainingPlan },

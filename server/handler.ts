@@ -4,6 +4,10 @@
 //   POST /api/auth/login      { identifier, password, remember }  -> { ok, user, token, expiresAt }
 //   POST /api/auth/register   { accountType, ... }                -> { ok, user, role, token, expiresAt }
 //   POST /api/admin/auth/login { identifier, password }           -> { ok, user, token, expiresAt }   the ONLY way to sign in as the administrator
+//   GET  /api/admin/users     administrator ?q&role=student_athlete|coach|university_representative&status=active|pending|suspended&limit&offset
+//                                                                 -> { ok, items, total, summary }    User Management directory
+//   GET  /api/admin/users/:id administrator                       -> { ok, user }
+//   POST /api/admin/users/:id/suspend|reactivate administrator { reason? } -> { ok, user }
 //   GET  /api/admin/overview  administrator                       -> { ok, overview }                 Admin Dashboard numbers
 //   GET  /api/auth/me         Authorization: Bearer <token>       -> { user }
 //   POST /api/auth/logout     Authorization: Bearer <token>       -> { ok }
@@ -195,6 +199,7 @@ import {
 import { globalSearch } from "./search.server.ts";
 import { ensureAdminAccount } from "./admin-account.server.ts";
 import { getAdminOverview } from "./admin.server.ts";
+import { DIRECTORY_ROLES, USER_STATUSES, getUserDetail, listUsers, reactivateUser, suspendUser, type DirectoryRole, type UserStatus } from "./admin-users.server.ts";
 import {
   getMyUniversity,
   listUniversityAthletes,
@@ -335,7 +340,7 @@ async function handleLogin(req: Request): Promise<Response> {
         });
       }
       if (result.code === "inactive")
-        return send(req, 200, { ok: false, code: "inactive", message: "This account has been deactivated. Contact your administrator." });
+        return send(req, 200, { ok: false, code: "inactive", message: "This account has been suspended. Contact your administrator." });
       return send(req, 200, { ok: false, code: "invalid_credentials", message: "Incorrect username/email or password." });
     }
     return send(req, 200, { ok: true, user: result.user, token: result.token, expiresAt: result.expiresAt.toISOString() });
@@ -392,6 +397,47 @@ async function handleAdminOverview(req: Request): Promise<Response> {
     return send(req, 200, { ok: true, overview: await getAdminOverview(user) });
   } catch (err) {
     if (err instanceof ConnectionError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
+    throw err;
+  }
+}
+
+/** The administrator's User Management endpoints. Returns null for any other path. */
+async function handleAdminUsers(req: Request, path: string): Promise<Response | null> {
+  const isList = req.method === "GET" && path === "/api/admin/users";
+  const one = /^\/api\/admin\/users\/([^/]+)(?:\/(suspend|reactivate))?$/.exec(path);
+  const isOne = req.method === "GET" && !!one && !one[2];
+  const isAction = req.method === "POST" && !!one && !!one[2];
+  if (!isList && !isOne && !isAction) return null;
+
+  const user = await getUserBySessionToken(bearer(req));
+  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
+  try {
+    if (isList) {
+      const sp = new URL(req.url).searchParams;
+      const role = sp.get("role");
+      const status = sp.get("status");
+      if (role && !(DIRECTORY_ROLES as readonly string[]).includes(role))
+        return send(req, 400, { ok: false, code: "validation", message: "role must be student_athlete, coach or university_representative." });
+      if (status && !(USER_STATUSES as readonly string[]).includes(status))
+        return send(req, 400, { ok: false, code: "validation", message: "status must be active, pending or suspended." });
+      const paging = pagingFrom(req);
+      const result = await listUsers(user, {
+        q: sp.get("q") ?? "",
+        ...(role ? { role: role as DirectoryRole } : {}),
+        ...(status ? { status: status as UserStatus } : {}),
+        ...paging,
+      });
+      return send(req, 200, { ok: true, ...result });
+    }
+    const id = decodeURIComponent(one![1]!);
+    if (isOne) return send(req, 200, { ok: true, user: await getUserDetail(user, id) });
+    const body = (await readJson(req)) as Record<string, unknown> | null;
+    const reason = body && typeof body === "object" ? body["reason"] : undefined;
+    const meta = requestMeta(req);
+    const detail = one![2] === "suspend" ? await suspendUser(user, id, reason, meta) : await reactivateUser(user, id, reason, meta);
+    return send(req, 200, { ok: true, user: detail });
+  } catch (err) {
+    if (err instanceof ConnectionError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message, ...err.extra });
     throw err;
   }
 }
@@ -977,6 +1023,8 @@ export async function handle(req: Request): Promise<Response> {
     await ensureAdminAccount();
     if (req.method === "POST" && path === "/api/admin/auth/login") return await handleAdminLogin(req);
     if (req.method === "GET" && path === "/api/admin/overview") return await handleAdminOverview(req);
+    const adminUsers = await handleAdminUsers(req, path);
+    if (adminUsers) return adminUsers;
     if (req.method === "POST" && path === "/api/auth/login") return await handleLogin(req);
     if (req.method === "POST" && path === "/api/auth/register") return await handleRegister(req);
     if (req.method === "GET" && path === "/api/auth/me") {

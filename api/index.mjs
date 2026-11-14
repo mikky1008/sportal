@@ -10982,8 +10982,8 @@ async function createSession2(actor, body, dbArg) {
 }
 async function requestSessionReview(actor, id, dbArg) {
   requireAthlete3(actor);
-  const notFound3 = new ConnectionError(404, "session_not_found", "Session not found.");
-  if (!UUID_RE3.test(id)) throw notFound3;
+  const notFound4 = new ConnectionError(404, "session_not_found", "Session not found.");
+  if (!UUID_RE3.test(id)) throw notFound4;
   const db = dbArg ?? await getDb();
   const [row] = await db`
     UPDATE practice_sessions SET status = 'pending_review'
@@ -10991,11 +10991,11 @@ async function requestSessionReview(actor, id, dbArg) {
     RETURNING id`;
   if (!row) {
     const existing = await viewById2(db, id, actor.id);
-    if (!existing) throw notFound3;
+    if (!existing) throw notFound4;
     throw new ConnectionError(409, "cannot_request_review", existing.status === "Coach-Verified" ? "A coach has already verified this session." : "This session is already waiting for review.");
   }
   const view2 = await viewById2(db, id, actor.id);
-  if (!view2) throw notFound3;
+  if (!view2) throw notFound4;
   return view2;
 }
 function requireVerifiedCoach(actor) {
@@ -11020,8 +11020,8 @@ async function listSessionsForReview(actor, opts = {}, dbArg) {
 }
 async function verifySession(actor, id, meta = {}, dbArg) {
   requireVerifiedCoach(actor);
-  const notFound3 = new ConnectionError(404, "session_not_found", "Session not found.");
-  if (!UUID_RE3.test(id)) throw notFound3;
+  const notFound4 = new ConnectionError(404, "session_not_found", "Session not found.");
+  if (!UUID_RE3.test(id)) throw notFound4;
   const db = dbArg ?? await getDb();
   const ts = /* @__PURE__ */ new Date();
   let athleteId = "";
@@ -11033,7 +11033,7 @@ async function verifySession(actor, id, meta = {}, dbArg) {
       JOIN coach_athlete_connections c ON c.athlete_id = s.athlete_id AND c.coach_id = ${actor.id} AND c.status = 'accepted'
       WHERE s.id = ${id}
       FOR UPDATE OF s`;
-    if (!row) throw notFound3;
+    if (!row) throw notFound4;
     if (row.status === "coach_verified") throw new ConnectionError(409, "already_verified", "This session is already verified.");
     await tx`
       UPDATE practice_sessions SET status = 'coach_verified', verified_by = ${actor.id}, verified_at = ${ts}
@@ -11044,7 +11044,7 @@ async function verifySession(actor, id, meta = {}, dbArg) {
   await audit("practice_session.verified", { userId: actor.id, ...meta, detail: { sessionId: id } }, db);
   await notify(athleteId, { category: "verification", title: "Result verified", message: `${actor.displayName} verified your ${skillName} result. It now counts in rankings.`, link: "/performance" }, db);
   const view2 = await viewById2(db, id);
-  if (!view2) throw notFound3;
+  if (!view2) throw notFound4;
   return view2;
 }
 
@@ -12203,10 +12203,154 @@ async function getAdminOverview(actor) {
   };
 }
 
+// server/admin-users.server.ts
+var DIRECTORY_ROLES = ["student_athlete", "coach", "university_representative"];
+var USER_STATUSES = ["active", "pending", "suspended"];
+var REASON_MAX = 300;
+var SEARCH_MAX = 100;
+var safePhoto = (url) => url && /^https?:\/\//i.test(url) && url.length <= 500 ? url : null;
+function primaryRole(roles) {
+  if (roles.includes("university_representative")) return "university_representative";
+  if (roles.includes("coach") || roles.includes("verified_coach")) return "coach";
+  if (roles.includes("student_athlete")) return "student_athlete";
+  return null;
+}
+function directoryCte(db) {
+  return db`
+    d AS (
+      SELECT u.id, u.display_name, u.email, u.username, u.is_active, u.created_at, u.last_login_at, u.email_verified_at,
+             up.avatar_url,
+             ARRAY(SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id ORDER BY r.name) AS roles,
+             COALESCE(NULLIF(btrim(rp.university_name), ''), NULLIF(btrim(cp.organization), ''), NULLIF(btrim(ap.school), '')) AS school,
+             COALESCE(NULLIF(btrim(ap.sport), ''), NULLIF(btrim(cp.sport_specialization), '')) AS sport,
+             COALESCE(NULLIF(btrim(ap.playing_position), ''), NULLIF(btrim(cp.coaching_position), ''), NULLIF(btrim(rp.designation), '')) AS position,
+             CASE WHEN NOT u.is_active THEN 'suspended'
+                  WHEN EXISTS (SELECT 1 FROM coach_verifications v WHERE v.coach_id = u.id AND v.status = 'pending') THEN 'pending'
+                  ELSE 'active' END AS status
+      FROM users u
+      LEFT JOIN user_profiles up ON up.user_id = u.id
+      LEFT JOIN athlete_profiles ap ON ap.user_id = u.id
+      LEFT JOIN coach_profiles cp ON cp.user_id = u.id
+      LEFT JOIN university_representative_profiles rp ON rp.user_id = u.id
+      WHERE u.deleted_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id AND r.name = 'admin')
+    )`;
+}
+var toListUser = (r) => ({
+  id: r.id,
+  name: r.display_name,
+  email: r.email,
+  photo: safePhoto(r.avatar_url),
+  role: primaryRole(r.roles),
+  school: r.school,
+  status: r.status,
+  registeredAt: r.created_at.toISOString()
+});
+var escapeLike = (s) => s.replace(/[\\%_]/g, (c2) => `\\${c2}`);
+async function listUsers(actor, opts = {}) {
+  requireAdmin(actor);
+  const db = await getDb();
+  const limit3 = Math.min(Math.max(Math.trunc(opts.limit ?? 20), 1), 100);
+  const offset = Math.max(Math.trunc(opts.offset ?? 0), 0);
+  const roleF = opts.role === "student_athlete" ? db`AND 'student_athlete' = ANY(roles)` : opts.role === "coach" ? db`AND (roles && ARRAY['coach', 'verified_coach'])` : opts.role === "university_representative" ? db`AND 'university_representative' = ANY(roles)` : db``;
+  const statusF = opts.status ? db`AND status = ${opts.status}` : db``;
+  const q = (opts.q ?? "").trim().slice(0, SEARCH_MAX);
+  const pattern = `%${escapeLike(q)}%`;
+  const qF = q ? db`AND (display_name ILIKE ${pattern} OR email ILIKE ${pattern} OR username ILIKE ${pattern} OR COALESCE(school, '') ILIKE ${pattern})` : db``;
+  const rows = await db`
+    WITH ${directoryCte(db)}
+    SELECT * FROM d WHERE TRUE ${roleF} ${statusF} ${qF}
+    ORDER BY created_at DESC, id LIMIT ${limit3} OFFSET ${offset}`;
+  const [count] = await db`
+    WITH ${directoryCte(db)} SELECT COUNT(*)::int AS n FROM d WHERE TRUE ${roleF} ${statusF} ${qF}`;
+  const [sum] = await db`
+    WITH ${directoryCte(db)}
+    SELECT COUNT(*)::int AS total,
+           COUNT(*) FILTER (WHERE status = 'active')::int AS active,
+           COUNT(*) FILTER (WHERE status = 'pending')::int AS pending,
+           COUNT(*) FILTER (WHERE status = 'suspended')::int AS suspended
+    FROM d`;
+  return {
+    items: rows.map(toListUser),
+    total: count?.n ?? 0,
+    limit: limit3,
+    offset,
+    summary: { total: sum?.total ?? 0, active: sum?.active ?? 0, pending: sum?.pending ?? 0, suspended: sum?.suspended ?? 0 }
+  };
+}
+async function findRow(db, id) {
+  const [row] = await db`WITH ${directoryCte(db)} SELECT * FROM d WHERE id = ${id}`;
+  return row;
+}
+var notFound = () => new ConnectionError(404, "user_not_found", "That user could not be found.");
+async function getUserDetail(actor, id) {
+  requireAdmin(actor);
+  const db = await getDb();
+  const row = await findRow(db, id);
+  if (!row) throw notFound();
+  const events = await db`
+    SELECT event, detail, created_at FROM audit_log
+    WHERE user_id = ${id} AND event IN ('user.created', 'admin.user_suspended', 'admin.user_reactivated')
+    ORDER BY created_at DESC, id DESC LIMIT 10`;
+  const history = events.map((e) => {
+    let reason = null;
+    try {
+      reason = JSON.parse(e.detail ?? "{}").reason ?? null;
+    } catch {
+    }
+    return {
+      event: e.event === "user.created" ? "registered" : e.event === "admin.user_suspended" ? "suspended" : "reactivated",
+      at: e.created_at.toISOString(),
+      reason: typeof reason === "string" && reason ? reason : null
+    };
+  });
+  return {
+    ...toListUser(row),
+    username: row.username,
+    roles: row.roles,
+    verifiedCoach: row.roles.includes("verified_coach"),
+    sport: row.sport,
+    position: row.position,
+    lastLoginAt: row.last_login_at ? row.last_login_at.toISOString() : null,
+    emailVerified: !!row.email_verified_at,
+    history
+  };
+}
+async function setSuspended(actor, id, suspend, reasonInput, meta) {
+  requireAdmin(actor);
+  if (id === actor.id) throw new ConnectionError(400, "cannot_suspend_self", "You can't change your own account here.");
+  const db = await getDb();
+  let reason = null;
+  if (typeof reasonInput === "string" && reasonInput.trim()) {
+    reason = reasonInput.trim();
+    if (reason.length > REASON_MAX) throw new ConnectionError(400, "validation", `The reason can be up to ${REASON_MAX} characters.`);
+  }
+  await db.begin(async (tx) => {
+    const [locked] = await tx`
+      SELECT u.is_active FROM users u
+      WHERE u.id = ${id} AND u.deleted_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id AND r.name = 'admin')
+      FOR UPDATE`;
+    if (!locked) throw notFound();
+    if (suspend && !locked.is_active) throw new ConnectionError(409, "already_suspended", "This account is already suspended.");
+    if (!suspend && locked.is_active) throw new ConnectionError(409, "not_suspended", "This account isn't suspended.");
+    await tx`UPDATE users SET is_active = ${!suspend}, updated_at = ${/* @__PURE__ */ new Date()} WHERE id = ${id}`;
+    if (suspend) await tx`DELETE FROM sessions WHERE user_id = ${id}`;
+    await audit(
+      suspend ? "admin.user_suspended" : "admin.user_reactivated",
+      { userId: id, ...meta, detail: { by: actor.id, ...reason ? { reason } : {} } },
+      tx
+    );
+  });
+  return getUserDetail(actor, id);
+}
+var suspendUser = (actor, id, reason, meta) => setSuspended(actor, id, true, reason, meta);
+var reactivateUser = (actor, id, reason, meta) => setSuspended(actor, id, false, reason, meta);
+
 // server/university.server.ts
 var UNIVERSITY_PAGE_DEFAULT = 50;
 var UNIVERSITY_PAGE_MAX = 100;
-var SEARCH_MAX = 80;
+var SEARCH_MAX2 = 80;
 var UniversityError = class extends Error {
   httpStatus;
   code;
@@ -12232,7 +12376,7 @@ var VERIFIED_AND_ACTIVE = (db, coachAlias) => db`
   AND EXISTS (SELECT 1 FROM coach_verifications cv WHERE cv.coach_id = ${db(coachAlias)}.id AND cv.status = 'verified')
   AND ${db(coachAlias)}.is_active = TRUE AND ${db(coachAlias)}.deleted_at IS NULL`;
 function searchPattern(q) {
-  const needle = q?.trim().slice(0, SEARCH_MAX);
+  const needle = q?.trim().slice(0, SEARCH_MAX2);
   return needle ? `%${likeLiteral4(needle)}%` : null;
 }
 async function getMyUniversity(user, dbArg) {
@@ -12321,7 +12465,7 @@ var CoachApplicationError = class extends Error {
     this.code = code;
   }
 };
-var notFound = () => new CoachApplicationError(404, "not_found", "Not found.");
+var notFound2 = () => new CoachApplicationError(404, "not_found", "Not found.");
 async function applyToCoach(user, coachId, meta = {}, dbArg) {
   if (!user.roles.includes(ATHLETE_ROLE)) throw new CoachApplicationError(403, "role_not_allowed", "Only student-athletes can show interest in a coach.");
   const db = dbArg ?? await getDb();
@@ -12330,7 +12474,7 @@ async function applyToCoach(user, coachId, meta = {}, dbArg) {
     FROM users u
     LEFT JOIN coach_profiles cp ON cp.user_id = u.id
     WHERE u.id = ${coachId} AND u.is_active = TRUE AND u.deleted_at IS NULL`;
-  if (!coach || !user.id || coachId === user.id || !await isVerifiedCoach(db, coachId)) throw notFound();
+  if (!coach || !user.id || coachId === user.id || !await isVerifiedCoach(db, coachId)) throw notFound2();
   const [connected] = await db`SELECT 1 FROM coach_athlete_connections WHERE coach_id = ${coachId} AND athlete_id = ${user.id} AND status = 'accepted'`;
   if (connected) throw new CoachApplicationError(409, "already_connected", "You are already connected to this coach.");
   const id = randomUUID10();
@@ -12390,7 +12534,7 @@ async function setApplicationStatus2(user, applicationId, status, dbArg) {
   if (!user.roles.includes(COACH_ROLE)) throw new CoachApplicationError(403, "role_not_allowed", "Only coaches can do this.");
   if (!await isVerifiedCoach(db, user.id)) throw new CoachApplicationError(403, "coach_not_verified", "Your coach account must be verified first.");
   const rows = await db`UPDATE athlete_applications SET status = ${status}, updated_at = ${/* @__PURE__ */ new Date()} WHERE id = ${applicationId} AND coach_id = ${user.id} RETURNING id`;
-  if (rows.length === 0) throw notFound();
+  if (rows.length === 0) throw notFound2();
   return status;
 }
 
@@ -12424,7 +12568,7 @@ function requireAthlete5(user) {
   if (!user.roles.includes(ATHLETE_ROLE)) throw new RecruitingError(403, "role_not_allowed", "Only student-athletes can do this.");
 }
 var isUuid = (id) => UUID_RE6.test(id);
-var notFound2 = () => new RecruitingError(404, "not_found", "Not found.");
+var notFound3 = () => new RecruitingError(404, "not_found", "Not found.");
 async function loadDirectory(db, opts = {}) {
   const rows = await db`
     SELECT u.id, up.first_name, up.last_name, u.display_name,
@@ -12516,7 +12660,7 @@ async function listAthletes(user, q, dbArg) {
   };
 }
 async function getAthlete(user, athleteId, dbArg) {
-  if (!isUuid(athleteId)) throw notFound2();
+  if (!isUuid(athleteId)) throw notFound3();
   const db = dbArg ?? await getDb();
   const own3 = user.roles.includes(ATHLETE_ROLE) && user.id === athleteId;
   let applicant = false;
@@ -12529,7 +12673,7 @@ async function getAthlete(user, athleteId, dbArg) {
   }
   if (!own3 && !applicant) await requireVerifiedCoach2(db, user);
   const [athlete] = await loadDirectory(db, { onlyId: athleteId, includeHidden: own3 || applicant });
-  if (!athlete) throw notFound2();
+  if (!athlete) throw notFound3();
   if (own3 || applicant) return { athlete, own: own3, applicant, watched: false, note: "", inquiry: null };
   const [w] = await db`SELECT note FROM coach_shortlist WHERE coach_id = ${user.id} AND athlete_id = ${athleteId}`;
   const [inq] = await db`
@@ -12554,7 +12698,7 @@ async function setNote(user, athleteId, rawNote, dbArg) {
   await requireVerifiedCoach2(db, user);
   const note = rawNote.trim();
   if (note.length > NOTE_MAX2) throw new RecruitingError(400, "validation", `Notes are limited to ${NOTE_MAX2} characters.`);
-  if (!isUuid(athleteId)) throw notFound2();
+  if (!isUuid(athleteId)) throw notFound3();
   const rows = await db`UPDATE coach_shortlist SET note = ${note} WHERE coach_id = ${user.id} AND athlete_id = ${athleteId} RETURNING athlete_id`;
   if (rows.length === 0) throw new RecruitingError(409, "not_saved", "Save the athlete to your watchlist before adding a note.");
   return { note };
@@ -12596,14 +12740,14 @@ async function sendInquiry(user, input, meta = {}, dbArg) {
   const message = input.message.trim();
   if (organization.length < 2 || organization.length > ORGANIZATION_MAX) throw new RecruitingError(400, "validation", "Name your organization or program (2-120 characters).");
   if (!message || message.length > INQUIRY_MESSAGE_MAX) throw new RecruitingError(400, "validation", `Write a message of up to ${INQUIRY_MESSAGE_MAX} characters.`);
-  if (!isUuid(input.athleteId)) throw notFound2();
+  if (!isUuid(input.athleteId)) throw notFound3();
   const [athlete] = await db`
     SELECT u.id, COALESCE(ap.showcase_visible, TRUE) AS visible
     FROM users u
     JOIN user_roles ur ON ur.user_id = u.id JOIN roles r ON r.id = ur.role_id
     LEFT JOIN athlete_profiles ap ON ap.user_id = u.id
     WHERE u.id = ${input.athleteId} AND r.name = ${ATHLETE_ROLE} AND u.is_active = TRUE AND u.deleted_at IS NULL`;
-  if (!athlete) throw notFound2();
+  if (!athlete) throw notFound3();
   if (!athlete.visible) throw new RecruitingError(409, "showcase_hidden", "This athlete has hidden their showcase, so new inquiries are closed.");
   const id = randomUUID11();
   const now6 = /* @__PURE__ */ new Date();
@@ -12625,7 +12769,7 @@ async function sendInquiry(user, input, meta = {}, dbArg) {
 }
 async function respondToInquiry(user, inquiryId, decision, meta = {}, dbArg) {
   requireAthlete5(user);
-  if (!isUuid(inquiryId)) throw notFound2();
+  if (!isUuid(inquiryId)) throw notFound3();
   const db = dbArg ?? await getDb();
   const now6 = /* @__PURE__ */ new Date();
   const updated = await db`
@@ -12634,7 +12778,7 @@ async function respondToInquiry(user, inquiryId, decision, meta = {}, dbArg) {
   const hit = updated[0];
   if (!hit) {
     const [exists] = await db`SELECT 1 FROM recruitment_inquiries WHERE id = ${inquiryId} AND athlete_id = ${user.id}`;
-    if (!exists) throw notFound2();
+    if (!exists) throw notFound3();
     throw new RecruitingError(409, "already_answered", "This inquiry has already been answered.");
   }
   await audit(`recruiting.inquiry_${decision}`, { userId: user.id, ...meta, detail: { inquiryId } }, db);
@@ -12647,11 +12791,11 @@ async function respondToInquiry(user, inquiryId, decision, meta = {}, dbArg) {
   return toInquiry(row);
 }
 async function loadParticipantInquiry(db, user, inquiryId) {
-  if (!isUuid(inquiryId)) throw notFound2();
+  if (!isUuid(inquiryId)) throw notFound3();
   const [r] = await db`
     SELECT coach_id, athlete_id, status FROM recruitment_inquiries
     WHERE id = ${inquiryId} AND (coach_id = ${user.id} OR athlete_id = ${user.id})`;
-  if (!r) throw notFound2();
+  if (!r) throw notFound3();
   return r;
 }
 async function listMessages(user, inquiryId, dbArg) {
@@ -12778,7 +12922,7 @@ async function handleLogin(req) {
         });
       }
       if (result.code === "inactive")
-        return send(req, 200, { ok: false, code: "inactive", message: "This account has been deactivated. Contact your administrator." });
+        return send(req, 200, { ok: false, code: "inactive", message: "This account has been suspended. Contact your administrator." });
       return send(req, 200, { ok: false, code: "invalid_credentials", message: "Incorrect username/email or password." });
     }
     return send(req, 200, { ok: true, user: result.user, token: result.token, expiresAt: result.expiresAt.toISOString() });
@@ -12832,6 +12976,44 @@ async function handleAdminOverview(req) {
     return send(req, 200, { ok: true, overview: await getAdminOverview(user) });
   } catch (err) {
     if (err instanceof ConnectionError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
+    throw err;
+  }
+}
+async function handleAdminUsers(req, path) {
+  const isList = req.method === "GET" && path === "/api/admin/users";
+  const one2 = /^\/api\/admin\/users\/([^/]+)(?:\/(suspend|reactivate))?$/.exec(path);
+  const isOne = req.method === "GET" && !!one2 && !one2[2];
+  const isAction = req.method === "POST" && !!one2 && !!one2[2];
+  if (!isList && !isOne && !isAction) return null;
+  const user = await getUserBySessionToken(bearer(req));
+  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
+  try {
+    if (isList) {
+      const sp = new URL(req.url).searchParams;
+      const role = sp.get("role");
+      const status = sp.get("status");
+      if (role && !DIRECTORY_ROLES.includes(role))
+        return send(req, 400, { ok: false, code: "validation", message: "role must be student_athlete, coach or university_representative." });
+      if (status && !USER_STATUSES.includes(status))
+        return send(req, 400, { ok: false, code: "validation", message: "status must be active, pending or suspended." });
+      const paging = pagingFrom(req);
+      const result = await listUsers(user, {
+        q: sp.get("q") ?? "",
+        ...role ? { role } : {},
+        ...status ? { status } : {},
+        ...paging
+      });
+      return send(req, 200, { ok: true, ...result });
+    }
+    const id = decodeURIComponent(one2[1]);
+    if (isOne) return send(req, 200, { ok: true, user: await getUserDetail(user, id) });
+    const body = await readJson(req);
+    const reason = body && typeof body === "object" ? body["reason"] : void 0;
+    const meta = requestMeta(req);
+    const detail = one2[2] === "suspend" ? await suspendUser(user, id, reason, meta) : await reactivateUser(user, id, reason, meta);
+    return send(req, 200, { ok: true, user: detail });
+  } catch (err) {
+    if (err instanceof ConnectionError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message, ...err.extra });
     throw err;
   }
 }
@@ -13347,6 +13529,8 @@ async function handle(req) {
     await ensureAdminAccount();
     if (req.method === "POST" && path === "/api/admin/auth/login") return await handleAdminLogin(req);
     if (req.method === "GET" && path === "/api/admin/overview") return await handleAdminOverview(req);
+    const adminUsers = await handleAdminUsers(req, path);
+    if (adminUsers) return adminUsers;
     if (req.method === "POST" && path === "/api/auth/login") return await handleLogin(req);
     if (req.method === "POST" && path === "/api/auth/register") return await handleRegister(req);
     if (req.method === "GET" && path === "/api/auth/me") {

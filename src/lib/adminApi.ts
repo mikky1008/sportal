@@ -55,3 +55,52 @@ export function fetchAdminOverview(fresh = false): Promise<ApiResult<{ overview:
   shared = { at: Date.now(), promise };
   return promise;
 }
+
+// ---- User Management (server/admin-users.server.ts) ----
+export type DirectoryRole = "student_athlete" | "coach" | "university_representative";
+export type UserStatus = "active" | "pending" | "suspended";
+
+export interface DirectoryUser {
+  id: string;
+  name: string;
+  email: string;
+  photo: string | null;
+  role: DirectoryRole | null;
+  school: string | null;
+  status: UserStatus;
+  registeredAt: string;
+}
+
+export interface UserDetail extends DirectoryUser {
+  username: string;
+  roles: string[];
+  verifiedCoach: boolean;
+  sport: string | null;
+  position: string | null;
+  lastLoginAt: string | null;
+  emailVerified: boolean;
+  history: { event: "registered" | "suspended" | "reactivated"; at: string; reason: string | null }[];
+}
+
+export interface DirectorySummary { total: number; active: number; pending: number; suspended: number }
+
+export const fetchUsers = (
+  p: { q: string; role: DirectoryRole | ""; status: UserStatus | ""; limit: number; offset: number },
+  signal?: AbortSignal,
+) => {
+  const qs = new URLSearchParams();
+  if (p.q.trim()) qs.set("q", p.q.trim());
+  if (p.role) qs.set("role", p.role);
+  if (p.status) qs.set("status", p.status);
+  qs.set("limit", String(p.limit));
+  qs.set("offset", String(p.offset));
+  return apiRequest<{ items: DirectoryUser[]; total: number; summary: DirectorySummary }>(`/api/admin/users?${qs}`, signal ? { signal } : {});
+};
+
+export const fetchUserDetail = (id: string) => apiRequest<{ user: UserDetail }>(`/api/admin/users/${encodeURIComponent(id)}`);
+
+export const suspendUser = (id: string, reason: string) =>
+  apiRequest<{ user: UserDetail }>(`/api/admin/users/${encodeURIComponent(id)}/suspend`, { method: "POST", body: { reason } });
+
+export const reactivateUser = (id: string) =>
+  apiRequest<{ user: UserDetail }>(`/api/admin/users/${encodeURIComponent(id)}/reactivate`, { method: "POST", body: {} });

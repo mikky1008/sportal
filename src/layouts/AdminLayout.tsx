@@ -14,6 +14,7 @@ import {
 } from "@/components/shell";
 
 export const ADMIN_HOME = "/admin/dashboard";
+export const ADMIN_USERS = "/admin/users";
 export const ADMIN_VERIFICATIONS = "/admin/verifications";
 
 /**
@@ -21,7 +22,7 @@ export const ADMIN_VERIFICATIONS = "/admin/verifications";
  * brand, underlined tabs, notification bell and the profile pill. Below 1360px the tabs move into the
  * profile dropdown, as they do on phones for the other roles.
  *
- * Only Dashboard and School Verification are built so far. The other three tabs have no page yet
+ * Dashboard, User Management and School Verification are built. The other two tabs have no page yet
  * (on purpose), so they say "coming soon" instead of linking to a page that does not exist.
  */
 interface NavEntry {
@@ -32,7 +33,7 @@ interface NavEntry {
 
 const NAV: NavEntry[] = [
   { label: "Dashboard", icon: LayoutDashboard, to: ADMIN_HOME },
-  { label: "User Management", icon: Users },
+  { label: "User Management", icon: Users, to: ADMIN_USERS },
   { label: "School Verification", icon: GraduationCap, to: ADMIN_VERIFICATIONS },
   { label: "Platform Monitoring", icon: Activity },
   { label: "Settings", icon: Settings },

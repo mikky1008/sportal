@@ -1,4 +1,4 @@
-Sportal administrator: login + redesigned dashboard
+Sportal administrator: login, dashboard, user management
 
 NEW FILES
   server/admin-config.server.ts
@@ -7,6 +7,9 @@ NEW FILES
   src/pages/AdminLogin.tsx
   src/pages/AdminDashboard.tsx
   tests-api/part8-admin-auth.mjs
+  server/admin-users.server.ts      (User Management backend)
+  src/pages/AdminUsers.tsx          (User Management page)
+  tests-api/part9-admin-users.mjs
 
 MODIFIED FILES (replace your copy)
   server/auth.server.ts   server/handler.ts   scripts/create-user.ts

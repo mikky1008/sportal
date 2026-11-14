@@ -48,6 +48,8 @@ and `/admin/login` refuses everyone else, with the same "incorrect credentials" 
 sessions last 4 hours and have no "remember me". Failed admin attempts are rate limited separately
 from regular sign-ins, and every admin sign-in is written to the audit log.
 
+**User Management** (`/admin/users`) lists every student-athlete, coach and school representative with search, role and status filters, a detail panel, and Suspend / Reactivate. Suspending signs the person out everywhere at once and blocks sign-in until reactivated; the administrator account never appears there and can't be suspended. "Pending" means a coach whose verification is still waiting for review.
+
 To rotate the password, change `ADMIN_PASSWORD` and redeploy; the old admin sessions are revoked.
 If `ADMIN_EMAIL` / `ADMIN_PASSWORD` are unset or invalid, administrator sign-in is off and the API
 logs why. At startup any other account holding the admin role loses it.

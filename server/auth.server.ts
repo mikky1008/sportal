@@ -12,6 +12,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { getDb, type Db } from "./db.server.ts";
 import { isConfiguredAdminEmail } from "./admin-config.server.ts";
+import { insertRepApplication, type ParsedDocument } from "./rep-documents.server.ts";
 import {
   burnPasswordCheck,
   checkPasswordStrength,
@@ -44,7 +45,10 @@ export interface PublicUser {
 
 export type LoginResult =
   | { ok: true; user: PublicUser; token: string; expiresAt: Date; remember: boolean }
-  | { ok: false; code: "invalid_credentials" | "inactive" | "rate_limited"; retryAfterSec?: number };
+  | { ok: false; code: "invalid_credentials" | "inactive" | "rate_limited"; retryAfterSec?: number }
+  // The password was right, but this is a school representative whose application an administrator
+  // has not approved. `reason` is the administrator's rejection reason, which the applicant may read.
+  | { ok: false; code: "pending_approval" | "application_rejected"; reason?: string };
 
 export interface RequestMeta {
   ip: string | null;
@@ -132,7 +136,7 @@ export class UserInputError extends Error {
 export type RoleDetails =
   | { kind: "student_athlete" }
   | { kind: "coach"; organization: string; coachingPosition: string; sportSpecialization: string }
-  | { kind: "university_representative"; universityName: string; designation: string };
+  | { kind: "university_representative"; universityName: string; designation: string; documents?: ParsedDocument[] };
 
 export interface NewUser {
   email: string;
@@ -208,6 +212,9 @@ export async function createUser(input: NewUser, dbArg?: Db): Promise<PublicUser
         await tx`
           INSERT INTO university_representative_profiles (user_id, university_name, designation, created_at, updated_at)
           VALUES (${id}, ${d.universityName.trim()}, ${d.designation.trim()}, ${ts}, ${ts})`;
+        // Signing up as a representative is an application. (Accounts made without documents, by the
+        // operator's command-line tool, skip this and work straight away.)
+        if (d.documents?.length) await insertRepApplication(tx as unknown as Db, id, d.documents, ts);
       }
     });
   } catch (err) {
@@ -329,7 +336,8 @@ export async function getUserBySessionToken(token: string | undefined, dbArg?: D
     SELECT u.id, u.email, u.username, u.display_name, s.last_seen_at
     FROM sessions s JOIN users u ON u.id = s.user_id
     WHERE s.token_hash = ${sha256(token)} AND s.revoked_at IS NULL AND s.expires_at > ${now()}
-      AND u.is_active = TRUE AND u.deleted_at IS NULL`;
+      AND u.is_active = TRUE AND u.deleted_at IS NULL
+      AND NOT EXISTS (SELECT 1 FROM rep_applications ra WHERE ra.user_id = u.id AND ra.status <> 'approved')`;
   if (!row) return null;
   if (Date.now() - row.last_seen_at.getTime() > 60_000) {
     await db`UPDATE sessions SET last_seen_at = ${now()} WHERE token_hash = ${sha256(token)}`;
@@ -418,6 +426,16 @@ export async function authenticate(
   if (!user.is_active) {
     await audit(failEvent, { userId: user.id, identifier, ...meta, detail: { reason: "inactive" } }, db);
     return { ok: false, code: "inactive" };
+  }
+
+  // A school representative only gets in once an administrator has approved their application.
+  const [application] = await db<{ status: "pending" | "approved" | "rejected"; rejection_reason: string | null }[]>`
+    SELECT status, rejection_reason FROM rep_applications WHERE user_id = ${user.id}`;
+  if (application && application.status !== "approved") {
+    await audit(failEvent, { userId: user.id, identifier, ...meta, detail: { reason: `application_${application.status}` } }, db);
+    return application.status === "pending"
+      ? { ok: false, code: "pending_approval" }
+      : { ok: false, code: "application_rejected", ...(application.rejection_reason ? { reason: application.rejection_reason } : {}) };
   }
 
   if (needsRehash(user.password_hash)) {

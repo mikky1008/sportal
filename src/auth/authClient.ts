@@ -92,7 +92,8 @@ export async function register(data: RegisterInput): Promise<RegisterResponse> {
   try {
     const res = await call("/api/auth/register", { method: "POST", body: data });
     const json = (await res.json()) as RegisterResponse & { token?: string; expiresAt?: string };
-    if (json.ok && json.token && json.expiresAt) await saveSession(json.token, json.expiresAt);
+    // A school representative's application comes back without a session.
+    if (json.ok && !json.pendingApproval && json.token && json.expiresAt) await saveSession(json.token, json.expiresAt);
     if (json.ok) delete json.token;
     return json;
   } catch {
@@ -161,5 +162,22 @@ export async function apiRequest<T>(
   } catch (err) {
     if (init.signal?.aborted) return { ok: false, status: 0, code: "aborted", message: "Request cancelled." };
     return { ok: false, status: 0, code: "network", message: NETWORK_MESSAGE };
+  }
+}
+
+/** A file from the API (a representative's uploaded document), fetched with the session token. */
+export async function apiBlob(path: string): Promise<{ ok: true; blob: Blob } | { ok: false; message: string }> {
+  const token = await getToken();
+  if (!token) return { ok: false, message: "Your session has expired. Sign in again." };
+  try {
+    const res = await call(path, { method: "GET", token });
+    if (res.status === 401) {
+      await clearSession();
+      return { ok: false, message: "Your session has expired. Sign in again." };
+    }
+    if (!res.ok) return { ok: false, message: "That file couldn't be opened." };
+    return { ok: true, blob: await res.blob() };
+  } catch {
+    return { ok: false, message: NETWORK_MESSAGE };
   }
 }

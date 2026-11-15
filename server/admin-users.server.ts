@@ -10,7 +10,8 @@
 //
 // Status shown in the directory:
 //   suspended = account switched off by the administrator
-//   pending   = a coach whose verification request is still waiting for review
+//   pending   = a school representative whose application is waiting for review (School Verification)
+//   rejected  = a school representative whose application was rejected
 //   active    = everything else
 
 import { getDb, type Db } from "./db.server.ts";
@@ -18,10 +19,10 @@ import { audit, type PublicUser, type RequestMeta } from "./auth.server.ts";
 import { ConnectionError } from "./connections.server.ts";
 import { requireAdmin } from "./admin.server.ts";
 
-export type UserStatus = "active" | "pending" | "suspended";
+export type UserStatus = "active" | "pending" | "suspended" | "rejected";
 export type DirectoryRole = "student_athlete" | "coach" | "university_representative";
 export const DIRECTORY_ROLES: readonly DirectoryRole[] = ["student_athlete", "coach", "university_representative"];
-export const USER_STATUSES: readonly UserStatus[] = ["active", "pending", "suspended"];
+export const USER_STATUSES: readonly UserStatus[] = ["active", "pending", "suspended", "rejected"];
 
 export interface DirectoryUser {
   id: string;
@@ -40,6 +41,7 @@ export interface DirectorySummary {
   active: number;
   pending: number;
   suspended: number;
+  rejected: number;
 }
 
 export interface UserDetail extends DirectoryUser {
@@ -77,13 +79,15 @@ function directoryCte(db: Db) {
              COALESCE(NULLIF(btrim(ap.sport), ''), NULLIF(btrim(cp.sport_specialization), '')) AS sport,
              COALESCE(NULLIF(btrim(ap.playing_position), ''), NULLIF(btrim(cp.coaching_position), ''), NULLIF(btrim(rp.designation), '')) AS position,
              CASE WHEN NOT u.is_active THEN 'suspended'
-                  WHEN EXISTS (SELECT 1 FROM coach_verifications v WHERE v.coach_id = u.id AND v.status = 'pending') THEN 'pending'
+                  WHEN ra.status = 'pending' THEN 'pending'
+                  WHEN ra.status = 'rejected' THEN 'rejected'
                   ELSE 'active' END AS status
       FROM users u
       LEFT JOIN user_profiles up ON up.user_id = u.id
       LEFT JOIN athlete_profiles ap ON ap.user_id = u.id
       LEFT JOIN coach_profiles cp ON cp.user_id = u.id
       LEFT JOIN university_representative_profiles rp ON rp.user_id = u.id
+      LEFT JOIN rep_applications ra ON ra.user_id = u.id
       WHERE u.deleted_at IS NULL
         AND NOT EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id AND r.name = 'admin')
     )`;
@@ -142,19 +146,20 @@ export async function listUsers(
     ORDER BY created_at DESC, id LIMIT ${limit} OFFSET ${offset}`;
   const [count] = await db<{ n: number }[]>`
     WITH ${directoryCte(db)} SELECT COUNT(*)::int AS n FROM d WHERE TRUE ${roleF} ${statusF} ${qF}`;
-  const [sum] = await db<{ total: number; active: number; pending: number; suspended: number }[]>`
+  const [sum] = await db<{ total: number; active: number; pending: number; suspended: number; rejected: number }[]>`
     WITH ${directoryCte(db)}
     SELECT COUNT(*)::int AS total,
            COUNT(*) FILTER (WHERE status = 'active')::int AS active,
            COUNT(*) FILTER (WHERE status = 'pending')::int AS pending,
-           COUNT(*) FILTER (WHERE status = 'suspended')::int AS suspended
+           COUNT(*) FILTER (WHERE status = 'suspended')::int AS suspended,
+           COUNT(*) FILTER (WHERE status = 'rejected')::int AS rejected
     FROM d`;
   return {
     items: rows.map(toListUser),
     total: count?.n ?? 0,
     limit,
     offset,
-    summary: { total: sum?.total ?? 0, active: sum?.active ?? 0, pending: sum?.pending ?? 0, suspended: sum?.suspended ?? 0 },
+    summary: { total: sum?.total ?? 0, active: sum?.active ?? 0, pending: sum?.pending ?? 0, suspended: sum?.suspended ?? 0, rejected: sum?.rejected ?? 0 },
   };
 }
 
@@ -223,6 +228,10 @@ async function setSuspended(
         AND NOT EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id AND r.name = 'admin')
       FOR UPDATE`;
     if (!locked) throw notFound();
+    // A representative who has not been approved is handled in School Verification, not here.
+    const [app] = await tx<{ status: string }[]>`SELECT status FROM rep_applications WHERE user_id = ${id}`;
+    if (app && app.status !== "approved")
+      throw new ConnectionError(409, "application_not_approved", "This school representative hasn't been approved yet. Review their application in School Verification.");
     if (suspend && !locked.is_active) throw new ConnectionError(409, "already_suspended", "This account is already suspended.");
     if (!suspend && locked.is_active) throw new ConnectionError(409, "not_suspended", "This account isn't suspended.");
 

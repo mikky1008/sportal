@@ -4,6 +4,7 @@
 
 import { z } from "zod";
 import type { RoleDetails } from "./auth.server.ts";
+import { DOC_MAX_COUNT, parseDocuments } from "./rep-documents.server.ts";
 
 const SPORT_NAMES = ["Basketball", "Volleyball", "Track & Field", "Football"] as [string, ...string[]];
 const POSITION_TITLES = [
@@ -40,6 +41,11 @@ export const registerSchema = z
         ...common,
         university: z.string().trim().min(1, "Enter your university name.").max(100, "Name is too long."),
         designation: z.string().trim().min(1, "Enter your position or designation.").max(80, "Designation is too long."),
+        // base64 file contents; the real checks (type from the bytes, size, count) are in parseDocuments
+        documents: z
+          .array(z.object({ kind: z.string().max(40), fileName: z.string().max(200), data: z.string().max(2_900_000) }))
+          .max(DOC_MAX_COUNT, `You can upload up to ${DOC_MAX_COUNT} documents.`)
+          .default([]),
       }),
     ],
     { errorMap: () => ({ message: "Choose a valid account type." }) },
@@ -52,10 +58,10 @@ export const registerSchema = z
 export type RegisterInput = z.input<typeof registerSchema>;
 export type RegisterField =
   | "firstName" | "lastName" | "email" | "password" | "confirmPassword"
-  | "organization" | "position" | "sport" | "university" | "designation";
+  | "organization" | "position" | "sport" | "university" | "designation" | "documents";
 const REGISTER_FIELDS: RegisterField[] = [
   "firstName", "lastName", "email", "password", "confirmPassword",
-  "organization", "position", "sport", "university", "designation",
+  "organization", "position", "sport", "university", "designation", "documents",
 ];
 
 export type ParsedRegistration =
@@ -79,11 +85,19 @@ export function parseRegistration(input: unknown): ParsedRegistration {
     };
   }
   const d = parsed.data;
+  if (d.accountType === "university_representative") {
+    // A representative applies with documents; the account stays locked until an administrator approves it.
+    const docs = parseDocuments(d.documents);
+    if (!docs.ok) return { ok: false, message: docs.message, fieldErrors: { documents: docs.message } };
+    return {
+      ok: true,
+      data: d,
+      details: { kind: "university_representative", universityName: d.university, designation: d.designation, documents: docs.documents },
+    };
+  }
   const details: RoleDetails =
     d.accountType === "coach"
       ? { kind: "coach", organization: d.organization, coachingPosition: d.position, sportSpecialization: d.sport }
-      : d.accountType === "university_representative"
-        ? { kind: "university_representative", universityName: d.university, designation: d.designation }
-        : { kind: "student_athlete" };
+      : { kind: "student_athlete" };
   return { ok: true, data: d, details };
 }

@@ -1,3 +1,4 @@
+import { approvedRep } from "./_rep.mjs";
 // Run against a THROWAWAY local Postgres only (it creates users and edits roles by SQL). Needs psql access as the postgres user; edit the sql() helper for your setup. API at http://localhost:8799.
 import { execSync } from "node:child_process";
 const B="http://localhost:8799";
@@ -19,7 +20,7 @@ const coach=async(first,verified)=>{
   const l=await j("POST","/api/auth/login",null,{identifier:`${first.toLowerCase()}${ts}@t.ph`,password:pw.password,remember:false});
   return {id:r.d.user.id,tok:l.d.token};
 };
-const rep=async(first,uni)=>{const r=await j("POST","/api/auth/register",null,{...pw,accountType:"university_representative",firstName:first,lastName:LAST,email:`${first.toLowerCase()}${ts}@t.ph`,university:uni,designation:"Director"});return {id:r.d.user.id,tok:r.d.token};};
+const rep=async(first,uni)=>{const r=await approvedRep(j,{...pw,accountType:"university_representative",firstName:first,lastName:LAST,email:`${first.toLowerCase()}${ts}@t.ph`,university:uni,designation:"Director"});return {id:r.d.user.id,tok:r.d.token};};
 const connect=async(c,a)=>{const r=await j("POST","/api/connections/requests",c.tok,{userId:a.id});const id=r.d?.connection?.id;const acc=await j("POST",`/api/connections/requests/${id}/accept`,a.tok);return acc.s===200;};
 const manual=(a,skill,result,ask=true)=>j("POST","/api/athletes/me/sessions",a.tok,{skill,result,source:"manual",consistency:null,...(ask?{requestedReview:true}:{})});
 const notes=async(a,cat)=>(await j("GET",`/api/notifications?category=${cat}`,a.tok)).d.items;

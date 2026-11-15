@@ -1,3 +1,4 @@
+import { approvedRep } from "./_rep.mjs";
 // Run against a THROWAWAY local Postgres only. It needs psql access as the postgres user; edit the sql() helper for your setup.
 import { execSync } from "node:child_process";
 const B="http://localhost:8799";
@@ -14,8 +15,8 @@ t("seed adds 4", /Added 4 scholarship/.test(seed()));
 t("seed is idempotent", /Added 0 scholarship/.test(seed()));
 
 const ath=await reg({accountType:"student_athlete",firstName:"Gia",lastName:"Reyes",email:`gia${ts}@t.ph`});
-const rep=await reg({accountType:"university_representative",firstName:"Rex",lastName:"Rep",email:`rex${ts}@t.ph`,university:"Rep Univ",designation:"Director"});
-const rep2=await reg({accountType:"university_representative",firstName:"Rio",lastName:"Other",email:`rio${ts}@t.ph`,university:"Other Univ",designation:"Director"});
+const rep=await approvedRep(j,{...pw,accountType:"university_representative",firstName:"Rex",lastName:"Rep",email:`rex${ts}@t.ph`,university:"Rep Univ",designation:"Director"});
+const rep2=await approvedRep(j,{...pw,accountType:"university_representative",firstName:"Rio",lastName:"Other",email:`rio${ts}@t.ph`,university:"Other Univ",designation:"Director"});
 const A=ath.d.token,R=rep.d.token,R2=rep2.d.token;
 
 // seeded list

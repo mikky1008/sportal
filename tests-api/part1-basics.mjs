@@ -1,3 +1,4 @@
+import { approvedRep } from "./_rep.mjs";
 // Run against a THROWAWAY database only (it creates users). API at http://localhost:8799, Node 22+.
 const B = "http://localhost:8799";
 const j = async (m, p, tok, body) => { const r = await fetch(B+p, {method:m, headers:{...(tok?{authorization:"Bearer "+tok}:{}),...(body?{"content-type":"application/json"}:{})}, body: body?JSON.stringify(body):undefined}); let d=null; try{d=await r.json()}catch{}; return {s:r.status, d}; };
@@ -6,7 +7,7 @@ const t=(name,cond,extra)=>{ if(cond){pass++;console.log("PASS",name)}else{fail+
 const reg = async (body)=>{ const r=await j("POST","/api/auth/register",null,{password:"Passw0rd!long1",confirmPassword:"Passw0rd!long1",...body}); return r; };
 const ts=Date.now();
 const ath = await reg({accountType:"student_athlete",firstName:"Ana",lastName:"Cruz",email:`ana${ts}@test.ph`});
-const uni = await reg({accountType:"university_representative",firstName:"Uli",lastName:"Rep",email:`uli${ts}@test.ph`,university:"Test University",designation:"Athletics Director"});
+const uni = await approvedRep(j,{accountType:"university_representative",firstName:"Uli",lastName:"Rep",email:`uli${ts}@test.ph`,university:"Test University",designation:"Athletics Director"});
 const ath2 = await reg({accountType:"student_athlete",firstName:"Ben",lastName:"Lee",email:`ben${ts}@test.ph`});
 console.log("register", ath.s, uni.s, ath2.s, ath.d?.message||"");
 const A=ath.d?.token, U=uni.d?.token, A2=ath2.d?.token;
@@ -45,7 +46,8 @@ r=await j("GET","/api/athletes/me/applications",A); t("my applications", r.d.tot
 // notifications
 r=await j("GET","/api/notifications/unread-count",A); t("athlete unread 1", r.d.unread===1, r);
 r=await j("GET","/api/notifications/unread-count",U); t("rep unread 1", r.d.unread===1, r);
-r=await j("GET","/api/notifications",U); t("rep list", r.d.items.length===1 && r.d.items[0].category==="application" && r.d.unread===1, r);
+r=await j("GET","/api/notifications",U); // a representative also has their (already read) "your account is approved" notification now
+t("rep list", r.d.items.filter(i=>i.category==="application").length===1 && r.d.items.some(i=>i.title==="Your account is approved") && r.d.unread===1, r);
 const nid=r.d.items[0]?.id;
 r=await j("POST",`/api/notifications/${nid}/read`,A); t("cannot read others' (404)", r.s===404, r);
 r=await j("POST",`/api/notifications/${nid}/read`,U); t("mark read", r.s===200 && r.d.notification.read===true, r);

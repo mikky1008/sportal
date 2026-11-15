@@ -2,8 +2,9 @@ import { useLocation } from "react-router-dom";
 import { Link } from "@/router-compat";
 import { Page } from "@/components/Page";
 import { useAuth } from "@/auth/AuthContext";
-import { createContext, useContext, useState, type FormEvent, type ReactNode } from "react";
-import { AlertCircle, ArrowLeft, ArrowRight, Building2, Eye, EyeOff, Loader2, Trophy, UserSearch } from "lucide-react";
+import { createContext, useContext, useRef, useState, type FormEvent, type ReactNode } from "react";
+import type { RegisterDocument } from "@/auth/types";
+import { AlertCircle, ArrowLeft, ArrowRight, Building2, CheckCircle2, Eye, EyeOff, FileText, Loader2, Paperclip, Trophy, UserSearch, X } from "lucide-react";
 import { toast } from "sonner";
 import { btn } from "@/components/common";
 import { registerLocalAccount } from "@/lib/accountScope";
@@ -92,6 +93,105 @@ function PasswordToggle({ shown, onToggle }: { shown: boolean; onToggle: () => v
   );
 }
 
+/* ---------------------------------------------------------------- school representative documents */
+
+const DOC_KIND_LABEL: Record<RegisterDocument["kind"], string> = {
+  staff_id: "Staff / employee ID",
+  authorization_letter: "Letter of authorization",
+  appointment_letter: "Appointment letter or contract",
+  other: "Other proof of affiliation",
+};
+const DOC_MAX_COUNT = 3;
+const DOC_MAX_BYTES = 2 * 1024 * 1024;
+const DOC_TOTAL_MAX_BYTES = 3 * 1024 * 1024;
+const DOC_TYPES = ["application/pdf", "image/png", "image/jpeg"];
+
+interface PickedDoc { id: number; kind: RegisterDocument["kind"]; name: string; size: number; data: string }
+
+const fmtSize = (n: number) => (n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
+
+function readBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(",")[1] ?? "");
+    r.onerror = () => reject(new Error("read_failed"));
+    r.readAsDataURL(file);
+  });
+}
+
+function DocumentPicker({ docs, setDocs, error, setError, disabled }: {
+  docs: PickedDoc[]; setDocs: (d: PickedDoc[]) => void; error: string | undefined; setError: (m: string | undefined) => void; disabled: boolean;
+}) {
+  const dark = useContext(ToneContext);
+  const input = useRef<HTMLInputElement>(null);
+  const nextId = useRef(1);
+  const total = docs.reduce((n, d) => n + d.size, 0);
+
+  async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!DOC_TYPES.includes(file.type) && !/\.(pdf|png|jpe?g)$/i.test(file.name)) return setError(`"${file.name}" must be a PDF, PNG or JPG file.`);
+    if (file.size > DOC_MAX_BYTES) return setError(`"${file.name}" is larger than 2 MB.`);
+    if (total + file.size > DOC_TOTAL_MAX_BYTES) return setError("Your documents are over 3 MB together. Remove one or use a smaller file.");
+    try {
+      const data = await readBase64(file);
+      const kind: RegisterDocument["kind"] = docs.length === 0 ? "staff_id" : docs.length === 1 ? "authorization_letter" : "other";
+      setDocs([...docs, { id: nextId.current++, kind, name: file.name, size: file.size, data }]);
+      setError(undefined);
+    } catch {
+      setError(`"${file.name}" couldn't be read. Try again.`);
+    }
+  }
+
+  const muted = dark ? "text-slate-400" : "text-muted-foreground";
+  return (
+    <fieldset className="flex flex-col gap-2" aria-describedby={error ? "documents-error" : "documents-help"}>
+      <legend className={cn("mb-1.5 block text-sm font-semibold", dark && "text-slate-200")}>Verification documents</legend>
+      <p id="documents-help" className={cn("text-xs leading-relaxed", muted)}>
+        Upload proof that you represent this school, such as a staff ID or a signed letter of authorization. PDF, PNG or JPG, up to 2 MB each. An administrator reviews them before your account is activated.
+      </p>
+
+      {docs.map((d) => (
+        <div key={d.id} className={cn("flex items-center gap-3 rounded-xl border p-3", dark ? "border-slate-700 bg-slate-800/60" : "bg-card")}>
+          <FileText className={cn("h-5 w-5 shrink-0", dark ? "text-sky-400" : "text-primary")} aria-hidden="true" />
+          <div className="min-w-0 flex-1">
+            <p className={cn("truncate text-sm font-medium", dark && "text-white")}>{d.name}</p>
+            <div className="mt-1 flex items-center gap-2">
+              <select
+                aria-label={`What is ${d.name}?`}
+                value={d.kind}
+                disabled={disabled}
+                onChange={(e) => setDocs(docs.map((x) => (x.id === d.id ? { ...x, kind: e.target.value as RegisterDocument["kind"] } : x)))}
+                className={cn("h-8 max-w-full rounded-lg border px-2 text-xs outline-none", dark ? "border-slate-600 bg-slate-800 text-slate-200 [&>option]:bg-slate-800" : "bg-card")}
+              >
+                {(Object.keys(DOC_KIND_LABEL) as RegisterDocument["kind"][]).map((k) => <option key={k} value={k}>{DOC_KIND_LABEL[k]}</option>)}
+              </select>
+              <span className={cn("shrink-0 text-xs", muted)}>{fmtSize(d.size)}</span>
+            </div>
+          </div>
+          <button type="button" disabled={disabled} onClick={() => setDocs(docs.filter((x) => x.id !== d.id))} aria-label={`Remove ${d.name}`}
+            className={cn("grid h-8 w-8 shrink-0 place-items-center rounded-lg transition", dark ? "text-slate-400 hover:bg-slate-700 hover:text-white" : "text-muted-foreground hover:bg-muted hover:text-foreground")}>
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      ))}
+
+      {docs.length < DOC_MAX_COUNT && (
+        <>
+          <input ref={input} type="file" accept="application/pdf,image/png,image/jpeg,.pdf,.png,.jpg,.jpeg" className="sr-only" tabIndex={-1} onChange={(e) => void onPick(e)} aria-label="Choose a document" />
+          <button type="button" disabled={disabled} onClick={() => input.current?.click()}
+            className={cn("inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-dashed text-sm font-semibold transition",
+              dark ? "border-slate-600 text-slate-200 hover:border-sky-400 hover:text-sky-300" : "border-primary/40 text-primary hover:bg-primary/5")}>
+            <Paperclip className="h-4 w-4" /> {docs.length === 0 ? "Add a document" : "Add another document"}
+          </button>
+        </>
+      )}
+      {error && <p id="documents-error" role="alert" className={cn("text-xs font-medium", dark ? "text-red-300" : "text-destructive")}>{error}</p>}
+    </fieldset>
+  );
+}
+
 const EMPTY: Record<Field, string> = {
   firstName: "", lastName: "", email: "", password: "", confirm: "",
   organization: "", position: "", sport: "", designation: "",
@@ -127,6 +227,10 @@ export function SignupForm({ role, tone = "light", onBack, onSwitchToLogin }: Si
   // must tick the box to agree to the Terms and Privacy Policy before the account is created
   const [agreed, setAgreed] = useState(false);
   const [agreeError, setAgreeError] = useState(false);
+  // school representatives apply with documents; once sent there is no account yet, only an application
+  const [docs, setDocs] = useState<PickedDoc[]>([]);
+  const [docsError, setDocsError] = useState<string | undefined>();
+  const [applied, setApplied] = useState<string | null>(null);
 
   const set = (k: Field) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     setValues((v) => ({ ...v, [k]: e.target.value }));
@@ -150,7 +254,9 @@ export function SignupForm({ role, tone = "light", onBack, onSwitchToLogin }: Si
     setErrors(errs);
     setFormError(null);
     setAgreeError(!agreed);
-    if (Object.keys(errs).length || !agreed) return;
+    const needsDocs = role === "university" && docs.length === 0;
+    if (needsDocs) setDocsError("Upload at least one document so we can verify you.");
+    if (Object.keys(errs).length || !agreed || needsDocs || (role === "university" && docsError)) return;
 
     setLoading(true);
     try {
@@ -168,6 +274,7 @@ export function SignupForm({ role, tone = "light", onBack, onSwitchToLogin }: Si
                   firstName: values.firstName, lastName: values.lastName, email: values.email,
                   password: values.password, confirmPassword: values.confirm,
                   university: values.organization, designation: values.designation,
+                  documents: docs.map((d) => ({ kind: d.kind, fileName: d.name, data: d.data })),
                 }
               : {
                   accountType: "student_athlete",
@@ -175,6 +282,12 @@ export function SignupForm({ role, tone = "light", onBack, onSwitchToLogin }: Si
                   password: values.password, confirmPassword: values.confirm,
                 },
       );
+      if (res.ok && res.pendingApproval) {
+        // No account to use yet: an administrator has to approve the application first.
+        setApplied(res.message);
+        setLoading(false);
+        return;
+      }
       if (res.ok) {
         // This account gets its own, blank browser-side profile (the profile pages read from it).
         registerLocalAccount(res.user.id, {
@@ -192,7 +305,8 @@ export function SignupForm({ role, tone = "light", onBack, onSwitchToLogin }: Si
         return;
       }
       // The server names two fields differently from this form.
-      const { confirmPassword, university, ...rest } = res.fieldErrors ?? {};
+      const { confirmPassword, university, documents, ...rest } = res.fieldErrors ?? {};
+      if (documents) setDocsError(documents);
       setErrors({ ...rest, ...(confirmPassword ? { confirm: confirmPassword } : {}), ...(university ? { organization: university } : {}) } as Errors);
       setFormError(res.code === "validation" ? null : res.message);
       toast.error(res.message);
@@ -207,6 +321,35 @@ export function SignupForm({ role, tone = "light", onBack, onSwitchToLogin }: Si
   const current = ROLES.find((r) => r.id === role);
   const extra = EXTRA_FIELDS[role];
 
+  if (applied) {
+    return (
+      <ToneContext.Provider value={dark}>
+        <div className="w-full max-w-md">
+          <div className={cn("text-center", dark ? undefined : "surface p-6 sm:p-8")}>
+            <span className={cn("mx-auto grid h-14 w-14 place-items-center rounded-full", dark ? "bg-sky-400/10 text-sky-400" : "bg-primary/10 text-primary")}>
+              <CheckCircle2 className="h-8 w-8" aria-hidden="true" />
+            </span>
+            <h1 role="status" className={cn("mt-5", dark ? "font-sans text-2xl font-normal tracking-tight text-white" : "text-2xl font-bold sm:text-3xl")}>Application submitted</h1>
+            <p className={cn("mt-2 text-sm leading-relaxed", dark ? "text-slate-300" : "text-muted-foreground")}>{applied}</p>
+            <ol className={cn("mx-auto mt-5 max-w-xs space-y-2 text-left text-sm", dark ? "text-slate-300" : "text-muted-foreground")}>
+              <li className="flex gap-2"><span className={cn("font-bold", dark ? "text-sky-400" : "text-primary")}>1.</span> An administrator reviews your documents.</li>
+              <li className="flex gap-2"><span className={cn("font-bold", dark ? "text-sky-400" : "text-primary")}>2.</span> Once approved, sign in with the email and password you just chose.</li>
+              <li className="flex gap-2"><span className={cn("font-bold", dark ? "text-sky-400" : "text-primary")}>3.</span> If something is missing, the reason is shown when you try to sign in.</li>
+            </ol>
+            <div className="mt-6 flex flex-col gap-2 sm:flex-row">
+              <button type="button" onClick={onBack} className={cn(secondaryBtn, "flex-1")}>Done</button>
+              {onSwitchToLogin ? (
+                <button type="button" onClick={onSwitchToLogin} className={cn(secondaryBtn, "flex-1")}>Go to login</button>
+              ) : (
+                <Link to="/login" search={{ signin: 1 }} direction="none" className={cn(secondaryBtn, "flex-1")}>Go to login</Link>
+              )}
+            </div>
+          </div>
+        </div>
+      </ToneContext.Provider>
+    );
+  }
+
   return (
     <ToneContext.Provider value={dark}>
           <div className="w-full max-w-md">
@@ -219,7 +362,7 @@ export function SignupForm({ role, tone = "light", onBack, onSwitchToLogin }: Si
                 )}
                 <div>
                   <h1 className={dark ? "font-sans text-2xl font-normal tracking-tight text-white" : "text-2xl font-bold sm:text-3xl"}>{current?.title}</h1>
-                  <p className={cn("text-sm", dark ? "text-slate-400" : "text-muted-foreground")}>Create your account.</p>
+                  <p className={cn("text-sm", dark ? "text-slate-400" : "text-muted-foreground")}>{role === "university" ? "Apply for your account." : "Create your account."}</p>
                 </div>
               </div>
 
@@ -270,6 +413,7 @@ export function SignupForm({ role, tone = "light", onBack, onSwitchToLogin }: Si
                     <input {...bind("designation")} type="text" autoComplete="organization-title" maxLength={80} />
                   </TextField>
                 )}
+                {role === "university" && <DocumentPicker docs={docs} setDocs={setDocs} error={docsError} setError={setDocsError} disabled={loading || redirecting} />}
 
                 <TextField id="password" label="Password" error={errors.password}>
                   <div className="relative">
@@ -317,11 +461,11 @@ export function SignupForm({ role, tone = "light", onBack, onSwitchToLogin }: Si
                     </>
                   ) : loading ? (
                     <>
-                      <Loader2 className="h-4 w-4 animate-spin" /> Creating account…
+                      <Loader2 className="h-4 w-4 animate-spin" /> {role === "university" ? "Submitting application…" : "Creating account…"}
                     </>
                   ) : (
                     <>
-                      Create account <ArrowRight className="h-4 w-4" />
+                      {role === "university" ? "Submit application" : "Create account"} <ArrowRight className="h-4 w-4" />
                     </>
                   )}
                 </button>

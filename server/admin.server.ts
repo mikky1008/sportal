@@ -24,6 +24,7 @@ const ACTIVITY_EVENTS = [
   "admin.login.success", "admin.login.failed", "admin.login.blocked",
   "login.success", "login.failed", "user.created", "logout",
   "admin.provisioned", "admin.password_rotated", "admin.role_revoked",
+  "admin.rep_approved", "admin.rep_rejected", "admin.user_suspended", "admin.user_reactivated",
 ];
 
 /** `user.created` rows carry { roles: [...] } in their detail; nothing else is read from it. */
@@ -49,7 +50,7 @@ export async function getAdminOverview(actor: Pick<PublicUser, "roles">): Promis
   const count = (name: string) => roleCounts.find((r) => r.name === name)?.n ?? 0;
 
   const [inactive] = await db<{ n: number }[]>`SELECT COUNT(*)::int AS n FROM users WHERE is_active = FALSE AND deleted_at IS NULL`;
-  const [pending] = await db<{ n: number }[]>`SELECT COUNT(*)::int AS n FROM coach_verifications WHERE status = 'pending'`;
+  const [pending] = await db<{ n: number }[]>`SELECT COUNT(*)::int AS n FROM rep_applications ra JOIN users u ON u.id = ra.user_id AND u.deleted_at IS NULL WHERE ra.status = 'pending'`;
   const [ok] = await db<{ n: number }[]>`
     SELECT COUNT(*)::int AS n FROM audit_log WHERE event IN ('login.success', 'admin.login.success') AND created_at > ${since}`;
   const [bad] = await db<{ n: number }[]>`

@@ -1,6 +1,7 @@
-// Admin User Management. Run against a THROWAWAY local Postgres only; API at http://localhost:8799 started with
+// Admin User Management (statuses: pending/rejected now come from school representative applications). Run against a THROWAWAY local Postgres only; API at http://localhost:8799 started with
 // ADMIN_EMAIL=admin@sportal.test ADMIN_PASSWORD=Adm1n-Secret-Pass (see part8).
 import { execSync } from "node:child_process";
+import { approvedRep, sampleDoc } from "./_rep.mjs";
 const BASE="http://localhost:8799";
 const j=async(m,p,t,b)=>{const r=await fetch(BASE+p,{method:m,headers:{...(t?{authorization:"Bearer "+t}:{}),...(b?{"content-type":"application/json"}:{})},body:b?JSON.stringify(b):undefined});return {s:r.status,d:await r.json().catch(()=>null)}};
 const sql=(q)=>execSync(`su postgres -c "psql -h /tmp -p 5544 -d sportal -tA -c \\"${q}\\""`).toString().trim();
@@ -10,8 +11,10 @@ const ts=Date.now(); const pw={password:"Passw0rd!long1",confirmPassword:"Passw0
 const reg=(type,extra)=>j("POST","/api/auth/register",null,{...pw,accountType:type,firstName:type.slice(0,4),lastName:"Zq"+ts,email:`${type}${ts}@um.ph`,...extra});
 
 const S=await reg("student_athlete"); const C=await reg("coach",{organization:"Zephyr University "+ts,position:"Head coach",sport:"Basketball"});
-const R=await reg("university_representative",{university:"Zephyr University "+ts,designation:"Director"});
-t("test accounts created",S.d.ok&&C.d.ok&&R.d.ok,[S.d,C.d,R.d]);
+const R=await approvedRep(j,{...pw,accountType:"university_representative",firstName:"univ",lastName:"Zq"+ts,email:`university_representative${ts}@um.ph`,university:"Zephyr University "+ts,designation:"Director"});
+// a second representative whose application is still waiting
+const W=await reg("university_representative",{university:"Zephyr University "+ts,designation:"Dean",documents:[sampleDoc()],firstName:"wait",email:`waiting${ts}@um.ph`});
+t("test accounts created",S.d.ok&&C.d.ok&&R.d.ok&&W.d.ok&&W.d.pendingApproval,[S.d.ok,C.d.ok,R.d.ok,W.d]);
 const adm=(await j("POST","/api/admin/auth/login",null,{identifier:"admin@sportal.test",password:"Adm1n-Secret-Pass"})).d.token;
 const list=(qs="")=>j("GET","/api/admin/users"+qs,adm);
 
@@ -25,30 +28,31 @@ t("a student is still signed in after those attempts",(await j("GET","/api/auth/
 
 // ---- directory content
 let r=await list(`?q=${ts}&limit=100`);
-t("search by a shared term finds all three new users",r.d.ok&&r.d.total===3,r.d.total);
+t("search by a shared term finds all four new users",r.d.ok&&r.d.total===4,r.d.total);
 const byRole=(x)=>r.d.items.find(i=>i.role===x);
 t("each user has name, email, role, registration date",r.d.items.every(i=>i.name&&i.email&&i.role&&!isNaN(Date.parse(i.registeredAt))),r.d.items);
 t("coach shows their organization as school",byRole("coach")?.school===`Zephyr University ${ts}`);
 t("representative shows their university as school",byRole("university_representative")?.school===`Zephyr University ${ts}`);
 t("student with no school shows null",byRole("student_athlete")?.school===null);
-t("a coach with an unreviewed verification is 'pending'; others 'active'",byRole("coach")?.status==="pending"?true:byRole("coach")?.status==="active" && byRole("student_athlete")?.status==="active",r.d.items.map(i=>i.status));
+t("coach and student are 'active' (coaches no longer have a pending state here)",byRole("coach")?.status==="active"&&byRole("student_athlete")?.status==="active",r.d.items.map(i=>i.status));
+t("a representative waiting for approval is 'pending'",r.d.items.find(i=>i.email===`waiting${ts}@um.ph`)?.status==="pending",r.d.items.map(i=>i.email+":"+i.status));
 t("the administrator never appears in the directory",!(await list("?q=sportal.test&limit=100")).d.items.some(i=>i.email==="admin@sportal.test"));
 t("password hashes are never sent",!JSON.stringify(r.d).includes("scrypt$") && !JSON.stringify(r.d).includes("password"));
-t("summary counts add up",r.d.summary.total===r.d.summary.active+r.d.summary.pending+r.d.summary.suspended,r.d.summary);
+t("summary counts add up",r.d.summary.total===r.d.summary.active+r.d.summary.pending+r.d.summary.suspended+r.d.summary.rejected,r.d.summary);
 
 // ---- filters
 for(const role of ["student_athlete","coach","university_representative"]){
-  const x=await list(`?q=${ts}&role=${role}`); t(`role filter ${role}`,x.d.total===1&&x.d.items[0].role===role,x.d);
+  const x=await list(`?q=${ts}&role=${role}`); t(`role filter ${role}`,x.d.total===(role==="university_representative"?2:1)&&x.d.items.every(i=>i.role===role),x.d);
 }
 t("search by email works",(await list(`?q=${encodeURIComponent(`coach${ts}@um.ph`)}`)).d.total===1);
-t("search by school works",(await list(`?q=${encodeURIComponent("Zephyr University "+ts)}`)).d.total===2);
-t("search is case-insensitive",(await list(`?q=ZEPHYR%20university%20${ts}`)).d.total===2);
-t("LIKE wildcards in search are treated literally",(await list("?q=%25")).d.total===0 && (await list(`?q=Z_${ts}`)).d.total===0 && (await list(`?q=Zq${ts}`)).d.total===3);
+t("search by school works",(await list(`?q=${encodeURIComponent("Zephyr University "+ts)}`)).d.total===3);
+t("search is case-insensitive",(await list(`?q=ZEPHYR%20university%20${ts}`)).d.total===3);
+t("LIKE wildcards in search are treated literally",(await list("?q=%25")).d.total===0 && (await list(`?q=Z_${ts}`)).d.total===0 && (await list(`?q=Zq${ts}`)).d.total===4);
 t("bad role filter rejected (400)",(await list("?role=admin")).s===400);
 t("bad status filter rejected (400)",(await list("?status=banned")).s===400);
 t("SQL-looking search is harmless",(await list("?q="+encodeURIComponent("'; DROP TABLE users;--"))).d.ok===true && +sql("SELECT count(*) FROM users")>0);
 const pg1=await list(`?q=${ts}&limit=2&offset=0`), pg2=await list(`?q=${ts}&limit=2&offset=2`);
-t("pagination splits results",pg1.d.items.length===2&&pg2.d.items.length===1&&pg1.d.total===3);
+t("pagination splits results",pg1.d.items.length===2&&pg2.d.items.length===2&&pg1.d.total===4);
 
 // ---- detail
 r=await j("GET",`/api/admin/users/${C.d.user.id}`,adm);

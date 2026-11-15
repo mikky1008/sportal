@@ -14,7 +14,7 @@ export interface PublicUser {
 
 export type RegisterField =
   | "firstName" | "lastName" | "email" | "password" | "confirmPassword"
-  | "organization" | "position" | "sport" | "university" | "designation";
+  | "organization" | "position" | "sport" | "university" | "designation" | "documents";
 
 interface RegisterCommon {
   firstName: string;
@@ -27,20 +27,29 @@ interface RegisterCommon {
 export type RegisterInput =
   | ({ accountType: "student_athlete" } & RegisterCommon)
   | ({ accountType: "coach"; organization: string; position: string; sport: string } & RegisterCommon)
-  | ({ accountType: "university_representative"; university: string; designation: string } & RegisterCommon);
+  | ({ accountType: "university_representative"; university: string; designation: string; documents: RegisterDocument[] } & RegisterCommon);
+
+/** A file a school representative attaches to their application (base64 contents). */
+export interface RegisterDocument {
+  kind: "staff_id" | "authorization_letter" | "appointment_letter" | "other";
+  fileName: string;
+  data: string;
+}
 
 export type LoginResponse =
   | { ok: true; user: PublicUser }
   | {
       ok: false;
-      code: "validation" | "invalid_credentials" | "inactive" | "rate_limited" | "server_error" | "network";
+      code: "validation" | "invalid_credentials" | "inactive" | "pending_approval" | "application_rejected" | "rate_limited" | "server_error" | "network";
       message: string;
       fieldErrors?: { identifier?: string; password?: string };
       retryAfterSec?: number;
     };
 
 export type RegisterResponse =
-  | { ok: true; user: PublicUser; role: "student_athlete" | "coach" | "university_representative" }
+  | { ok: true; pendingApproval?: false; user: PublicUser; role: "student_athlete" | "coach" | "university_representative" }
+  // A school representative has applied. There is no account to use until an administrator approves it.
+  | { ok: true; pendingApproval: true; role: "university_representative"; message: string }
   | {
       ok: false;
       code: "validation" | "taken" | "rate_limited" | "server_error" | "network";

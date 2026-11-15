@@ -5,6 +5,7 @@
 // The password is typed at a hidden prompt (or read from the SPORTAL_NEW_PASSWORD environment
 // variable for automation). It is hashed before it is stored and is never printed or logged.
 // Roles: student_athlete (default; "athlete" still works), coach, university_representative. Pass --role more than once to give several roles.
+// A university_representative made here is treated as already vetted by the operator: no application or documents.
 // The administrator cannot be created here: set ADMIN_EMAIL and ADMIN_PASSWORD (see .env.example) and start the API.
 
 import { createUser, UserInputError } from "../server/auth.server.ts";

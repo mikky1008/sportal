@@ -4045,6 +4045,57 @@ var coerce = {
 };
 var NEVER = INVALID;
 
+// server/rep-documents.server.ts
+import { randomUUID } from "node:crypto";
+var DOC_KINDS = ["staff_id", "authorization_letter", "appointment_letter", "other"];
+var DOC_MAX_COUNT = 3;
+var DOC_MAX_BYTES = 2 * 1024 * 1024;
+var DOC_TOTAL_MAX_BYTES = 3 * 1024 * 1024;
+var REGISTER_WITH_DOCS_MAX_BODY = 4.4 * 1024 * 1024;
+function sniffMime(b) {
+  if (b.length >= 5 && b.subarray(0, 5).toString("latin1") === "%PDF-") return "application/pdf";
+  if (b.length >= 8 && b.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return "image/png";
+  if (b.length >= 3 && b[0] === 255 && b[1] === 216 && b[2] === 255) return "image/jpeg";
+  return null;
+}
+function cleanFileName(name2) {
+  const base = name2.split(/[\\/]/).pop() ?? "";
+  const cleaned = base.replace(/[\u0000-\u001f\u007f<>:"|?*]/g, "").trim().slice(0, 120);
+  return cleaned;
+}
+var BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+function parseDocuments(raw) {
+  if (raw.length < 1) return { ok: false, message: "Upload at least one document." };
+  if (raw.length > DOC_MAX_COUNT) return { ok: false, message: `You can upload up to ${DOC_MAX_COUNT} documents.` };
+  const out = [];
+  let total = 0;
+  for (const item of raw) {
+    if (!DOC_KINDS.includes(item.kind)) return { ok: false, message: "Choose what each document is." };
+    const fileName = cleanFileName(item.fileName);
+    if (!fileName) return { ok: false, message: "Each document needs a file name." };
+    if (item.data.length > Math.ceil(DOC_MAX_BYTES * 4 / 3) + 8)
+      return { ok: false, message: `"${fileName}" is larger than 2 MB.` };
+    if (!BASE64.test(item.data) || item.data.length % 4 !== 0) return { ok: false, message: `"${fileName}" couldn't be read. Try uploading it again.` };
+    const data = Buffer.from(item.data, "base64");
+    if (data.length < 1) return { ok: false, message: `"${fileName}" is empty.` };
+    if (data.length > DOC_MAX_BYTES) return { ok: false, message: `"${fileName}" is larger than 2 MB.` };
+    const mimeType = sniffMime(data);
+    if (!mimeType) return { ok: false, message: `"${fileName}" must be a PDF, PNG or JPEG file.` };
+    total += data.length;
+    if (total > DOC_TOTAL_MAX_BYTES) return { ok: false, message: "Your documents are too large together. Keep them under 3 MB in total." };
+    out.push({ kind: item.kind, fileName, mimeType, data });
+  }
+  return { ok: true, documents: out };
+}
+async function insertRepApplication(tx, userId, documents, at) {
+  await tx`INSERT INTO rep_applications (user_id, status, submitted_at) VALUES (${userId}, 'pending', ${at})`;
+  for (const d2 of documents) {
+    await tx`
+      INSERT INTO rep_application_documents (id, user_id, kind, file_name, mime_type, size_bytes, data, uploaded_at)
+      VALUES (${randomUUID()}, ${userId}, ${d2.kind}, ${d2.fileName}, ${d2.mimeType}, ${d2.data.length}, ${d2.data}, ${at})`;
+  }
+}
+
 // server/registration.ts
 var SPORT_NAMES = ["Basketball", "Volleyball", "Track & Field", "Football"];
 var POSITION_TITLES = [
@@ -4077,7 +4128,9 @@ var registerSchema = external_exports.discriminatedUnion(
       accountType: external_exports.literal("university_representative"),
       ...common,
       university: external_exports.string().trim().min(1, "Enter your university name.").max(100, "Name is too long."),
-      designation: external_exports.string().trim().min(1, "Enter your position or designation.").max(80, "Designation is too long.")
+      designation: external_exports.string().trim().min(1, "Enter your position or designation.").max(80, "Designation is too long."),
+      // base64 file contents; the real checks (type from the bytes, size, count) are in parseDocuments
+      documents: external_exports.array(external_exports.object({ kind: external_exports.string().max(40), fileName: external_exports.string().max(200), data: external_exports.string().max(29e5) })).max(DOC_MAX_COUNT, `You can upload up to ${DOC_MAX_COUNT} documents.`).default([])
     })
   ],
   { errorMap: () => ({ message: "Choose a valid account type." }) }
@@ -4095,7 +4148,8 @@ var REGISTER_FIELDS = [
   "position",
   "sport",
   "university",
-  "designation"
+  "designation",
+  "documents"
 ];
 function parseRegistration(input) {
   const parsed = registerSchema.safeParse(input);
@@ -4114,12 +4168,21 @@ function parseRegistration(input) {
     };
   }
   const d2 = parsed.data;
-  const details = d2.accountType === "coach" ? { kind: "coach", organization: d2.organization, coachingPosition: d2.position, sportSpecialization: d2.sport } : d2.accountType === "university_representative" ? { kind: "university_representative", universityName: d2.university, designation: d2.designation } : { kind: "student_athlete" };
+  if (d2.accountType === "university_representative") {
+    const docs = parseDocuments(d2.documents);
+    if (!docs.ok) return { ok: false, message: docs.message, fieldErrors: { documents: docs.message } };
+    return {
+      ok: true,
+      data: d2,
+      details: { kind: "university_representative", universityName: d2.university, designation: d2.designation, documents: docs.documents }
+    };
+  }
+  const details = d2.accountType === "coach" ? { kind: "coach", organization: d2.organization, coachingPosition: d2.position, sportSpecialization: d2.sport } : { kind: "student_athlete" };
   return { ok: true, data: d2, details };
 }
 
 // server/auth.server.ts
-import { createHash, randomBytes as randomBytes2, randomUUID } from "node:crypto";
+import { createHash, randomBytes as randomBytes2, randomUUID as randomUUID2 } from "node:crypto";
 
 // node_modules/postgres/src/index.js
 import os from "os";
@@ -9078,6 +9141,53 @@ var MIGRATIONS = [
       WHERE v.coach_id = cp.user_id AND v.status = 'verified' AND cp.organization_type IN ('University', 'College');
       -- backfill end
     `
+  },
+  {
+    version: 12,
+    name: "school_representative_applications",
+    sql: `
+      -- A school/university representative is no longer let straight in: signing up creates an
+      -- application, and the account only works once an administrator approves it. A user who has a
+      -- row here that is not 'approved' cannot sign in and has no usable session. Users with no row
+      -- (every other role, and accounts made by the operator's command-line tool) are unaffected.
+      CREATE TABLE rep_applications (
+        user_id          TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        status           TEXT NOT NULL DEFAULT 'pending',
+        submitted_at     TIMESTAMPTZ NOT NULL,
+        reviewed_at      TIMESTAMPTZ,
+        reviewed_by      TEXT REFERENCES users(id) ON DELETE SET NULL,
+        rejection_reason TEXT,
+        CONSTRAINT rep_applications_status_check CHECK (status IN ('pending', 'approved', 'rejected')),
+        CONSTRAINT rep_applications_reason_check CHECK (rejection_reason IS NULL OR length(rejection_reason) <= 500)
+      );
+      CREATE INDEX idx_rep_applications_status ON rep_applications (status, submitted_at);
+
+      -- The documents the applicant uploaded. Stored in the database (PDF, PNG or JPEG only, 2 MB
+      -- each) and only ever served to the administrator.
+      CREATE TABLE rep_application_documents (
+        id          TEXT PRIMARY KEY,
+        user_id     TEXT NOT NULL REFERENCES rep_applications(user_id) ON DELETE CASCADE,
+        kind        TEXT NOT NULL,
+        file_name   TEXT NOT NULL,
+        mime_type   TEXT NOT NULL,
+        size_bytes  INTEGER NOT NULL,
+        data        BYTEA NOT NULL,
+        uploaded_at TIMESTAMPTZ NOT NULL,
+        CONSTRAINT rep_docs_kind_check CHECK (kind IN ('staff_id', 'authorization_letter', 'appointment_letter', 'other')),
+        CONSTRAINT rep_docs_name_check CHECK (length(file_name) BETWEEN 1 AND 120),
+        CONSTRAINT rep_docs_mime_check CHECK (mime_type IN ('application/pdf', 'image/png', 'image/jpeg')),
+        CONSTRAINT rep_docs_size_check CHECK (size_bytes BETWEEN 1 AND 2097152)
+      );
+      CREATE INDEX idx_rep_docs_user ON rep_application_documents (user_id);
+
+      -- Representatives who already have an account keep it: they are recorded as approved.
+      INSERT INTO rep_applications (user_id, status, submitted_at, reviewed_at)
+      SELECT ur.user_id, 'approved', u.created_at, now()
+      FROM user_roles ur
+      JOIN roles r ON r.id = ur.role_id AND r.name = 'university_representative'
+      JOIN users u ON u.id = ur.user_id
+      ON CONFLICT (user_id) DO NOTHING;
+    `
   }
 ];
 var MIGRATION_LOCK_ID = 727274001;
@@ -9309,7 +9419,7 @@ async function createUser(input, dbArg) {
   const [nameTaken] = await db`SELECT 1 AS x FROM users WHERE lower(username) = ${username.toLowerCase()}`;
   if (nameTaken) throw new UserInputError("That username is already taken.", "username");
   const passwordHash = await hashPassword(input.password);
-  const id = randomUUID();
+  const id = randomUUID2();
   const ts = now2();
   try {
     await db.begin(async (tx) => {
@@ -9331,6 +9441,7 @@ async function createUser(input, dbArg) {
         await tx`
           INSERT INTO university_representative_profiles (user_id, university_name, designation, created_at, updated_at)
           VALUES (${id}, ${d2.universityName.trim()}, ${d2.designation.trim()}, ${ts}, ${ts})`;
+        if (d2.documents?.length) await insertRepApplication(tx, id, d2.documents, ts);
       }
     });
   } catch (err) {
@@ -9412,7 +9523,8 @@ async function getUserBySessionToken(token, dbArg) {
     SELECT u.id, u.email, u.username, u.display_name, s.last_seen_at
     FROM sessions s JOIN users u ON u.id = s.user_id
     WHERE s.token_hash = ${sha2562(token)} AND s.revoked_at IS NULL AND s.expires_at > ${now2()}
-      AND u.is_active = TRUE AND u.deleted_at IS NULL`;
+      AND u.is_active = TRUE AND u.deleted_at IS NULL
+      AND NOT EXISTS (SELECT 1 FROM rep_applications ra WHERE ra.user_id = u.id AND ra.status <> 'approved')`;
   if (!row) return null;
   if (Date.now() - row.last_seen_at.getTime() > 6e4) {
     await db`UPDATE sessions SET last_seen_at = ${now2()} WHERE token_hash = ${sha2562(token)}`;
@@ -9464,6 +9576,12 @@ async function authenticate(input, meta, dbArg) {
     await audit(failEvent, { userId: user.id, identifier, ...meta, detail: { reason: "inactive" } }, db);
     return { ok: false, code: "inactive" };
   }
+  const [application] = await db`
+    SELECT status, rejection_reason FROM rep_applications WHERE user_id = ${user.id}`;
+  if (application && application.status !== "approved") {
+    await audit(failEvent, { userId: user.id, identifier, ...meta, detail: { reason: `application_${application.status}` } }, db);
+    return application.status === "pending" ? { ok: false, code: "pending_approval" } : { ok: false, code: "application_rejected", ...application.rejection_reason ? { reason: application.rejection_reason } : {} };
+  }
   if (needsRehash(user.password_hash)) {
     await db`UPDATE users SET password_hash = ${await hashPassword(input.password)}, updated_at = ${now2()} WHERE id = ${user.id}`;
   }
@@ -9477,10 +9595,10 @@ async function authenticate(input, meta, dbArg) {
 }
 
 // server/connections.server.ts
-import { randomUUID as randomUUID3 } from "node:crypto";
+import { randomUUID as randomUUID4 } from "node:crypto";
 
 // server/notifications.server.ts
-import { randomUUID as randomUUID2 } from "node:crypto";
+import { randomUUID as randomUUID3 } from "node:crypto";
 var NOTIFICATION_CATEGORIES = [
   "analysis",
   "ranking",
@@ -9515,7 +9633,7 @@ async function notify(userId, n, dbArg) {
   const db = dbArg ?? await getDb();
   await db`
     INSERT INTO notifications (id, user_id, category, title, message, link, created_at)
-    VALUES (${randomUUID2()}, ${userId}, ${n.category}, ${n.title.slice(0, 120)}, ${n.message.slice(0, 500)},
+    VALUES (${randomUUID3()}, ${userId}, ${n.category}, ${n.title.slice(0, 120)}, ${n.message.slice(0, 500)},
             ${n.link ?? null}, ${/* @__PURE__ */ new Date()})`;
 }
 async function listNotifications(user, opts, dbArg) {
@@ -9785,7 +9903,7 @@ async function sendRequest(actor, targetUserId, meta = {}, dbArg) {
     const [inserted] = await db`
       INSERT INTO coach_athlete_connections
         (id, coach_id, athlete_id, requested_by, status, requested_at, created_at, updated_at)
-      VALUES (${randomUUID3()}, ${coachId}, ${athleteId}, ${actor.id}, 'pending', ${ts}, ${ts}, ${ts})
+      VALUES (${randomUUID4()}, ${coachId}, ${athleteId}, ${actor.id}, 'pending', ${ts}, ${ts}, ${ts})
       ON CONFLICT (coach_id, athlete_id) DO NOTHING
       RETURNING *`;
     if (inserted) {
@@ -10551,7 +10669,7 @@ async function setShortlisted(actor, athleteId, on, dbArg) {
 }
 
 // server/athlete-profile.server.ts
-import { randomUUID as randomUUID4 } from "node:crypto";
+import { randomUUID as randomUUID5 } from "node:crypto";
 
 // src/lib/athleteExtrasRules.ts
 var COVERAGE_OPTIONS = ["Full tuition", "Partial tuition", "Stipend / allowance", "Open to any"];
@@ -10748,7 +10866,7 @@ async function saveMyProfile(actor, raw, dbArg) {
     await tx`DELETE FROM athlete_achievements WHERE athlete_id = ${actor.id}`;
     for (const [i, a] of d2.achievements.entries())
       await tx`INSERT INTO athlete_achievements (id, athlete_id, position, title, year)
-               VALUES (${randomUUID4()}, ${actor.id}, ${i}, ${a.title.trim()}, ${a.year.trim()})`;
+               VALUES (${randomUUID5()}, ${actor.id}, ${i}, ${a.title.trim()}, ${a.year.trim()})`;
   });
   return getMyProfile(actor, db);
 }
@@ -10852,7 +10970,7 @@ async function addMyRecord(actor, body, dbArg) {
   if (Number.isNaN(asDate.getTime()) || isoDay2(asDate) !== recordedOn) throw fail({ recordedOn: "Enter a real date." });
   if (recordedOn > isoDay2(new Date(ts.getTime() + DAY_MS2))) throw fail({ recordedOn: "A record can't be dated in the future." });
   const db = dbArg ?? await getDb();
-  const id = randomUUID4();
+  const id = randomUUID5();
   await db`
     INSERT INTO athlete_records (id, athlete_id, label, value, recorded_on, created_at)
     VALUES (${id}, ${actor.id}, ${r.label}, ${r.value}, ${recordedOn}::date, ${ts})`;
@@ -10860,7 +10978,7 @@ async function addMyRecord(actor, body, dbArg) {
 }
 
 // server/practice-sessions.server.ts
-import { randomUUID as randomUUID5 } from "node:crypto";
+import { randomUUID as randomUUID6 } from "node:crypto";
 
 // src/lib/verification.ts
 function statusForNewSession(opts) {
@@ -10971,7 +11089,7 @@ async function createSession2(actor, body, dbArg) {
     SELECT COUNT(*)::int AS n FROM practice_sessions WHERE athlete_id = ${actor.id} AND created_at >= ${new Date(ts.getTime() - DAY_MS3)}`;
   if ((today?.n ?? 0) >= MAX_SESSIONS_PER_DAY)
     throw new ConnectionError(429, "too_many_sessions", "That's a lot of sessions for one day. Try again tomorrow.");
-  const id = randomUUID5();
+  const id = randomUUID6();
   await db`
     INSERT INTO practice_sessions (id, athlete_id, skill, result, consistency, status, simulated, session_date, created_at)
     VALUES (${id}, ${actor.id}, ${b.skill}, ${b.result}, ${b.source === "manual" ? null : b.consistency ?? null}, ${status},
@@ -10982,8 +11100,8 @@ async function createSession2(actor, body, dbArg) {
 }
 async function requestSessionReview(actor, id, dbArg) {
   requireAthlete3(actor);
-  const notFound4 = new ConnectionError(404, "session_not_found", "Session not found.");
-  if (!UUID_RE3.test(id)) throw notFound4;
+  const notFound5 = new ConnectionError(404, "session_not_found", "Session not found.");
+  if (!UUID_RE3.test(id)) throw notFound5;
   const db = dbArg ?? await getDb();
   const [row] = await db`
     UPDATE practice_sessions SET status = 'pending_review'
@@ -10991,11 +11109,11 @@ async function requestSessionReview(actor, id, dbArg) {
     RETURNING id`;
   if (!row) {
     const existing = await viewById2(db, id, actor.id);
-    if (!existing) throw notFound4;
+    if (!existing) throw notFound5;
     throw new ConnectionError(409, "cannot_request_review", existing.status === "Coach-Verified" ? "A coach has already verified this session." : "This session is already waiting for review.");
   }
   const view2 = await viewById2(db, id, actor.id);
-  if (!view2) throw notFound4;
+  if (!view2) throw notFound5;
   return view2;
 }
 function requireVerifiedCoach(actor) {
@@ -11020,8 +11138,8 @@ async function listSessionsForReview(actor, opts = {}, dbArg) {
 }
 async function verifySession(actor, id, meta = {}, dbArg) {
   requireVerifiedCoach(actor);
-  const notFound4 = new ConnectionError(404, "session_not_found", "Session not found.");
-  if (!UUID_RE3.test(id)) throw notFound4;
+  const notFound5 = new ConnectionError(404, "session_not_found", "Session not found.");
+  if (!UUID_RE3.test(id)) throw notFound5;
   const db = dbArg ?? await getDb();
   const ts = /* @__PURE__ */ new Date();
   let athleteId = "";
@@ -11033,7 +11151,7 @@ async function verifySession(actor, id, meta = {}, dbArg) {
       JOIN coach_athlete_connections c ON c.athlete_id = s.athlete_id AND c.coach_id = ${actor.id} AND c.status = 'accepted'
       WHERE s.id = ${id}
       FOR UPDATE OF s`;
-    if (!row) throw notFound4;
+    if (!row) throw notFound5;
     if (row.status === "coach_verified") throw new ConnectionError(409, "already_verified", "This session is already verified.");
     await tx`
       UPDATE practice_sessions SET status = 'coach_verified', verified_by = ${actor.id}, verified_at = ${ts}
@@ -11044,12 +11162,12 @@ async function verifySession(actor, id, meta = {}, dbArg) {
   await audit("practice_session.verified", { userId: actor.id, ...meta, detail: { sessionId: id } }, db);
   await notify(athleteId, { category: "verification", title: "Result verified", message: `${actor.displayName} verified your ${skillName} result. It now counts in rankings.`, link: "/performance" }, db);
   const view2 = await viewById2(db, id);
-  if (!view2) throw notFound4;
+  if (!view2) throw notFound5;
   return view2;
 }
 
 // server/training-plans.server.ts
-import { randomUUID as randomUUID6 } from "node:crypto";
+import { randomUUID as randomUUID7 } from "node:crypto";
 
 // src/lib/trainingPlanRules.ts
 var SPORTS = ["Basketball", "Volleyball", "Track & Field", "Football"];
@@ -11211,7 +11329,7 @@ async function writeChildren(tx, planId, input, ts) {
   await tx`DELETE FROM training_plan_assignments WHERE plan_id = ${planId}`;
   if (input.schedule.length > 0) {
     const rows = input.schedule.map((it, i) => ({
-      id: randomUUID6(),
+      id: randomUUID7(),
       plan_id: planId,
       position: i,
       day_of_week: it.day,
@@ -11222,7 +11340,7 @@ async function writeChildren(tx, planId, input, ts) {
     await tx`INSERT INTO training_plan_schedule_items ${tx(rows)}`;
   }
   if (input.goals.length > 0) {
-    const rows = input.goals.map((g, i) => ({ id: randomUUID6(), plan_id: planId, position: i, description: g }));
+    const rows = input.goals.map((g, i) => ({ id: randomUUID7(), plan_id: planId, position: i, description: g }));
     await tx`INSERT INTO training_plan_goals ${tx(rows)}`;
   }
   if (input.athleteIds.length > 0) {
@@ -11303,7 +11421,7 @@ async function createPlan(actor, raw, meta = {}, dbArg) {
   requireCoach2(actor);
   const { input, status } = parseBody(raw);
   const db = dbArg ?? await getDb();
-  const id = randomUUID6();
+  const id = randomUUID7();
   const ts = /* @__PURE__ */ new Date();
   await db.begin(async (tx) => {
     await assertAthletesConnected(tx, actor.id, input.athleteIds);
@@ -11429,7 +11547,7 @@ async function getAssignedPlan(actor, id, dbArg) {
 }
 
 // server/coach-profile.server.ts
-import { randomUUID as randomUUID7 } from "node:crypto";
+import { randomUUID as randomUUID8 } from "node:crypto";
 
 // src/lib/coachProfileRules.ts
 var ORGANIZATION_TYPES = ["University", "College", "High school", "Club / Academy", "Other"];
@@ -11721,7 +11839,7 @@ async function applyReview(db, input) {
         ON CONFLICT DO NOTHING`;
       await tx`
         INSERT INTO universities (id, name, name_key, location, created_at, updated_at)
-        SELECT ${randomUUID7()}, btrim(v.organization), lower(btrim(v.organization)), left(btrim(cp.organization_location), 200), ${ts}, ${ts}
+        SELECT ${randomUUID8()}, btrim(v.organization), lower(btrim(v.organization)), left(btrim(cp.organization_location), 200), ${ts}, ${ts}
         FROM coach_verifications v JOIN coach_profiles cp ON cp.user_id = v.coach_id
         WHERE v.coach_id = ${input.coachId} AND cp.organization_type IN ('University', 'College')
           AND length(btrim(v.organization)) BETWEEN 2 AND 120
@@ -11759,7 +11877,7 @@ async function reviewVerification(actor, coachId, decision, rawNote, meta = {}, 
 }
 
 // server/scholarships.server.ts
-import { randomUUID as randomUUID8 } from "node:crypto";
+import { randomUUID as randomUUID9 } from "node:crypto";
 var ATHLETE_ROLE3 = "student_athlete";
 var UNIVERSITY_ROLE = "university_representative";
 var ADMIN_ROLE = "admin";
@@ -11832,7 +11950,7 @@ async function createScholarship(user, input, meta = {}, dbArg) {
     if (p2) university = p2.university_name;
   }
   if (!university || university.length < 2) throw new ScholarshipError(400, "validation", "University is required.");
-  const id = randomUUID8();
+  const id = randomUUID9();
   const now6 = /* @__PURE__ */ new Date();
   await db`
     INSERT INTO scholarships (id, posted_by, university, name, sport, coverage, details, eligibility, deadline, created_at, updated_at)
@@ -11860,7 +11978,7 @@ async function applyToScholarship(user, scholarshipId, meta = {}, dbArg) {
     SELECT id, name, posted_by, (is_open AND deadline >= CURRENT_DATE) AS open FROM scholarships WHERE id = ${scholarshipId}`;
   if (!s) throw new ScholarshipError(404, "not_found", "Scholarship not found.");
   if (!s.open) throw new ScholarshipError(409, "closed", "This scholarship is no longer accepting applications.");
-  const id = randomUUID8();
+  const id = randomUUID9();
   const now6 = /* @__PURE__ */ new Date();
   const rows = await db`
     INSERT INTO scholarship_applications (id, scholarship_id, athlete_id, status, created_at, updated_at)
@@ -12037,7 +12155,7 @@ async function globalSearch(user, rawQuery, rawLimit = 5, dbArg) {
 }
 
 // server/admin-account.server.ts
-import { randomUUID as randomUUID9 } from "node:crypto";
+import { randomUUID as randomUUID10 } from "node:crypto";
 var ADMIN_LOCK_ID = 727274002;
 async function provisionAdminAccount(dbArg, env = process.env) {
   const cfgResult = readAdminConfig(env);
@@ -12058,7 +12176,7 @@ async function provisionAdminAccount(dbArg, env = process.env) {
     if (!existing) {
       const [nameTaken] = await tx`SELECT 1 AS x FROM users WHERE lower(username) = ${cfg.username.toLowerCase()}`;
       if (nameTaken) return { state: "disabled", reason: `ADMIN_USERNAME "${cfg.username}" is already used by another account. Choose a different one.` };
-      adminId = randomUUID9();
+      adminId = randomUUID10();
       const hash = await hashPassword(cfg.password);
       await tx`
         INSERT INTO users (id, email, username, password_hash, display_name, password_changed_at, created_at, updated_at)
@@ -12112,6 +12230,9 @@ function ensureAdminAccount() {
   return started;
 }
 
+// server/rep-applications.server.ts
+import { randomUUID as randomUUID11 } from "node:crypto";
+
 // server/admin.server.ts
 function requireAdmin(actor) {
   if (!actor.roles.includes("admin"))
@@ -12127,7 +12248,11 @@ var ACTIVITY_EVENTS = [
   "logout",
   "admin.provisioned",
   "admin.password_rotated",
-  "admin.role_revoked"
+  "admin.role_revoked",
+  "admin.rep_approved",
+  "admin.rep_rejected",
+  "admin.user_suspended",
+  "admin.user_reactivated"
 ];
 function rolesFromDetail(detail) {
   if (!detail) return null;
@@ -12148,7 +12273,7 @@ async function getAdminOverview(actor) {
     WHERE u.deleted_at IS NULL AND u.is_active = TRUE GROUP BY r.name`;
   const count = (name2) => roleCounts.find((r) => r.name === name2)?.n ?? 0;
   const [inactive] = await db`SELECT COUNT(*)::int AS n FROM users WHERE is_active = FALSE AND deleted_at IS NULL`;
-  const [pending] = await db`SELECT COUNT(*)::int AS n FROM coach_verifications WHERE status = 'pending'`;
+  const [pending] = await db`SELECT COUNT(*)::int AS n FROM rep_applications ra JOIN users u ON u.id = ra.user_id AND u.deleted_at IS NULL WHERE ra.status = 'pending'`;
   const [ok] = await db`
     SELECT COUNT(*)::int AS n FROM audit_log WHERE event IN ('login.success', 'admin.login.success') AND created_at > ${since}`;
   const [bad] = await db`
@@ -12203,12 +12328,138 @@ async function getAdminOverview(actor) {
   };
 }
 
+// server/rep-applications.server.ts
+var APPLICATION_STATUSES = ["pending", "approved", "rejected"];
+var REASON_MIN = 3;
+var REASON_MAX = 500;
+var safePhoto = (url) => url && /^https?:\/\//i.test(url) && url.length <= 500 ? url : null;
+var toSummary = (r) => ({
+  id: r.user_id,
+  name: r.display_name,
+  email: r.email,
+  school: r.university_name,
+  designation: r.designation,
+  photo: safePhoto(r.avatar_url),
+  status: r.status,
+  submittedAt: r.submitted_at.toISOString(),
+  documentCount: r.document_count
+});
+var SELECT3 = (db) => db`
+  SELECT ra.user_id, u.display_name, u.email, u.username, up.avatar_url, rp.university_name, rp.designation,
+         ra.status, ra.submitted_at, ra.reviewed_at, ra.rejection_reason, rv.display_name AS reviewer_name,
+         (SELECT COUNT(*)::int FROM rep_application_documents d WHERE d.user_id = ra.user_id) AS document_count
+  FROM rep_applications ra
+  JOIN users u ON u.id = ra.user_id AND u.deleted_at IS NULL
+  JOIN university_representative_profiles rp ON rp.user_id = ra.user_id
+  LEFT JOIN user_profiles up ON up.user_id = ra.user_id
+  LEFT JOIN users rv ON rv.id = ra.reviewed_by`;
+var notFound = () => new ConnectionError(404, "application_not_found", "That application could not be found.");
+async function listApplications(actor, opts = {}) {
+  requireAdmin(actor);
+  const db = await getDb();
+  const limit3 = Math.min(Math.max(Math.trunc(opts.limit ?? PAGE_DEFAULT), 1), PAGE_MAX);
+  const offset = Math.max(Math.trunc(opts.offset ?? 0), 0);
+  const statusF = opts.status ? db`WHERE ra.status = ${opts.status}` : db``;
+  const rows = await db`
+    ${SELECT3(db)} ${statusF}
+    ORDER BY (ra.status = 'pending') DESC,
+             CASE WHEN ra.status = 'pending' THEN ra.submitted_at END ASC,
+             ra.submitted_at DESC, ra.user_id
+    LIMIT ${limit3} OFFSET ${offset}`;
+  const counted = await db`
+    SELECT ra.status, COUNT(*)::int AS n FROM rep_applications ra
+    JOIN users u ON u.id = ra.user_id AND u.deleted_at IS NULL GROUP BY ra.status`;
+  const counts = { pending: 0, approved: 0, rejected: 0 };
+  for (const c2 of counted) counts[c2.status] = c2.n;
+  return { items: rows.map(toSummary), total: opts.status ? counts[opts.status] : counts.pending + counts.approved + counts.rejected, counts };
+}
+async function getApplication(actor, id) {
+  requireAdmin(actor);
+  const db = await getDb();
+  const [row] = await db`${SELECT3(db)} WHERE ra.user_id = ${id}`;
+  if (!row) throw notFound();
+  const [account] = await db`SELECT username FROM users WHERE id = ${id}`;
+  const docs = await db`
+    SELECT id, kind, file_name, mime_type, size_bytes, uploaded_at FROM rep_application_documents
+    WHERE user_id = ${id} ORDER BY uploaded_at, id`;
+  return {
+    ...toSummary(row),
+    username: account?.username ?? "",
+    reviewedAt: row.reviewed_at ? row.reviewed_at.toISOString() : null,
+    reviewedBy: row.reviewer_name,
+    rejectionReason: row.rejection_reason,
+    documents: docs.map((d2) => ({
+      id: d2.id,
+      kind: d2.kind,
+      fileName: d2.file_name,
+      mimeType: d2.mime_type,
+      sizeBytes: d2.size_bytes,
+      uploadedAt: d2.uploaded_at.toISOString()
+    }))
+  };
+}
+async function getApplicationDocument(actor, applicationId, documentId) {
+  requireAdmin(actor);
+  const db = await getDb();
+  const [d2] = await db`
+    SELECT file_name, mime_type, data FROM rep_application_documents WHERE id = ${documentId} AND user_id = ${applicationId}`;
+  if (!d2) throw new ConnectionError(404, "document_not_found", "That document could not be found.");
+  return { fileName: d2.file_name, mimeType: d2.mime_type, data: d2.data };
+}
+async function reviewApplication(actor, id, decision, reasonInput, meta) {
+  requireAdmin(actor);
+  const db = await getDb();
+  let reason = "";
+  if (decision === "reject") {
+    reason = typeof reasonInput === "string" ? reasonInput.trim() : "";
+    if (reason.length < REASON_MIN || reason.length > REASON_MAX)
+      throw new ConnectionError(400, "validation", `Give a reason of ${REASON_MIN} to ${REASON_MAX} characters. The applicant will read it.`, { fieldErrors: { reason: "A rejection reason is required." } });
+  }
+  const ts = /* @__PURE__ */ new Date();
+  await db.begin(async (tx) => {
+    const [row] = await tx`
+      SELECT ra.status, rp.university_name FROM rep_applications ra
+      JOIN university_representative_profiles rp ON rp.user_id = ra.user_id
+      WHERE ra.user_id = ${id} FOR UPDATE OF ra`;
+    if (!row) throw notFound();
+    if (decision === "approve" && row.status === "approved") throw new ConnectionError(409, "already_approved", "This application is already approved.");
+    if (decision === "reject" && row.status !== "pending")
+      throw new ConnectionError(409, "not_pending", row.status === "approved" ? "Approved accounts are managed from User Management." : "This application was already rejected.");
+    if (decision === "approve") {
+      await tx`
+        UPDATE rep_applications SET status = 'approved', reviewed_at = ${ts}, reviewed_by = ${actor.id}, rejection_reason = NULL
+        WHERE user_id = ${id}`;
+      const school = row.university_name.trim();
+      if (school.length >= 2 && school.length <= 120) {
+        await tx`
+          INSERT INTO universities (id, name, name_key, created_at, updated_at)
+          VALUES (${randomUUID11()}, ${school}, ${school.toLowerCase()}, ${ts}, ${ts})
+          ON CONFLICT (name_key) DO NOTHING`;
+      }
+    } else {
+      await tx`
+        UPDATE rep_applications SET status = 'rejected', reviewed_at = ${ts}, reviewed_by = ${actor.id}, rejection_reason = ${reason}
+        WHERE user_id = ${id}`;
+    }
+    await tx`DELETE FROM sessions WHERE user_id = ${id}`;
+    await audit(
+      decision === "approve" ? "admin.rep_approved" : "admin.rep_rejected",
+      { userId: id, ...meta, detail: { by: actor.id, ...reason ? { reason } : {} } },
+      tx
+    );
+  });
+  if (decision === "approve") {
+    await notify(id, { category: "verification", title: "Your account is approved", message: "A Sportal administrator approved your school representative account. Welcome aboard." }, db);
+  }
+  return getApplication(actor, id);
+}
+
 // server/admin-users.server.ts
 var DIRECTORY_ROLES = ["student_athlete", "coach", "university_representative"];
-var USER_STATUSES = ["active", "pending", "suspended"];
-var REASON_MAX = 300;
+var USER_STATUSES = ["active", "pending", "suspended", "rejected"];
+var REASON_MAX2 = 300;
 var SEARCH_MAX = 100;
-var safePhoto = (url) => url && /^https?:\/\//i.test(url) && url.length <= 500 ? url : null;
+var safePhoto2 = (url) => url && /^https?:\/\//i.test(url) && url.length <= 500 ? url : null;
 function primaryRole(roles) {
   if (roles.includes("university_representative")) return "university_representative";
   if (roles.includes("coach") || roles.includes("verified_coach")) return "coach";
@@ -12225,13 +12476,15 @@ function directoryCte(db) {
              COALESCE(NULLIF(btrim(ap.sport), ''), NULLIF(btrim(cp.sport_specialization), '')) AS sport,
              COALESCE(NULLIF(btrim(ap.playing_position), ''), NULLIF(btrim(cp.coaching_position), ''), NULLIF(btrim(rp.designation), '')) AS position,
              CASE WHEN NOT u.is_active THEN 'suspended'
-                  WHEN EXISTS (SELECT 1 FROM coach_verifications v WHERE v.coach_id = u.id AND v.status = 'pending') THEN 'pending'
+                  WHEN ra.status = 'pending' THEN 'pending'
+                  WHEN ra.status = 'rejected' THEN 'rejected'
                   ELSE 'active' END AS status
       FROM users u
       LEFT JOIN user_profiles up ON up.user_id = u.id
       LEFT JOIN athlete_profiles ap ON ap.user_id = u.id
       LEFT JOIN coach_profiles cp ON cp.user_id = u.id
       LEFT JOIN university_representative_profiles rp ON rp.user_id = u.id
+      LEFT JOIN rep_applications ra ON ra.user_id = u.id
       WHERE u.deleted_at IS NULL
         AND NOT EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id AND r.name = 'admin')
     )`;
@@ -12240,7 +12493,7 @@ var toListUser = (r) => ({
   id: r.id,
   name: r.display_name,
   email: r.email,
-  photo: safePhoto(r.avatar_url),
+  photo: safePhoto2(r.avatar_url),
   role: primaryRole(r.roles),
   school: r.school,
   status: r.status,
@@ -12268,26 +12521,27 @@ async function listUsers(actor, opts = {}) {
     SELECT COUNT(*)::int AS total,
            COUNT(*) FILTER (WHERE status = 'active')::int AS active,
            COUNT(*) FILTER (WHERE status = 'pending')::int AS pending,
-           COUNT(*) FILTER (WHERE status = 'suspended')::int AS suspended
+           COUNT(*) FILTER (WHERE status = 'suspended')::int AS suspended,
+           COUNT(*) FILTER (WHERE status = 'rejected')::int AS rejected
     FROM d`;
   return {
     items: rows.map(toListUser),
     total: count?.n ?? 0,
     limit: limit3,
     offset,
-    summary: { total: sum?.total ?? 0, active: sum?.active ?? 0, pending: sum?.pending ?? 0, suspended: sum?.suspended ?? 0 }
+    summary: { total: sum?.total ?? 0, active: sum?.active ?? 0, pending: sum?.pending ?? 0, suspended: sum?.suspended ?? 0, rejected: sum?.rejected ?? 0 }
   };
 }
 async function findRow(db, id) {
   const [row] = await db`WITH ${directoryCte(db)} SELECT * FROM d WHERE id = ${id}`;
   return row;
 }
-var notFound = () => new ConnectionError(404, "user_not_found", "That user could not be found.");
+var notFound2 = () => new ConnectionError(404, "user_not_found", "That user could not be found.");
 async function getUserDetail(actor, id) {
   requireAdmin(actor);
   const db = await getDb();
   const row = await findRow(db, id);
-  if (!row) throw notFound();
+  if (!row) throw notFound2();
   const events = await db`
     SELECT event, detail, created_at FROM audit_log
     WHERE user_id = ${id} AND event IN ('user.created', 'admin.user_suspended', 'admin.user_reactivated')
@@ -12323,7 +12577,7 @@ async function setSuspended(actor, id, suspend, reasonInput, meta) {
   let reason = null;
   if (typeof reasonInput === "string" && reasonInput.trim()) {
     reason = reasonInput.trim();
-    if (reason.length > REASON_MAX) throw new ConnectionError(400, "validation", `The reason can be up to ${REASON_MAX} characters.`);
+    if (reason.length > REASON_MAX2) throw new ConnectionError(400, "validation", `The reason can be up to ${REASON_MAX2} characters.`);
   }
   await db.begin(async (tx) => {
     const [locked] = await tx`
@@ -12331,7 +12585,10 @@ async function setSuspended(actor, id, suspend, reasonInput, meta) {
       WHERE u.id = ${id} AND u.deleted_at IS NULL
         AND NOT EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id AND r.name = 'admin')
       FOR UPDATE`;
-    if (!locked) throw notFound();
+    if (!locked) throw notFound2();
+    const [app] = await tx`SELECT status FROM rep_applications WHERE user_id = ${id}`;
+    if (app && app.status !== "approved")
+      throw new ConnectionError(409, "application_not_approved", "This school representative hasn't been approved yet. Review their application in School Verification.");
     if (suspend && !locked.is_active) throw new ConnectionError(409, "already_suspended", "This account is already suspended.");
     if (!suspend && locked.is_active) throw new ConnectionError(409, "not_suspended", "This account isn't suspended.");
     await tx`UPDATE users SET is_active = ${!suspend}, updated_at = ${/* @__PURE__ */ new Date()} WHERE id = ${id}`;
@@ -12454,7 +12711,7 @@ async function listUniversityAthletes(user, page, dbArg) {
 }
 
 // server/coach-applications.server.ts
-import { randomUUID as randomUUID10 } from "node:crypto";
+import { randomUUID as randomUUID12 } from "node:crypto";
 var APPLICATIONS_PER_DAY = 10;
 var CoachApplicationError = class extends Error {
   httpStatus;
@@ -12465,7 +12722,7 @@ var CoachApplicationError = class extends Error {
     this.code = code;
   }
 };
-var notFound2 = () => new CoachApplicationError(404, "not_found", "Not found.");
+var notFound3 = () => new CoachApplicationError(404, "not_found", "Not found.");
 async function applyToCoach(user, coachId, meta = {}, dbArg) {
   if (!user.roles.includes(ATHLETE_ROLE)) throw new CoachApplicationError(403, "role_not_allowed", "Only student-athletes can show interest in a coach.");
   const db = dbArg ?? await getDb();
@@ -12474,10 +12731,10 @@ async function applyToCoach(user, coachId, meta = {}, dbArg) {
     FROM users u
     LEFT JOIN coach_profiles cp ON cp.user_id = u.id
     WHERE u.id = ${coachId} AND u.is_active = TRUE AND u.deleted_at IS NULL`;
-  if (!coach || !user.id || coachId === user.id || !await isVerifiedCoach(db, coachId)) throw notFound2();
+  if (!coach || !user.id || coachId === user.id || !await isVerifiedCoach(db, coachId)) throw notFound3();
   const [connected] = await db`SELECT 1 FROM coach_athlete_connections WHERE coach_id = ${coachId} AND athlete_id = ${user.id} AND status = 'accepted'`;
   if (connected) throw new CoachApplicationError(409, "already_connected", "You are already connected to this coach.");
-  const id = randomUUID10();
+  const id = randomUUID12();
   const now6 = /* @__PURE__ */ new Date();
   const [today] = await db`
     SELECT count(*)::int AS n FROM athlete_applications WHERE athlete_id = ${user.id} AND created_at > ${new Date(now6.getTime() - 24 * 60 * 60 * 1e3)}`;
@@ -12491,7 +12748,7 @@ async function applyToCoach(user, coachId, meta = {}, dbArg) {
   await notify(coachId, { category: "application", title: "New athlete application", message: `${user.displayName} is interested in your program.`, link: "/coach/applications" }, db);
   return { id, status: "new", createdAt: now6.toISOString(), coach: { id: coach.id, displayName: coach.display_name, organization: coach.organization ?? "" } };
 }
-async function listApplications(user, dbArg) {
+async function listApplications2(user, dbArg) {
   const db = dbArg ?? await getDb();
   if (user.roles.includes(COACH_ROLE)) {
     if (!await isVerifiedCoach(db, user.id)) throw new CoachApplicationError(403, "coach_not_verified", "Your coach account must be verified first.");
@@ -12534,12 +12791,12 @@ async function setApplicationStatus2(user, applicationId, status, dbArg) {
   if (!user.roles.includes(COACH_ROLE)) throw new CoachApplicationError(403, "role_not_allowed", "Only coaches can do this.");
   if (!await isVerifiedCoach(db, user.id)) throw new CoachApplicationError(403, "coach_not_verified", "Your coach account must be verified first.");
   const rows = await db`UPDATE athlete_applications SET status = ${status}, updated_at = ${/* @__PURE__ */ new Date()} WHERE id = ${applicationId} AND coach_id = ${user.id} RETURNING id`;
-  if (rows.length === 0) throw notFound2();
+  if (rows.length === 0) throw notFound3();
   return status;
 }
 
 // server/recruiting.server.ts
-import { randomUUID as randomUUID11 } from "node:crypto";
+import { randomUUID as randomUUID13 } from "node:crypto";
 var DIRECTORY_LIMIT_DEFAULT = 60;
 var DIRECTORY_LIMIT_MAX = 100;
 var INQUIRIES_PER_DAY = 25;
@@ -12568,7 +12825,7 @@ function requireAthlete5(user) {
   if (!user.roles.includes(ATHLETE_ROLE)) throw new RecruitingError(403, "role_not_allowed", "Only student-athletes can do this.");
 }
 var isUuid = (id) => UUID_RE6.test(id);
-var notFound3 = () => new RecruitingError(404, "not_found", "Not found.");
+var notFound4 = () => new RecruitingError(404, "not_found", "Not found.");
 async function loadDirectory(db, opts = {}) {
   const rows = await db`
     SELECT u.id, up.first_name, up.last_name, u.display_name,
@@ -12660,7 +12917,7 @@ async function listAthletes(user, q, dbArg) {
   };
 }
 async function getAthlete(user, athleteId, dbArg) {
-  if (!isUuid(athleteId)) throw notFound3();
+  if (!isUuid(athleteId)) throw notFound4();
   const db = dbArg ?? await getDb();
   const own3 = user.roles.includes(ATHLETE_ROLE) && user.id === athleteId;
   let applicant = false;
@@ -12673,7 +12930,7 @@ async function getAthlete(user, athleteId, dbArg) {
   }
   if (!own3 && !applicant) await requireVerifiedCoach2(db, user);
   const [athlete] = await loadDirectory(db, { onlyId: athleteId, includeHidden: own3 || applicant });
-  if (!athlete) throw notFound3();
+  if (!athlete) throw notFound4();
   if (own3 || applicant) return { athlete, own: own3, applicant, watched: false, note: "", inquiry: null };
   const [w] = await db`SELECT note FROM coach_shortlist WHERE coach_id = ${user.id} AND athlete_id = ${athleteId}`;
   const [inq] = await db`
@@ -12698,7 +12955,7 @@ async function setNote(user, athleteId, rawNote, dbArg) {
   await requireVerifiedCoach2(db, user);
   const note = rawNote.trim();
   if (note.length > NOTE_MAX2) throw new RecruitingError(400, "validation", `Notes are limited to ${NOTE_MAX2} characters.`);
-  if (!isUuid(athleteId)) throw notFound3();
+  if (!isUuid(athleteId)) throw notFound4();
   const rows = await db`UPDATE coach_shortlist SET note = ${note} WHERE coach_id = ${user.id} AND athlete_id = ${athleteId} RETURNING athlete_id`;
   if (rows.length === 0) throw new RecruitingError(409, "not_saved", "Save the athlete to your watchlist before adding a note.");
   return { note };
@@ -12740,16 +12997,16 @@ async function sendInquiry(user, input, meta = {}, dbArg) {
   const message = input.message.trim();
   if (organization.length < 2 || organization.length > ORGANIZATION_MAX) throw new RecruitingError(400, "validation", "Name your organization or program (2-120 characters).");
   if (!message || message.length > INQUIRY_MESSAGE_MAX) throw new RecruitingError(400, "validation", `Write a message of up to ${INQUIRY_MESSAGE_MAX} characters.`);
-  if (!isUuid(input.athleteId)) throw notFound3();
+  if (!isUuid(input.athleteId)) throw notFound4();
   const [athlete] = await db`
     SELECT u.id, COALESCE(ap.showcase_visible, TRUE) AS visible
     FROM users u
     JOIN user_roles ur ON ur.user_id = u.id JOIN roles r ON r.id = ur.role_id
     LEFT JOIN athlete_profiles ap ON ap.user_id = u.id
     WHERE u.id = ${input.athleteId} AND r.name = ${ATHLETE_ROLE} AND u.is_active = TRUE AND u.deleted_at IS NULL`;
-  if (!athlete) throw notFound3();
+  if (!athlete) throw notFound4();
   if (!athlete.visible) throw new RecruitingError(409, "showcase_hidden", "This athlete has hidden their showcase, so new inquiries are closed.");
-  const id = randomUUID11();
+  const id = randomUUID13();
   const now6 = /* @__PURE__ */ new Date();
   await db.begin(async (tx) => {
     await tx`SELECT pg_advisory_xact_lock(hashtext(${`inq:${user.id}:${input.athleteId}`}))`;
@@ -12769,7 +13026,7 @@ async function sendInquiry(user, input, meta = {}, dbArg) {
 }
 async function respondToInquiry(user, inquiryId, decision, meta = {}, dbArg) {
   requireAthlete5(user);
-  if (!isUuid(inquiryId)) throw notFound3();
+  if (!isUuid(inquiryId)) throw notFound4();
   const db = dbArg ?? await getDb();
   const now6 = /* @__PURE__ */ new Date();
   const updated = await db`
@@ -12778,7 +13035,7 @@ async function respondToInquiry(user, inquiryId, decision, meta = {}, dbArg) {
   const hit = updated[0];
   if (!hit) {
     const [exists] = await db`SELECT 1 FROM recruitment_inquiries WHERE id = ${inquiryId} AND athlete_id = ${user.id}`;
-    if (!exists) throw notFound3();
+    if (!exists) throw notFound4();
     throw new RecruitingError(409, "already_answered", "This inquiry has already been answered.");
   }
   await audit(`recruiting.inquiry_${decision}`, { userId: user.id, ...meta, detail: { inquiryId } }, db);
@@ -12791,11 +13048,11 @@ async function respondToInquiry(user, inquiryId, decision, meta = {}, dbArg) {
   return toInquiry(row);
 }
 async function loadParticipantInquiry(db, user, inquiryId) {
-  if (!isUuid(inquiryId)) throw notFound3();
+  if (!isUuid(inquiryId)) throw notFound4();
   const [r] = await db`
     SELECT coach_id, athlete_id, status FROM recruitment_inquiries
     WHERE id = ${inquiryId} AND (coach_id = ${user.id} OR athlete_id = ${user.id})`;
-  if (!r) throw notFound3();
+  if (!r) throw notFound4();
   return r;
 }
 async function listMessages(user, inquiryId, dbArg) {
@@ -12822,7 +13079,7 @@ async function sendMessage(user, inquiryId, rawBody, dbArg) {
   if (body.length > MESSAGE_MAX) throw new RecruitingError(400, "validation", `Messages are limited to ${MESSAGE_MAX} characters.`);
   if (inq.status !== "accepted" && inq.status !== "replied")
     throw new RecruitingError(409, "not_accepted", "Messaging unlocks only after the athlete accepts the inquiry.");
-  const id = randomUUID11();
+  const id = randomUUID13();
   const now6 = /* @__PURE__ */ new Date();
   await db.begin(async (tx) => {
     await tx`
@@ -12923,6 +13180,18 @@ async function handleLogin(req) {
       }
       if (result.code === "inactive")
         return send(req, 200, { ok: false, code: "inactive", message: "This account has been suspended. Contact your administrator." });
+      if (result.code === "pending_approval")
+        return send(req, 200, {
+          ok: false,
+          code: "pending_approval",
+          message: "Your application is still being reviewed. You'll be able to sign in once a Sportal administrator approves your school representative account."
+        });
+      if (result.code === "application_rejected")
+        return send(req, 200, {
+          ok: false,
+          code: "application_rejected",
+          message: result.reason ? `Your school representative application wasn't approved. Reason: ${result.reason}` : "Your school representative application wasn't approved."
+        });
       return send(req, 200, { ok: false, code: "invalid_credentials", message: "Incorrect username/email or password." });
     }
     return send(req, 200, { ok: true, user: result.user, token: result.token, expiresAt: result.expiresAt.toISOString() });
@@ -13017,8 +13286,54 @@ async function handleAdminUsers(req, path) {
     throw err;
   }
 }
+function sendFile(req, file) {
+  const headers = new Headers({
+    "content-type": file.mimeType,
+    "content-length": String(file.data.length),
+    "cache-control": "private, no-store",
+    "x-content-type-options": "nosniff",
+    "content-security-policy": "default-src 'none'; sandbox",
+    "content-disposition": `inline; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+    vary: "Origin"
+  });
+  const origin = req.headers.get("origin");
+  if (origin && ALLOWED_ORIGINS.has(origin)) {
+    headers.set("access-control-allow-origin", origin);
+    headers.set("access-control-allow-headers", "authorization, content-type");
+  }
+  return new Response(new Uint8Array(file.data), { status: 200, headers });
+}
+async function handleSchoolVerification(req, path) {
+  const isList = req.method === "GET" && path === "/api/admin/school-verifications";
+  const m = /^\/api\/admin\/school-verifications\/([^/]+)(?:\/(approve|reject)|\/documents\/([^/]+))?$/.exec(path);
+  const isOne = req.method === "GET" && !!m && !m[2] && !m[3];
+  const isDoc = req.method === "GET" && !!m && !!m[3];
+  const isDecision = req.method === "POST" && !!m && !!m[2];
+  if (!isList && !isOne && !isDoc && !isDecision) return null;
+  const user = await getUserBySessionToken(bearer(req));
+  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
+  try {
+    if (isList) {
+      const status = new URL(req.url).searchParams.get("status");
+      if (status && !APPLICATION_STATUSES.includes(status))
+        return send(req, 400, { ok: false, code: "validation", message: "status must be pending, approved or rejected." });
+      const result = await listApplications(user, { ...status ? { status } : {}, ...pagingFrom(req) });
+      return send(req, 200, { ok: true, ...result });
+    }
+    const id = decodeURIComponent(m[1]);
+    if (isOne) return send(req, 200, { ok: true, application: await getApplication(user, id) });
+    if (isDoc) return sendFile(req, await getApplicationDocument(user, id, decodeURIComponent(m[3])));
+    const body = await readJson(req);
+    const reason = body && typeof body === "object" ? body["reason"] : void 0;
+    const application = await reviewApplication(user, id, m[2] === "approve" ? "approve" : "reject", reason, requestMeta(req));
+    return send(req, 200, { ok: true, application });
+  } catch (err) {
+    if (err instanceof ConnectionError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message, ...err.extra });
+    throw err;
+  }
+}
 async function handleRegister(req) {
-  const parsed = parseRegistration(await readJson(req));
+  const parsed = parseRegistration(await readJson(req, REGISTER_WITH_DOCS_MAX_BODY));
   if (!parsed.ok) return send(req, 200, { ok: false, code: "validation", message: parsed.message, fieldErrors: parsed.fieldErrors });
   const input = parsed.data;
   const meta = requestMeta(req);
@@ -13047,6 +13362,13 @@ async function handleRegister(req) {
     console.error("[api] sign up failed unexpectedly:", err instanceof Error ? err.message : "unknown error");
     return send(req, 200, { ok: false, code: "server_error", message: "Something went wrong. Please try again." });
   }
+  if (input.accountType === "university_representative")
+    return send(req, 200, {
+      ok: true,
+      pendingApproval: true,
+      role: input.accountType,
+      message: "Application received. A Sportal administrator will review your documents, and you'll be able to sign in once you're approved."
+    });
   try {
     const result = await authenticate({ identifier: username, password: input.password, remember: false }, meta);
     if (!result.ok) return send(req, 200, { ok: false, code: "server_error", message: "Your account was created. Sign in to continue." });
@@ -13303,7 +13625,7 @@ async function handleCoachApplications(req, path) {
   const user = await getUserBySessionToken(bearer(req));
   if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
   try {
-    if (isRoot && req.method === "GET") return send(req, 200, { ok: true, ...await listApplications(user) });
+    if (isRoot && req.method === "GET") return send(req, 200, { ok: true, ...await listApplications2(user) });
     if (isRoot) {
       const parsed2 = external_exports.object({ coachId: external_exports.string() }).safeParse(await readJson(req));
       if (!parsed2.success) return send(req, 400, { ok: false, code: "validation", message: "Send { coachId }." });
@@ -13531,6 +13853,8 @@ async function handle(req) {
     if (req.method === "GET" && path === "/api/admin/overview") return await handleAdminOverview(req);
     const adminUsers = await handleAdminUsers(req, path);
     if (adminUsers) return adminUsers;
+    const schoolVerification = await handleSchoolVerification(req, path);
+    if (schoolVerification) return schoolVerification;
     if (req.method === "POST" && path === "/api/auth/login") return await handleLogin(req);
     if (req.method === "POST" && path === "/api/auth/register") return await handleRegister(req);
     if (req.method === "GET" && path === "/api/auth/me") {

@@ -1,25 +1,28 @@
-Sportal administrator: login, dashboard, user management
+Sportal administrator: login, dashboard, user management, school verification
 
-NEW FILES
-  server/admin-config.server.ts
-  server/admin-account.server.ts
-  server/admin.server.ts
-  src/pages/AdminLogin.tsx
-  src/pages/AdminDashboard.tsx
-  tests-api/part8-admin-auth.mjs
-  server/admin-users.server.ts      (User Management backend)
-  src/pages/AdminUsers.tsx          (User Management page)
-  tests-api/part9-admin-users.mjs
+THIS ROUND (School Verification: school/university representative applications)
+NEW
+  server/rep-documents.server.ts       document validation (PDF/PNG/JPEG by real contents, size limits)
+  server/rep-applications.server.ts    admin list / review / documents / approve / reject
+  src/components/admin-ui.tsx          shared admin UI pieces
+  tests-api/_rep.mjs                   test helper: apply + approve a representative
+  tests-api/part10-school-verification.mjs
+CHANGED
+  server/db.server.ts                  migration 12 (rep_applications, rep_application_documents)
+  server/auth.server.ts                unapproved representatives cannot sign in or keep a session
+  server/registration.ts, server/handler.ts   representatives apply with documents; admin routes
+  server/admin.server.ts, server/admin-users.server.ts   pending/rejected now come from applications
+  src/pages/AdminVerifications.tsx     REPLACED: School Verification (coach verification removed)
+  src/pages/AdminDashboard.tsx, src/pages/AdminUsers.tsx, src/layouts/AdminLayout.tsx
+  src/pages/Signup.tsx                 document upload + "Application submitted" screen
+  src/auth/types.ts, src/auth/authClient.ts, src/lib/adminApi.ts
+  scripts/create-user.ts, README.md, api/index.mjs (generated: npm run build:api)
+  tests-api: part1-basics, part1-extras, part3, part5, part7, part8, part9 updated for the new rules
 
-MODIFIED FILES (replace your copy)
-  server/auth.server.ts   server/handler.ts   scripts/create-user.ts
-  src/App.tsx   src/auth/AuthContext.tsx   src/auth/authClient.ts
-  src/lib/roles.ts   src/lib/adminApi.ts   src/layouts/AdminLayout.tsx
-  .env.example   README.md
-  tests-api/part6-standings-applications-admin.mjs   tests-api/part7-my-university.mjs
-  api/index.mjs  (generated; or run: npm run build:api)
+EARLIER ROUNDS (already delivered): admin login/provisioning, dashboard, top nav, user management
+  server/admin-config.server.ts  server/admin-account.server.ts  server/admin-users.server.ts
+  src/pages/AdminLogin.tsx  src/pages/AdminUsers.tsx
 
 AFTER COPYING
-  1. Put ADMIN_EMAIL and ADMIN_PASSWORD (12+ chars, letters+numbers) in .env / Vercel env vars.
-  2. npm run api  and  npm run dev
-  3. Sign in at /admin/login
+  1. Restart the API once: migration 12 runs automatically and keeps every existing representative approved.
+  2. ADMIN_EMAIL / ADMIN_PASSWORD must be set (see .env.example). Sign in at /admin/login.

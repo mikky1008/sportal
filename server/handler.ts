@@ -8,6 +8,10 @@
 //                                                                 -> { ok, items, total, summary }    User Management directory
 //   GET  /api/admin/users/:id administrator                       -> { ok, user }
 //   POST /api/admin/users/:id/suspend|reactivate administrator { reason? } -> { ok, user }
+//   GET  /api/admin/school-verifications administrator ?status=pending|approved|rejected&limit&offset -> { ok, items, total, counts }   School Verification (representative applications)
+//   GET  /api/admin/school-verifications/:id administrator       -> { ok, application }
+//   GET  /api/admin/school-verifications/:id/documents/:docId administrator -> the file itself (PDF/PNG/JPEG)
+//   POST /api/admin/school-verifications/:id/approve|reject administrator { reason }  -> { ok, application }   (reject needs a reason the applicant will read)
 //   GET  /api/admin/overview  administrator                       -> { ok, overview }                 Admin Dashboard numbers
 //   GET  /api/auth/me         Authorization: Bearer <token>       -> { user }
 //   POST /api/auth/logout     Authorization: Bearer <token>       -> { ok }
@@ -198,6 +202,8 @@ import {
 } from "./notifications.server.ts";
 import { globalSearch } from "./search.server.ts";
 import { ensureAdminAccount } from "./admin-account.server.ts";
+import { REGISTER_WITH_DOCS_MAX_BODY } from "./rep-documents.server.ts";
+import { APPLICATION_STATUSES, getApplication, getApplicationDocument, listApplications as listRepApplications, reviewApplication as reviewRepApplication, type ApplicationStatus } from "./rep-applications.server.ts";
 import { getAdminOverview } from "./admin.server.ts";
 import { DIRECTORY_ROLES, USER_STATUSES, getUserDetail, listUsers, reactivateUser, suspendUser, type DirectoryRole, type UserStatus } from "./admin-users.server.ts";
 import {
@@ -341,6 +347,19 @@ async function handleLogin(req: Request): Promise<Response> {
       }
       if (result.code === "inactive")
         return send(req, 200, { ok: false, code: "inactive", message: "This account has been suspended. Contact your administrator." });
+      // Shown only after the password was right, so it tells nobody anything they could not already do.
+      if (result.code === "pending_approval")
+        return send(req, 200, {
+          ok: false, code: "pending_approval",
+          message: "Your application is still being reviewed. You'll be able to sign in once a Sportal administrator approves your school representative account.",
+        });
+      if (result.code === "application_rejected")
+        return send(req, 200, {
+          ok: false, code: "application_rejected",
+          message: result.reason
+            ? `Your school representative application wasn't approved. Reason: ${result.reason}`
+            : "Your school representative application wasn't approved.",
+        });
       return send(req, 200, { ok: false, code: "invalid_credentials", message: "Incorrect username/email or password." });
     }
     return send(req, 200, { ok: true, user: result.user, token: result.token, expiresAt: result.expiresAt.toISOString() });
@@ -442,8 +461,60 @@ async function handleAdminUsers(req: Request, path: string): Promise<Response | 
   }
 }
 
+/** A file download. Same CORS rules as send(); never cached, never sniffed, never run as a page. */
+function sendFile(req: Request, file: { fileName: string; mimeType: string; data: Buffer }): Response {
+  const headers = new Headers({
+    "content-type": file.mimeType,
+    "content-length": String(file.data.length),
+    "cache-control": "private, no-store",
+    "x-content-type-options": "nosniff",
+    "content-security-policy": "default-src 'none'; sandbox",
+    "content-disposition": `inline; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+    vary: "Origin",
+  });
+  const origin = req.headers.get("origin");
+  if (origin && ALLOWED_ORIGINS.has(origin)) {
+    headers.set("access-control-allow-origin", origin);
+    headers.set("access-control-allow-headers", "authorization, content-type");
+  }
+  return new Response(new Uint8Array(file.data), { status: 200, headers });
+}
+
+/** School Verification: the administrator reviews school representative applications. Returns null for any other path. */
+async function handleSchoolVerification(req: Request, path: string): Promise<Response | null> {
+  const isList = req.method === "GET" && path === "/api/admin/school-verifications";
+  const m = /^\/api\/admin\/school-verifications\/([^/]+)(?:\/(approve|reject)|\/documents\/([^/]+))?$/.exec(path);
+  const isOne = req.method === "GET" && !!m && !m[2] && !m[3];
+  const isDoc = req.method === "GET" && !!m && !!m[3];
+  const isDecision = req.method === "POST" && !!m && !!m[2];
+  if (!isList && !isOne && !isDoc && !isDecision) return null;
+
+  const user = await getUserBySessionToken(bearer(req));
+  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
+  try {
+    if (isList) {
+      const status = new URL(req.url).searchParams.get("status");
+      if (status && !(APPLICATION_STATUSES as readonly string[]).includes(status))
+        return send(req, 400, { ok: false, code: "validation", message: "status must be pending, approved or rejected." });
+      const result = await listRepApplications(user, { ...(status ? { status: status as ApplicationStatus } : {}), ...pagingFrom(req) });
+      return send(req, 200, { ok: true, ...result });
+    }
+    const id = decodeURIComponent(m![1]!);
+    if (isOne) return send(req, 200, { ok: true, application: await getApplication(user, id) });
+    if (isDoc) return sendFile(req, await getApplicationDocument(user, id, decodeURIComponent(m![3]!)));
+    const body = (await readJson(req)) as Record<string, unknown> | null;
+    const reason = body && typeof body === "object" ? body["reason"] : undefined;
+    const application = await reviewRepApplication(user, id, m![2] === "approve" ? "approve" : "reject", reason, requestMeta(req));
+    return send(req, 200, { ok: true, application });
+  } catch (err) {
+    if (err instanceof ConnectionError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message, ...err.extra });
+    throw err;
+  }
+}
+
 async function handleRegister(req: Request): Promise<Response> {
-  const parsed = parseRegistration(await readJson(req));
+  // Larger limit only so a representative's documents fit; everything else is still validated by the schema.
+  const parsed = parseRegistration(await readJson(req, REGISTER_WITH_DOCS_MAX_BODY));
   if (!parsed.ok) return send(req, 200, { ok: false, code: "validation", message: parsed.message, fieldErrors: parsed.fieldErrors });
   const input = parsed.data;
   const meta = requestMeta(req);
@@ -473,6 +544,12 @@ async function handleRegister(req: Request): Promise<Response> {
     console.error("[api] sign up failed unexpectedly:", err instanceof Error ? err.message : "unknown error");
     return send(req, 200, { ok: false, code: "server_error", message: "Something went wrong. Please try again." });
   }
+  // A school representative has applied, not signed up: no session until an administrator approves.
+  if (input.accountType === "university_representative")
+    return send(req, 200, {
+      ok: true, pendingApproval: true, role: input.accountType,
+      message: "Application received. A Sportal administrator will review your documents, and you'll be able to sign in once you're approved.",
+    });
   try {
     const result = await authenticate({ identifier: username, password: input.password, remember: false }, meta);
     if (!result.ok) return send(req, 200, { ok: false, code: "server_error", message: "Your account was created. Sign in to continue." });
@@ -1025,6 +1102,8 @@ export async function handle(req: Request): Promise<Response> {
     if (req.method === "GET" && path === "/api/admin/overview") return await handleAdminOverview(req);
     const adminUsers = await handleAdminUsers(req, path);
     if (adminUsers) return adminUsers;
+    const schoolVerification = await handleSchoolVerification(req, path);
+    if (schoolVerification) return schoolVerification;
     if (req.method === "POST" && path === "/api/auth/login") return await handleLogin(req);
     if (req.method === "POST" && path === "/api/auth/register") return await handleRegister(req);
     if (req.method === "GET" && path === "/api/auth/me") {

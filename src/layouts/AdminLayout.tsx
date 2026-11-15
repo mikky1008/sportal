@@ -83,8 +83,8 @@ function NotificationsMenu() {
             <Link to={ADMIN_VERIFICATIONS} direction="root" role="menuitem" className="flex items-start gap-3 rounded-xl px-3 py-2.5 text-sm hover:bg-muted">
               <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full bg-sky-50 text-sky-600"><ClipboardCheck className="h-4 w-4" /></span>
               <span>
-                <span className="block font-semibold">{pending} approval{pending === 1 ? "" : "s"} waiting</span>
-                <span className="block text-xs text-muted-foreground">Schools are waiting for you to review their coaches.</span>
+                <span className="block font-semibold">{pending} application{pending === 1 ? "" : "s"} waiting</span>
+                <span className="block text-xs text-muted-foreground">School representatives are waiting for you to review their application.</span>
               </span>
             </Link>
           ) : (

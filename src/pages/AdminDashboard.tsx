@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { toast } from "sonner";
 import {
-  ArrowRight, Check, CircleAlert, ClipboardCheck, KeyRound, LogIn, LogOut, Medal, School, ShieldAlert, ShieldCheck,
-  TrendingUp, UserPlus, Users, X, type LucideIcon,
+  ArrowRight, Check, CircleAlert, ClipboardCheck, KeyRound, LogIn, LogOut, Medal, School, ShieldAlert, ShieldCheck, ShieldOff,
+  TrendingUp, UserCheck, UserPlus, Users, X, type LucideIcon,
 } from "lucide-react";
 import { AdminLayout, ADMIN_VERIFICATIONS } from "@/layouts/AdminLayout";
 import { useAuth } from "@/auth/AuthContext";
@@ -12,8 +12,8 @@ import { PersonAvatar } from "@/components/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
-  approveCoach, fetchAdminOverview, fetchVerifications, rejectCoach,
-  type AdminOverview, type VerificationRequest,
+  approveApplication, fetchAdminOverview, fetchApplications, rejectApplication,
+  type AdminOverview, type ApplicationSummary,
 } from "@/lib/adminApi";
 import { cn } from "@/lib/utils";
 
@@ -51,8 +51,14 @@ function describe(a: AdminOverview["recentActivity"][number]): ActivityView {
   switch (a.event) {
     case "user.created": {
       const role = a.roles?.map((r) => ROLE_LABEL[r]).find(Boolean);
-      return { icon: UserPlus, tone: "sky", text: `New ${role ?? "account"} registered` };
+      return a.roles?.includes("university_representative")
+        ? { icon: School, tone: "amber", text: "New school representative application" }
+        : { icon: UserPlus, tone: "sky", text: `New ${role ?? "account"} registered` };
     }
+    case "admin.rep_approved": return { icon: ShieldCheck, tone: "sky", text: "School representative approved" };
+    case "admin.rep_rejected": return { icon: ShieldAlert, tone: "amber", text: "School representative application rejected" };
+    case "admin.user_suspended": return { icon: ShieldOff, tone: "amber", text: "An account was suspended" };
+    case "admin.user_reactivated": return { icon: UserCheck, tone: "sky", text: "An account was reactivated" };
     case "login.success": return { icon: LogIn, tone: "navy", text: `Sign-in${who}` };
     case "login.failed": return { icon: ShieldAlert, tone: "amber", text: `Failed sign-in attempt${who}` };
     case "logout": return { icon: LogOut, tone: "navy", text: `Signed out${who}` };
@@ -243,10 +249,10 @@ function RecentActivity({ items }: { items: AdminOverview["recentActivity"] | nu
 const COLS = "md:grid-cols-[minmax(0,1.6fr)_minmax(0,1.5fr)_7.5rem_12.5rem]";
 
 function ApprovalsTable({ rows, total, onApprove, onReject, busy }: {
-  rows: VerificationRequest[] | null;
+  rows: ApplicationSummary[] | null;
   total: number;
-  onApprove: (r: VerificationRequest) => void;
-  onReject: (r: VerificationRequest) => void;
+  onApprove: (r: ApplicationSummary) => void;
+  onReject: (r: ApplicationSummary) => void;
   busy: string | null;
 }) {
   return (
@@ -254,7 +260,7 @@ function ApprovalsTable({ rows, total, onApprove, onReject, busy }: {
       <div className="flex flex-wrap items-center justify-between gap-3 p-5 pb-4 sm:p-6 sm:pb-4">
         <div>
           <h3 id="appr-title" className="font-display text-xl font-bold text-[#0a1f44]">Pending School Representative Approvals</h3>
-          <p className="text-sm text-slate-500">School staff asking to be verified before they can recruit on Sportal</p>
+          <p className="text-sm text-slate-500">School and university staff waiting for approval before they can use their Sportal account</p>
         </div>
         {total > 0 && <span className="rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">{total} pending</span>}
       </div>
@@ -278,30 +284,29 @@ function ApprovalsTable({ rows, total, onApprove, onReject, busy }: {
         ) : (
           <ul className="divide-y divide-slate-100">
             {rows.map((r) => {
-              const working = busy === r.coachId;
+              const working = busy === r.id;
               return (
-                <li key={r.coachId} role="row" className={cn("grid items-center gap-x-4 gap-y-3 px-5 py-4 sm:px-6", COLS)}>
+                <li key={r.id} role="row" className={cn("grid items-center gap-x-4 gap-y-3 px-5 py-4 sm:px-6", COLS)}>
                   <div role="cell" className="flex min-w-0 items-center gap-3">
-                    <PersonAvatar name={r.displayName} size="md" />
+                    <PersonAvatar name={r.name} size="md" />
                     <div className="min-w-0">
-                      <p className="truncate font-semibold text-[#0a1f44]">{r.displayName}</p>
-                      <p className="truncate text-xs text-slate-500">{r.position || "Coach"} · {r.email}</p>
+                      <p className="truncate font-semibold text-[#0a1f44]">{r.name}</p>
+                      <p className="truncate text-xs text-slate-500">{r.designation} · {r.email}</p>
                     </div>
                   </div>
                   <div role="cell" className="flex min-w-0 items-center gap-2 text-sm">
                     <School className="h-4 w-4 shrink-0 text-sky-500" />
                     <span className="min-w-0">
-                      <span className="block truncate font-medium text-slate-800">{r.organization}</span>
-                      {r.organizationType && <span className="block truncate text-xs text-slate-500">{r.organizationType}</span>}
+                      <span className="block truncate font-medium text-slate-800">{r.school}</span>
                     </span>
                   </div>
                   <time role="cell" dateTime={r.submittedAt} className="text-sm text-slate-600">{fmtDate(r.submittedAt)}</time>
                   <div role="cell" className="flex gap-2 md:justify-end">
-                    <button type="button" disabled={working} onClick={() => onApprove(r)} aria-label={`Approve ${r.displayName}`}
+                    <button type="button" disabled={working} onClick={() => onApprove(r)} aria-label={`Approve ${r.name}`}
                       className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-full bg-[#0a1f44] px-4 text-sm font-semibold text-white transition hover:bg-[#0f3160] disabled:opacity-50 md:flex-none">
                       <Check className="h-4 w-4" /> Approve
                     </button>
-                    <button type="button" disabled={working} onClick={() => onReject(r)} aria-label={`Reject ${r.displayName}`}
+                    <button type="button" disabled={working} onClick={() => onReject(r)} aria-label={`Reject ${r.name}`}
                       className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-full border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-red-300 hover:bg-red-50 hover:text-red-700 disabled:opacity-50 md:flex-none">
                       <X className="h-4 w-4" /> Reject
                     </button>
@@ -325,7 +330,7 @@ function ApprovalsTable({ rows, total, onApprove, onReject, busy }: {
 }
 
 function RejectDialog({ target, busy, onCancel, onConfirm }: {
-  target: VerificationRequest | null; busy: boolean; onCancel: () => void; onConfirm: (note: string) => void;
+  target: ApplicationSummary | null; busy: boolean; onCancel: () => void; onConfirm: (note: string) => void;
 }) {
   const [note, setNote] = useState("");
   useEffect(() => setNote(""), [target]);
@@ -334,15 +339,15 @@ function RejectDialog({ target, busy, onCancel, onConfirm }: {
     <Dialog open={!!target} onOpenChange={(o) => !o && !busy && onCancel()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Reject {target?.displayName}?</DialogTitle>
+          <DialogTitle>Reject {target?.name}'s application?</DialogTitle>
           <DialogDescription>
-            Tell them why. They'll see this reason and can correct their details and submit again.
+            Tell them why. They'll read this reason when they try to sign in, so say what was wrong.
           </DialogDescription>
         </DialogHeader>
         <label htmlFor="reject-reason" className="sr-only">Reason</label>
         <textarea
           id="reject-reason" value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} rows={4} autoFocus
-          placeholder="e.g. The official school email doesn't match the school domain."
+          placeholder="e.g. The authorization letter isn't signed, or doesn't name this school."
           className="w-full resize-none rounded-xl border border-slate-300 p-3 text-sm outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-400/20"
         />
         <p className="text-right text-xs text-slate-400">{note.length}/500</p>
@@ -363,26 +368,26 @@ function RejectDialog({ target, busy, onCancel, onConfirm }: {
 export default function AdminDashboard() {
   const { user } = useAuth();
   const [overview, setOverview] = useState<AdminOverview | null>(null);
-  const [rows, setRows] = useState<VerificationRequest[] | null>(null);
+  const [rows, setRows] = useState<ApplicationSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [rejecting, setRejecting] = useState<VerificationRequest | null>(null);
+  const [rejecting, setRejecting] = useState<ApplicationSummary | null>(null);
 
   const load = useCallback(async (fresh = false) => {
-    const [o, v] = await Promise.all([fetchAdminOverview(fresh), fetchVerifications("pending")]);
+    const [o, v] = await Promise.all([fetchAdminOverview(fresh), fetchApplications("pending", 100, 0)]);
     if (o.ok) { setOverview(o.data.overview); setError(null); } else setError(o.message);
     if (v.ok) setRows(v.data.items);
   }, []);
 
   useEffect(() => { void load(); }, [load]);
 
-  const act = useCallback(async (r: VerificationRequest, run: () => ReturnType<typeof approveCoach>, done: string) => {
-    setBusy(r.coachId);
+  const act = useCallback(async (r: ApplicationSummary, run: () => ReturnType<typeof approveApplication>, done: string) => {
+    setBusy(r.id);
     const res = await run();
     setBusy(null);
     if (!res.ok) { toast.error(res.message); return false; }
     toast.success(done);
-    setRows((cur) => cur?.filter((x) => x.coachId !== r.coachId) ?? cur);
+    setRows((cur) => cur?.filter((x) => x.id !== r.id) ?? cur);
     void load(true); // refresh the card counts, bell badge and activity
     return true;
   }, [load]);
@@ -419,7 +424,7 @@ export default function AdminDashboard() {
           rows={shown}
           total={pendingTotal}
           busy={busy}
-          onApprove={(r) => void act(r, () => approveCoach(r.coachId), `${r.displayName} approved`)}
+          onApprove={(r) => void act(r, () => approveApplication(r.id), `${r.name} approved`)}
           onReject={setRejecting}
         />
       </div>
@@ -429,7 +434,7 @@ export default function AdminDashboard() {
         busy={busy !== null}
         onCancel={() => setRejecting(null)}
         onConfirm={async (note) => {
-          if (rejecting && (await act(rejecting, () => rejectCoach(rejecting.coachId, note), `${rejecting.displayName} rejected`))) setRejecting(null);
+          if (rejecting && (await act(rejecting, () => rejectApplication(rejecting.id, note), `${rejecting.name} rejected`))) setRejecting(null);
         }}
       />
     </AdminLayout>

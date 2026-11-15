@@ -651,6 +651,53 @@ export const MIGRATIONS: Migration[] = [
       -- backfill end
     `,
   },
+  {
+    version: 12,
+    name: "school_representative_applications",
+    sql: `
+      -- A school/university representative is no longer let straight in: signing up creates an
+      -- application, and the account only works once an administrator approves it. A user who has a
+      -- row here that is not 'approved' cannot sign in and has no usable session. Users with no row
+      -- (every other role, and accounts made by the operator's command-line tool) are unaffected.
+      CREATE TABLE rep_applications (
+        user_id          TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        status           TEXT NOT NULL DEFAULT 'pending',
+        submitted_at     TIMESTAMPTZ NOT NULL,
+        reviewed_at      TIMESTAMPTZ,
+        reviewed_by      TEXT REFERENCES users(id) ON DELETE SET NULL,
+        rejection_reason TEXT,
+        CONSTRAINT rep_applications_status_check CHECK (status IN ('pending', 'approved', 'rejected')),
+        CONSTRAINT rep_applications_reason_check CHECK (rejection_reason IS NULL OR length(rejection_reason) <= 500)
+      );
+      CREATE INDEX idx_rep_applications_status ON rep_applications (status, submitted_at);
+
+      -- The documents the applicant uploaded. Stored in the database (PDF, PNG or JPEG only, 2 MB
+      -- each) and only ever served to the administrator.
+      CREATE TABLE rep_application_documents (
+        id          TEXT PRIMARY KEY,
+        user_id     TEXT NOT NULL REFERENCES rep_applications(user_id) ON DELETE CASCADE,
+        kind        TEXT NOT NULL,
+        file_name   TEXT NOT NULL,
+        mime_type   TEXT NOT NULL,
+        size_bytes  INTEGER NOT NULL,
+        data        BYTEA NOT NULL,
+        uploaded_at TIMESTAMPTZ NOT NULL,
+        CONSTRAINT rep_docs_kind_check CHECK (kind IN ('staff_id', 'authorization_letter', 'appointment_letter', 'other')),
+        CONSTRAINT rep_docs_name_check CHECK (length(file_name) BETWEEN 1 AND 120),
+        CONSTRAINT rep_docs_mime_check CHECK (mime_type IN ('application/pdf', 'image/png', 'image/jpeg')),
+        CONSTRAINT rep_docs_size_check CHECK (size_bytes BETWEEN 1 AND 2097152)
+      );
+      CREATE INDEX idx_rep_docs_user ON rep_application_documents (user_id);
+
+      -- Representatives who already have an account keep it: they are recorded as approved.
+      INSERT INTO rep_applications (user_id, status, submitted_at, reviewed_at)
+      SELECT ur.user_id, 'approved', u.created_at, now()
+      FROM user_roles ur
+      JOIN roles r ON r.id = ur.role_id AND r.name = 'university_representative'
+      JOIN users u ON u.id = ur.user_id
+      ON CONFLICT (user_id) DO NOTHING;
+    `,
+  },
 ];
 
 const MIGRATION_LOCK_ID = 727_274_001;

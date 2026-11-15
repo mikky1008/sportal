@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import {
-  BadgeCheck, CircleAlert, Clock, Eye, GraduationCap, Mail, Search, ShieldOff, UserCheck, UserRoundX, X,
+  BadgeCheck, CircleAlert, ClipboardCheck, Clock, Eye, GraduationCap, Mail, Search, ShieldOff, UserCheck, UserRoundX, X,
 } from "lucide-react";
-import { AdminLayout } from "@/layouts/AdminLayout";
+import { AdminLayout, ADMIN_VERIFICATIONS } from "@/layouts/AdminLayout";
+import { Link } from "@/router-compat";
 import { PersonAvatar } from "@/components/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -12,10 +13,10 @@ import {
   fetchUserDetail, fetchUsers, reactivateUser, suspendUser,
   type DirectoryRole, type DirectorySummary, type DirectoryUser, type UserDetail, type UserStatus,
 } from "@/lib/adminApi";
+import { FilterChip as Chip, StatusPill as StatusBadge, adminBtn as btnBase, adminCard as card, fmtDate, fmtDateTime } from "@/components/admin-ui";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 10;
-const card = "rounded-2xl border border-slate-200/80 bg-white shadow-[0_1px_2px_rgba(10,31,68,0.04),0_4px_16px_rgba(10,31,68,0.05)]";
 
 const ROLES: { value: DirectoryRole; label: string }[] = [
   { value: "student_athlete", label: "Student-Athlete" },
@@ -34,45 +35,13 @@ const ROLE_STYLE: Record<DirectoryRole, string> = {
   coach: "bg-[#0a1f44]/8 text-[#0a1f44] ring-[#0a1f44]/15",
   university_representative: "bg-slate-100 text-slate-700 ring-slate-200",
 };
-const STATUS_STYLE: Record<UserStatus, { chip: string; dot: string; label: string }> = {
-  active: { chip: "bg-sky-50 text-sky-700 ring-sky-200", dot: "bg-sky-500", label: "Active" },
-  pending: { chip: "bg-amber-50 text-amber-700 ring-amber-200", dot: "bg-amber-500", label: "Pending" },
-  suspended: { chip: "bg-red-50 text-red-700 ring-red-200", dot: "bg-red-500", label: "Suspended" },
-};
 
-const fmtDate = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-const fmtDateTime = (iso: string) => new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
 
 /* ------------------------------------------------------------------ small pieces */
 
 function RoleBadge({ role }: { role: DirectoryRole | null }) {
   if (!role) return <span className="text-sm text-slate-400">No role</span>;
   return <span className={cn("inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset", ROLE_STYLE[role])}>{ROLE_LABEL[role]}</span>;
-}
-
-function StatusBadge({ status }: { status: UserStatus }) {
-  const s = STATUS_STYLE[status];
-  return (
-    <span className={cn("inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset", s.chip)}>
-      <span className={cn("h-1.5 w-1.5 rounded-full", s.dot)} /> {s.label}
-    </span>
-  );
-}
-
-function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={cn(
-        "h-9 rounded-full px-4 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400",
-        active ? "bg-[#0a1f44] text-white shadow-sm" : "border border-slate-200 bg-white text-slate-600 hover:border-sky-300 hover:text-[#0a1f44]",
-      )}
-    >
-      {children}
-    </button>
-  );
 }
 
 function SummaryTile({ label, value, tone }: { label: string; value: number | null; tone: string }) {
@@ -89,8 +58,6 @@ function SummaryTile({ label, value, tone }: { label: string; value: number | nu
 
 /* ------------------------------------------------------------------ row actions */
 
-const btnBase = "inline-flex h-9 items-center justify-center gap-1.5 rounded-full px-4 text-sm font-semibold transition disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400";
-
 function RowActions({ u, busy, onView, onSuspend, onReactivate }: {
   u: DirectoryUser; busy: boolean; onView: () => void; onSuspend: () => void; onReactivate: () => void;
 }) {
@@ -99,7 +66,11 @@ function RowActions({ u, busy, onView, onSuspend, onReactivate }: {
       <button type="button" onClick={onView} aria-label={`View details for ${u.name}`} className={cn(btnBase, "border border-slate-300 bg-white text-slate-700 hover:border-sky-300 hover:bg-sky-50 hover:text-[#0a1f44]")}>
         <Eye className="h-4 w-4" /> View
       </button>
-      {u.status === "suspended" ? (
+      {u.status === "pending" || u.status === "rejected" ? (
+        <Link to={ADMIN_VERIFICATIONS} direction="root" aria-label={`Open ${u.name}'s application`} className={cn(btnBase, "bg-[#0a1f44] text-white hover:bg-[#0f3160]")}>
+          <ClipboardCheck className="h-4 w-4" /> Application
+        </Link>
+      ) : u.status === "suspended" ? (
         <button type="button" disabled={busy} onClick={onReactivate} aria-label={`Reactivate ${u.name}`} className={cn(btnBase, "bg-[#0a1f44] text-white hover:bg-[#0f3160]")}>
           <UserCheck className="h-4 w-4" /> {busy ? "Reactivating…" : "Reactivate"}
         </button>
@@ -213,11 +184,6 @@ function DetailSheet({ id, busy, onClose, onSuspend, onReactivate, refreshKey }:
               <DetailRow icon={Mail} label="Username">@{d.username}{d.emailVerified ? " · email verified" : ""}</DetailRow>
               <DetailRow icon={Clock} label="Registered">{fmtDate(d.registeredAt)}</DetailRow>
               <DetailRow icon={Clock} label="Last sign-in">{d.lastLoginAt ? fmtDateTime(d.lastLoginAt) : "Never"}</DetailRow>
-              {d.role === "coach" && (
-                <DetailRow icon={BadgeCheck} label="Coach verification">
-                  {d.verifiedCoach ? "Verified" : d.status === "pending" ? "Waiting for review" : "Not verified"}
-                </DetailRow>
-              )}
             </dl>
 
             <section aria-labelledby="hist-title">
@@ -235,7 +201,12 @@ function DetailSheet({ id, busy, onClose, onSuspend, onReactivate, refreshKey }:
             </section>
 
             <div className="sticky bottom-0 -mx-1 bg-white/90 px-1 pb-1 pt-3 backdrop-blur">
-              {d.status === "suspended" ? (
+              {d.status === "pending" || d.status === "rejected" ? (
+                <p className="text-center text-sm text-slate-500">
+                  {d.status === "pending" ? "This representative is waiting for approval." : "This representative's application was rejected."}{" "}
+                  <Link to={ADMIN_VERIFICATIONS} direction="root" className="font-semibold text-sky-700 hover:underline">Open School Verification</Link>
+                </p>
+              ) : d.status === "suspended" ? (
                 <button type="button" disabled={busy} onClick={() => onReactivate(d.id)} className={cn(btnBase, "h-11 w-full bg-[#0a1f44] text-white hover:bg-[#0f3160]")}>
                   <UserCheck className="h-4 w-4" /> {busy ? "Reactivating…" : "Reactivate account"}
                 </button>

@@ -1,3 +1,4 @@
+import { approvedRep } from "./_rep.mjs";
 // Run against a THROWAWAY local Postgres only (it creates users and edits roles by SQL). Needs psql access as the postgres user; edit the sql() helper for your setup. API at http://localhost:8799.
 import { execSync } from "node:child_process";
 const B="http://localhost:8799";
@@ -32,7 +33,7 @@ for(let i=0;i<3;i++) await sess(Hana.tok,"shooting",99,99);
 sql(`UPDATE practice_sessions SET status='coach_verified', verified_at=now() WHERE id=(SELECT id FROM practice_sessions WHERE athlete_id='${Ana.id}' AND skill='shooting' LIMIT 1)`);
 await j("PUT","/api/athletes/me/visibility",Hana.tok,{visible:false});
 const Cora=await coach("Cora",true), Cleo=await coach("Cleo",true), Uma=await coach("Uma",false);
-const rep=await j("POST","/api/auth/register",null,{...pw,accountType:"university_representative",firstName:"Rex",lastName:LAST,email:`rex${ts}@t.ph`,university:"Rep Univ",designation:"Director"});
+const rep=await approvedRep(j,{...pw,accountType:"university_representative",firstName:"Rex",lastName:LAST,email:`rex${ts}@t.ph`,university:"Rep Univ",designation:"Director"});
 
 const dir=(tok,qs="")=>j("GET",`/api/recruiting/athletes?q=${LAST}${qs}`,tok);
 // ---- who may look ----

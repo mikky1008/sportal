@@ -1,3 +1,4 @@
+import { approvedRep } from "./_rep.mjs";
 // Run against a THROWAWAY local Postgres only (it creates users and edits rows by SQL). Needs psql access as the postgres user; edit the sql() helper for your setup. API at http://localhost:8799.
 import { execSync } from "node:child_process";
 const BASE="http://localhost:8799";
@@ -60,7 +61,7 @@ t("pending / rejected / never-asked coaches are NOT linked",sql(`SELECT count(*)
 // ===== access control =====
 t("anonymous → 401",(await j("GET","/api/coach/university")).s===401&&(await j("GET","/api/coach/university/coaches")).s===401&&(await j("GET","/api/coach/university/athletes")).s===401);
 const A1=await athlete("Ann");
-const rep=await j("POST","/api/auth/register",null,{...pw,accountType:"university_representative",firstName:"Rex",lastName:LAST,email:`rex${ts}@t.ph`,university:UNI,designation:"Director"});
+const rep=await approvedRep(j,{...pw,accountType:"university_representative",firstName:"Rex",lastName:LAST,email:`rex${ts}@t.ph`,university:UNI,designation:"Director"});
 for(const [who,tok] of [["an athlete",A1.tok],["a university representative",rep.d.token],["an administrator",adminTok]]){
   t(`${who} cannot open any of the three endpoints (403)`,[info(tok),coaches(tok),athletes(tok)].length&&(await info(tok)).s===403&&(await coaches(tok)).s===403&&(await athletes(tok)).s===403);
 }

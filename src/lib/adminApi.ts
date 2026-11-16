@@ -82,6 +82,8 @@ export interface AdminOverview {
   registrations: { month: string; athletes: number; coaches: number; schoolReps: number }[];
   users: { students: number; coaches: number; verifiedCoaches: number; universityReps: number; inactive: number };
   pendingVerifications: number;
+  /** content reports nobody has looked at yet */
+  pendingReports: number;
   signIns24h: { succeeded: number; failed: number };
   recentActivity: { event: string; identifier: string | null; roles: string[] | null; at: string }[];
 }
@@ -146,3 +148,81 @@ export const suspendUser = (id: string, reason: string) =>
 
 export const reactivateUser = (id: string) =>
   apiRequest<{ user: UserDetail }>(`/api/admin/users/${encodeURIComponent(id)}/reactivate`, { method: "POST", body: {} });
+
+// ---- Platform Monitoring (server/monitoring.server.ts, server/reports.server.ts) ----
+export type ActivityCategory = "signins" | "security" | "accounts" | "administration" | "platform" | "moderation";
+export type ReportStatus = "pending" | "investigating" | "resolved" | "dismissed";
+export type ReportContentType = "athlete_profile" | "video" | "photo";
+export type ReportReason = "inappropriate" | "impersonation" | "harassment" | "spam" | "false_information" | "other";
+export type ModerationAction = "remove_content" | "warn_user" | "suspend_account";
+
+export interface MonitoringOverview {
+  activities: { total: number; last24h: number };
+  reports: { pending: number; investigating: number; resolved: number; dismissed: number };
+  flaggedContent: number;
+}
+
+export interface ActivityItem {
+  id: string;
+  at: string;
+  category: ActivityCategory;
+  user: { id: string | null; name: string };
+  description: string;
+}
+
+export interface ReportSummary {
+  id: string;
+  contentType: ReportContentType;
+  reason: ReportReason;
+  status: ReportStatus;
+  createdAt: string;
+  details: string;
+  reporter: { id: string; name: string } | null;
+  target: { id: string; name: string; suspended: boolean };
+}
+
+export type ReportContent =
+  | { kind: "athlete_profile"; bio: string; sport: string; position: string; school: string }
+  | { kind: "video"; url: string | null; status: string | null }
+  | { kind: "photo"; dataUrl: string | null; status: string | null };
+
+export interface ReportDetail extends ReportSummary {
+  snapshot: string | null;
+  content: ReportContent;
+  reporterEmail: string | null;
+  targetEmail: string;
+  otherReports: { total: number; open: number };
+  investigatedBy: string | null;
+  investigatedAt: string | null;
+  resolvedBy: string | null;
+  resolvedAt: string | null;
+  actions: ModerationAction[];
+  resolutionNote: string;
+}
+
+export const fetchMonitoringOverview = () => apiRequest<{ overview: MonitoringOverview }>("/api/admin/monitoring/overview");
+
+export const fetchActivity = (p: { category: ActivityCategory | ""; q: string; limit: number; offset: number }, signal?: AbortSignal) => {
+  const qs = new URLSearchParams();
+  if (p.category) qs.set("category", p.category);
+  if (p.q.trim()) qs.set("q", p.q.trim());
+  qs.set("limit", String(p.limit));
+  qs.set("offset", String(p.offset));
+  return apiRequest<{ items: ActivityItem[]; total: number; counts: Record<ActivityCategory, number> }>(`/api/admin/monitoring/activity?${qs}`, signal ? { signal } : {});
+};
+
+export const fetchReports = (p: { status: ReportStatus | ""; type: ReportContentType | ""; limit: number; offset: number }) => {
+  const qs = new URLSearchParams();
+  if (p.status) qs.set("status", p.status);
+  if (p.type) qs.set("type", p.type);
+  qs.set("limit", String(p.limit));
+  qs.set("offset", String(p.offset));
+  return apiRequest<{ items: ReportSummary[]; total: number; counts: Record<ReportStatus, number> }>(`/api/admin/reports?${qs}`);
+};
+
+const reportPath = (id: string, tail = "") => `/api/admin/reports/${encodeURIComponent(id)}${tail}`;
+export const fetchReport = (id: string) => apiRequest<{ report: ReportDetail }>(reportPath(id));
+export const investigateReport = (id: string) => apiRequest<{ report: ReportDetail }>(reportPath(id, "/investigate"), { method: "POST", body: {} });
+export const dismissReport = (id: string, note: string) => apiRequest<{ report: ReportDetail }>(reportPath(id, "/dismiss"), { method: "POST", body: { note } });
+export const resolveReport = (id: string, body: { actions: ModerationAction[]; note: string; message: string }) =>
+  apiRequest<{ report: ReportDetail; effects: string[] }>(reportPath(id, "/resolve"), { method: "POST", body });

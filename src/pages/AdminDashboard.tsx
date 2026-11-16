@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { toast } from "sonner";
 import {
-  ArrowRight, Check, CircleAlert, ClipboardCheck, KeyRound, LogIn, LogOut, Medal, School, ShieldAlert, ShieldCheck, ShieldOff,
+  ArrowRight, Check, CircleAlert, ClipboardCheck, Flag, KeyRound, LogIn, LogOut, Medal, School, ShieldAlert, ShieldCheck, ShieldOff,
   TrendingUp, UserCheck, UserPlus, Users, X, type LucideIcon,
 } from "lucide-react";
 import { AdminLayout, ADMIN_VERIFICATIONS } from "@/layouts/AdminLayout";
@@ -57,6 +57,9 @@ function describe(a: AdminOverview["recentActivity"][number]): ActivityView {
     }
     case "admin.rep_approved": return { icon: ShieldCheck, tone: "sky", text: "School representative approved" };
     case "admin.rep_rejected": return { icon: ShieldAlert, tone: "amber", text: "School representative application rejected" };
+    case "report.submitted": return { icon: Flag, tone: "amber", text: "A content report was filed" };
+    case "report.resolved": return { icon: ShieldCheck, tone: "sky", text: "A content report was resolved" };
+    case "report.dismissed": return { icon: ShieldCheck, tone: "navy", text: "A content report was dismissed" };
     case "admin.user_suspended": return { icon: ShieldOff, tone: "amber", text: "An account was suspended" };
     case "admin.user_reactivated": return { icon: UserCheck, tone: "sky", text: "An account was reactivated" };
     case "login.success": return { icon: LogIn, tone: "navy", text: `Sign-in${who}` };

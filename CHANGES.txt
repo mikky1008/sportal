@@ -1,28 +1,28 @@
-Sportal administrator: login, dashboard, user management, school verification
+Sportal administrator: login, dashboard, user management, school verification, platform monitoring
 
-THIS ROUND (School Verification: school/university representative applications)
+THIS ROUND (Platform Monitoring)
 NEW
-  server/rep-documents.server.ts       document validation (PDF/PNG/JPEG by real contents, size limits)
-  server/rep-applications.server.ts    admin list / review / documents / approve / reject
-  src/components/admin-ui.tsx          shared admin UI pieces
-  tests-api/_rep.mjs                   test helper: apply + approve a representative
-  tests-api/part10-school-verification.mjs
+  server/reports.server.ts         filing reports (users) + investigate / dismiss / resolve (admin)
+  server/monitoring.server.ts      overview numbers + Activity Logs (from the audit log)
+  src/pages/AdminMonitoring.tsx    the page
+  src/components/report-dialog.tsx "Report this profile" dialog
+  src/lib/reportsApi.ts
+  tests-api/part11-monitoring.mjs
 CHANGED
-  server/db.server.ts                  migration 12 (rep_applications, rep_application_documents)
-  server/auth.server.ts                unapproved representatives cannot sign in or keep a session
-  server/registration.ts, server/handler.ts   representatives apply with documents; admin routes
-  server/admin.server.ts, server/admin-users.server.ts   pending/rejected now come from applications
-  src/pages/AdminVerifications.tsx     REPLACED: School Verification (coach verification removed)
-  src/pages/AdminDashboard.tsx, src/pages/AdminUsers.tsx, src/layouts/AdminLayout.tsx
-  src/pages/Signup.tsx                 document upload + "Application submitted" screen
-  src/auth/types.ts, src/auth/authClient.ts, src/lib/adminApi.ts
-  scripts/create-user.ts, README.md, api/index.mjs (generated: npm run build:api)
-  tests-api: part1-basics, part1-extras, part3, part5, part7, part8, part9 updated for the new rules
+  server/db.server.ts              migration 13 (content_reports table)
+  server/handler.ts                POST /api/reports, /api/admin/monitoring/*, /api/admin/reports/*
+  server/admin.server.ts           pendingReports for the bell, report events in the dashboard feed
+  src/components/athlete-detail-dialog.tsx   adds "Report this profile"
+  src/layouts/AdminLayout.tsx      Platform Monitoring tab enabled; bell counts waiting reports
+  src/components/admin-ui.tsx, src/lib/adminApi.ts, src/App.tsx, src/pages/AdminDashboard.tsx
+  README.md, api/index.mjs (generated: npm run build:api)
 
-EARLIER ROUNDS (already delivered): admin login/provisioning, dashboard, top nav, user management
-  server/admin-config.server.ts  server/admin-account.server.ts  server/admin-users.server.ts
-  src/pages/AdminLogin.tsx  src/pages/AdminUsers.tsx
+EARLIER ROUNDS (already delivered, included so this zip is complete)
+  admin login/provisioning, dashboard, top nav, User Management, School Verification
+  (server/admin-config, admin-account, admin-users, rep-documents, rep-applications; src/pages/Admin*.tsx; Signup.tsx ...)
 
 AFTER COPYING
-  1. Restart the API once: migration 12 runs automatically and keeps every existing representative approved.
-  2. ADMIN_EMAIL / ADMIN_PASSWORD must be set (see .env.example). Sign in at /admin/login.
+  1. Restart the API once: migration 13 runs by itself. Nothing existing is changed or removed.
+  2. ADMIN_EMAIL / ADMIN_PASSWORD must be set. Sign in at /admin/login.
+  3. Platform Monitoring is empty until someone files a report. To try it: sign in as a coach who is connected
+     to an athlete (My Athletes > View Athlete Profile > Report this profile), then open /admin/monitoring.

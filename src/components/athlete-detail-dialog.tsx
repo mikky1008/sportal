@@ -1,4 +1,6 @@
-import { Award, Medal, Zap } from "lucide-react";
+import { useState } from "react";
+import { Award, Flag, Medal, Zap } from "lucide-react";
+import { ReportDialog } from "@/components/report-dialog";
 import { PersonAvatar } from "@/components/avatar";
 import { Pill, btn } from "@/components/common";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -19,6 +21,7 @@ function Section({ title, icon, children }: { title: string; icon?: React.ReactN
 
 /** Popup with one connected athlete's profile: bio, skills, achievements and recent records. */
 export function AthleteDetailDialog({ athlete, onClose }: { athlete: ConnectedAthlete | null; onClose: () => void }) {
+  const [reporting, setReporting] = useState(false);
   return (
     <Dialog open={athlete !== null} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl">
@@ -96,12 +99,16 @@ export function AthleteDetailDialog({ athlete, onClose }: { athlete: ConnectedAt
               )}
             </Section>
 
-            <div className="mt-6 flex justify-end">
+            <div className="mt-6 flex items-center justify-between gap-3">
+              <button type="button" onClick={() => setReporting(true)} className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground">
+                <Flag className="h-3.5 w-3.5" aria-hidden="true" /> Report this profile
+              </button>
               <DialogClose className={cn(btn.secondary, btn.sm)}>Close Profile</DialogClose>
             </div>
           </>
         )}
       </DialogContent>
+      <ReportDialog athlete={reporting && athlete ? { id: athlete.id, name: `${athlete.firstName} ${athlete.lastName}` } : null} onClose={() => setReporting(false)} />
     </Dialog>
   );
 }

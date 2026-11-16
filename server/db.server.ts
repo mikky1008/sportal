@@ -698,6 +698,49 @@ export const MIGRATIONS: Migration[] = [
       ON CONFLICT (user_id) DO NOTHING;
     `,
   },
+  {
+    version: 13,
+    name: "content_reports",
+    sql: `
+      -- Reports filed by signed-in users about an athlete's profile, highlight video or profile photo.
+      -- The administrator reviews them under Platform Monitoring. A report never changes anyone's roles
+      -- or verification: the administrator's moderation actions are recorded in 'actions'.
+      CREATE TABLE content_reports (
+        id              TEXT PRIMARY KEY,
+        reporter_id     TEXT REFERENCES users(id) ON DELETE SET NULL,
+        target_user_id  TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        content_type    TEXT NOT NULL,
+        reason          TEXT NOT NULL,
+        details         TEXT NOT NULL DEFAULT '',
+        -- the reported text (the biography, or the video link) as it was when the report was filed
+        snapshot        TEXT,
+        status          TEXT NOT NULL DEFAULT 'pending',
+        created_at      TIMESTAMPTZ NOT NULL,
+        investigated_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+        investigated_at TIMESTAMPTZ,
+        resolved_by     TEXT REFERENCES users(id) ON DELETE SET NULL,
+        resolved_at     TIMESTAMPTZ,
+        actions         TEXT[] NOT NULL DEFAULT '{}',
+        resolution_note TEXT NOT NULL DEFAULT '',
+        CONSTRAINT content_reports_type_check   CHECK (content_type IN ('athlete_profile', 'video', 'photo')),
+        CONSTRAINT content_reports_reason_check CHECK (reason IN ('inappropriate', 'impersonation', 'harassment', 'spam', 'false_information', 'other')),
+        CONSTRAINT content_reports_status_check CHECK (status IN ('pending', 'investigating', 'resolved', 'dismissed')),
+        CONSTRAINT content_reports_details_check CHECK (length(details) <= 500),
+        CONSTRAINT content_reports_snapshot_check CHECK (snapshot IS NULL OR length(snapshot) <= 1000),
+        CONSTRAINT content_reports_note_check CHECK (length(resolution_note) <= 500),
+        CONSTRAINT content_reports_actions_check CHECK (actions <@ ARRAY['remove_content', 'warn_user', 'suspend_account']::text[]),
+        CONSTRAINT content_reports_closed_check CHECK ((status IN ('resolved', 'dismissed')) = (resolved_at IS NOT NULL))
+      );
+      -- One open report per reporter and piece of content, so nobody can pile on the same thing.
+      CREATE UNIQUE INDEX uq_content_reports_open ON content_reports (reporter_id, target_user_id, content_type)
+        WHERE status IN ('pending', 'investigating');
+      CREATE INDEX idx_content_reports_queue  ON content_reports (status, created_at);
+      CREATE INDEX idx_content_reports_target ON content_reports (target_user_id);
+      CREATE INDEX idx_content_reports_reporter ON content_reports (reporter_id, created_at);
+      -- the activity log reads the audit log newest-first
+      CREATE INDEX idx_audit_created ON audit_log (created_at DESC, id DESC);
+    `,
+  },
 ];
 
 const MIGRATION_LOCK_ID = 727_274_001;

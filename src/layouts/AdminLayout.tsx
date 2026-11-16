@@ -3,7 +3,7 @@ import { useLocation } from "react-router-dom";
 import { IonContent, IonPage } from "@ionic/react";
 import { toast } from "sonner";
 import {
-  Activity, Bell, ClipboardCheck, GraduationCap, LayoutDashboard, LogOut, Settings, Users, type LucideIcon,
+  Activity, Bell, ClipboardCheck, Flag, GraduationCap, LayoutDashboard, LogOut, Settings, Users, type LucideIcon,
 } from "lucide-react";
 import { Link } from "@/router-compat";
 import { useAuth } from "@/auth/AuthContext";
@@ -16,13 +16,14 @@ import {
 export const ADMIN_HOME = "/admin/dashboard";
 export const ADMIN_USERS = "/admin/users";
 export const ADMIN_VERIFICATIONS = "/admin/verifications";
+export const ADMIN_MONITORING = "/admin/monitoring";
 
 /**
  * Administrator shell. Same top bar as the Student-Athlete and Coach shells (components/shell.tsx):
  * brand, underlined tabs, notification bell and the profile pill. Below 1360px the tabs move into the
  * profile dropdown, as they do on phones for the other roles.
  *
- * Dashboard, User Management and School Verification are built. The other two tabs have no page yet
+ * Dashboard, User Management, School Verification and Platform Monitoring are built. Settings has no page yet
  * (on purpose), so they say "coming soon" instead of linking to a page that does not exist.
  */
 interface NavEntry {
@@ -35,7 +36,7 @@ const NAV: NavEntry[] = [
   { label: "Dashboard", icon: LayoutDashboard, to: ADMIN_HOME },
   { label: "User Management", icon: Users, to: ADMIN_USERS },
   { label: "School Verification", icon: GraduationCap, to: ADMIN_VERIFICATIONS },
-  { label: "Platform Monitoring", icon: Activity },
+  { label: "Platform Monitoring", icon: Activity, to: ADMIN_MONITORING },
   { label: "Settings", icon: Settings },
 ];
 
@@ -45,15 +46,18 @@ const comingSoon = (label: string) => toast(`${label} is coming soon`, { descrip
 
 function NotificationsMenu() {
   const { open, setOpen, ref } = useDropdown();
-  const [pending, setPending] = useState(0);
+  const [pendingApps, setPendingApps] = useState(0);
+  const [pendingReports, setPendingReports] = useState(0);
   const [week, setWeek] = useState(0);
+  const pending = pendingApps + pendingReports;
 
   // Refresh whenever the panel opens, so the badge and the list are never stale.
   useEffect(() => {
     let live = true;
     void fetchAdminOverview().then((r) => {
       if (!live || !r.ok) return;
-      setPending(r.data.overview.totals.pending);
+      setPendingApps(r.data.overview.totals.pending);
+      setPendingReports(r.data.overview.pendingReports);
       setWeek(r.data.overview.totals.usersThisWeek);
     });
     return () => { live = false; };
@@ -80,13 +84,26 @@ function NotificationsMenu() {
         <DropdownPanel className="w-[min(20rem,calc(100vw-2rem))]">
           <DropdownLabel>Notifications</DropdownLabel>
           {pending > 0 ? (
-            <Link to={ADMIN_VERIFICATIONS} direction="root" role="menuitem" className="flex items-start gap-3 rounded-xl px-3 py-2.5 text-sm hover:bg-muted">
-              <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full bg-sky-50 text-sky-600"><ClipboardCheck className="h-4 w-4" /></span>
-              <span>
-                <span className="block font-semibold">{pending} application{pending === 1 ? "" : "s"} waiting</span>
-                <span className="block text-xs text-muted-foreground">School representatives are waiting for you to review their application.</span>
-              </span>
-            </Link>
+            <>
+              {pendingApps > 0 && (
+                <Link to={ADMIN_VERIFICATIONS} direction="root" role="menuitem" className="flex items-start gap-3 rounded-xl px-3 py-2.5 text-sm hover:bg-muted">
+                  <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full bg-sky-50 text-sky-600"><ClipboardCheck className="h-4 w-4" /></span>
+                  <span>
+                    <span className="block font-semibold">{pendingApps} application{pendingApps === 1 ? "" : "s"} waiting</span>
+                    <span className="block text-xs text-muted-foreground">School representatives are waiting for you to review their application.</span>
+                  </span>
+                </Link>
+              )}
+              {pendingReports > 0 && (
+                <Link to={ADMIN_MONITORING} direction="root" role="menuitem" className="flex items-start gap-3 rounded-xl px-3 py-2.5 text-sm hover:bg-muted">
+                  <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full bg-sky-50 text-sky-600"><Flag className="h-4 w-4" /></span>
+                  <span>
+                    <span className="block font-semibold">{pendingReports} report{pendingReports === 1 ? "" : "s"} waiting</span>
+                    <span className="block text-xs text-muted-foreground">Reported content is waiting for a first look.</span>
+                  </span>
+                </Link>
+              )}
+            </>
           ) : (
             <p className="px-3 py-2.5 text-sm text-muted-foreground">You're all caught up.</p>
           )}

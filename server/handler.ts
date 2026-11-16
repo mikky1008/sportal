@@ -12,6 +12,12 @@
 //   GET  /api/admin/school-verifications/:id administrator       -> { ok, application }
 //   GET  /api/admin/school-verifications/:id/documents/:docId administrator -> the file itself (PDF/PNG/JPEG)
 //   POST /api/admin/school-verifications/:id/approve|reject administrator { reason }  -> { ok, application }   (reject needs a reason the applicant will read)
+//   POST /api/reports          signed-in user (not the administrator) { athleteId, contentType: athlete_profile|video|photo, reason, details? } -> { ok, report }
+//   GET  /api/admin/monitoring/overview administrator            -> { ok, overview }   Platform Monitoring numbers
+//   GET  /api/admin/monitoring/activity administrator ?category&q&limit&offset -> { ok, items, total, counts }   Activity Logs
+//   GET  /api/admin/reports    administrator ?status&type&limit&offset -> { ok, items, total, counts }   Reported Content
+//   GET  /api/admin/reports/:id administrator                    -> { ok, report }
+//   POST /api/admin/reports/:id/investigate | dismiss { note? } | resolve { actions[], note?, message? } -> { ok, report }
 //   GET  /api/admin/overview  administrator                       -> { ok, overview }                 Admin Dashboard numbers
 //   GET  /api/auth/me         Authorization: Bearer <token>       -> { user }
 //   POST /api/auth/logout     Authorization: Bearer <token>       -> { ok }
@@ -202,6 +208,11 @@ import {
 } from "./notifications.server.ts";
 import { globalSearch } from "./search.server.ts";
 import { ensureAdminAccount } from "./admin-account.server.ts";
+import { ACTIVITY_CATEGORIES, getMonitoringOverview, isActivityCategory, listActivity, type ActivityCategory } from "./monitoring.server.ts";
+import {
+  CONTENT_TYPES, REPORT_STATUSES, dismissReport, fileReport, getReport, investigateReport, listReports, resolveReport,
+  type ContentType, type ReportStatus,
+} from "./reports.server.ts";
 import { REGISTER_WITH_DOCS_MAX_BODY } from "./rep-documents.server.ts";
 import { APPLICATION_STATUSES, getApplication, getApplicationDocument, listApplications as listRepApplications, reviewApplication as reviewRepApplication, type ApplicationStatus } from "./rep-applications.server.ts";
 import { getAdminOverview } from "./admin.server.ts";
@@ -506,6 +517,64 @@ async function handleSchoolVerification(req: Request, path: string): Promise<Res
     const reason = body && typeof body === "object" ? body["reason"] : undefined;
     const application = await reviewRepApplication(user, id, m![2] === "approve" ? "approve" : "reject", reason, requestMeta(req));
     return send(req, 200, { ok: true, application });
+  } catch (err) {
+    if (err instanceof ConnectionError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message, ...err.extra });
+    throw err;
+  }
+}
+
+/** A signed-in user reports an athlete's profile, video or photo. */
+async function handleFileReport(req: Request): Promise<Response> {
+  const user = await getUserBySessionToken(bearer(req));
+  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
+  try {
+    const report = await fileReport(user, await readJson(req), requestMeta(req));
+    return send(req, 200, { ok: true, report });
+  } catch (err) {
+    if (err instanceof ConnectionError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message, ...err.extra });
+    throw err;
+  }
+}
+
+/** Platform Monitoring: overview, activity logs, and the moderation of reports. Returns null for any other path. */
+async function handleMonitoring(req: Request, path: string): Promise<Response | null> {
+  const m = /^\/api\/admin\/reports\/([^/]+)(?:\/(investigate|dismiss|resolve))?$/.exec(path);
+  const isOverview = req.method === "GET" && path === "/api/admin/monitoring/overview";
+  const isActivity = req.method === "GET" && path === "/api/admin/monitoring/activity";
+  const isList = req.method === "GET" && path === "/api/admin/reports";
+  const isOne = req.method === "GET" && !!m && !m[2];
+  const isAction = req.method === "POST" && !!m && !!m[2];
+  if (!isOverview && !isActivity && !isList && !isOne && !isAction) return null;
+
+  const user = await getUserBySessionToken(bearer(req));
+  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
+  const invalid = (message: string) => send(req, 400, { ok: false, code: "validation", message });
+  try {
+    const sp = new URL(req.url).searchParams;
+    if (isOverview) return send(req, 200, { ok: true, overview: await getMonitoringOverview(user) });
+    if (isActivity) {
+      const category = sp.get("category");
+      if (category && !isActivityCategory(category)) return invalid(`category must be one of ${ACTIVITY_CATEGORIES.join(", ")}.`);
+      const result = await listActivity(user, { q: sp.get("q") ?? "", ...(category ? { category: category as ActivityCategory } : {}), ...pagingFrom(req) });
+      return send(req, 200, { ok: true, ...result });
+    }
+    if (isList) {
+      const status = sp.get("status");
+      const type = sp.get("type");
+      if (status && !(REPORT_STATUSES as readonly string[]).includes(status)) return invalid("status must be pending, investigating, resolved or dismissed.");
+      if (type && !(CONTENT_TYPES as readonly string[]).includes(type)) return invalid("type must be athlete_profile, video or photo.");
+      const result = await listReports(user, { ...(status ? { status: status as ReportStatus } : {}), ...(type ? { type: type as ContentType } : {}), ...pagingFrom(req) });
+      return send(req, 200, { ok: true, ...result });
+    }
+    const id = decodeURIComponent(m![1]!);
+    if (isOne) return send(req, 200, { ok: true, report: await getReport(user, id) });
+    const meta = requestMeta(req);
+    const action = m![2];
+    if (action === "investigate") return send(req, 200, { ok: true, report: await investigateReport(user, id, meta) });
+    const body = (await readJson(req)) as Record<string, unknown> | null;
+    if (action === "dismiss") return send(req, 200, { ok: true, report: await dismissReport(user, id, body && typeof body === "object" ? body["note"] : undefined, meta) });
+    const resolved = await resolveReport(user, id, body, meta);
+    return send(req, 200, { ok: true, ...resolved });
   } catch (err) {
     if (err instanceof ConnectionError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message, ...err.extra });
     throw err;
@@ -1104,6 +1173,9 @@ export async function handle(req: Request): Promise<Response> {
     if (adminUsers) return adminUsers;
     const schoolVerification = await handleSchoolVerification(req, path);
     if (schoolVerification) return schoolVerification;
+    const monitoring = await handleMonitoring(req, path);
+    if (monitoring) return monitoring;
+    if (req.method === "POST" && path === "/api/reports") return await handleFileReport(req);
     if (req.method === "POST" && path === "/api/auth/login") return await handleLogin(req);
     if (req.method === "POST" && path === "/api/auth/register") return await handleRegister(req);
     if (req.method === "GET" && path === "/api/auth/me") {

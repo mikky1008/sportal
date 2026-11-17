@@ -122,6 +122,8 @@
 //   GET  /api/coach/university                      coach -> { ok, affiliated: true, university } | { ok, affiliated: false, reason: "not_verified" | "no_university" }
 //   GET  /api/coach/university/coaches              coach ?q&limit&offset -> { ok, affiliated, items, total }   verified, active coaches of the same university
 //   GET  /api/coach/university/athletes             coach ?q&limit&offset -> { ok, affiliated, items, total }   athletes with an accepted connection to a verified coach of it
+// School Representative Dashboard (read-only; the school is always the signed-in representative's own approved school):
+//   GET  /api/rep/dashboard                         university representative -> { ok, rep, school, stats, pendingRequests, activities, generatedAt }
 //
 // Athlete applications to a coach's program ("show interest"):
 //   POST /api/coach-applications                    student-athlete { coachId } -> 201 { ok, application }   409 already_applied | already_connected, 429 rate_limited
@@ -225,6 +227,7 @@ import {
   UNIVERSITY_PAGE_MAX,
   UniversityError,
 } from "./university.server.ts";
+import { getRepDashboard, RepDashboardError } from "./rep-dashboard.server.ts";
 import {
   applyToCoach,
   CoachApplicationError,
@@ -904,6 +907,19 @@ async function handleUniversity(req: Request, path: string): Promise<Response | 
   }
 }
 
+/** School Representative Dashboard. Read-only. Returns null for any other path. */
+async function handleRepDashboard(req: Request, path: string): Promise<Response | null> {
+  if (req.method !== "GET" || path !== "/api/rep/dashboard") return null;
+  const user = await getUserBySessionToken(bearer(req));
+  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
+  try {
+    return send(req, 200, { ok: true, ...(await getRepDashboard(user)) });
+  } catch (err) {
+    if (err instanceof RepDashboardError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
+    throw err;
+  }
+}
+
 /** Returns null when the path is not a coach-applications route, so the caller can keep matching. */
 async function handleCoachApplications(req: Request, path: string): Promise<Response | null> {
   const statusRoute = /^\/api\/coach-applications\/([^/]+)\/status$/.exec(path);
@@ -1214,6 +1230,8 @@ export async function handle(req: Request): Promise<Response> {
     if (coachApps) return coachApps;
     const university = await handleUniversity(req, path);
     if (university) return university;
+    const repDashboard = await handleRepDashboard(req, path);
+    if (repDashboard) return repDashboard;
     return send(req, 404, { error: "not_found" });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";

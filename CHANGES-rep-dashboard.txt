@@ -1,0 +1,12 @@
+School Representative Dashboard  (route: /rep/dashboard)
+
+NEW
+  server/rep-dashboard.server.ts   read-only queries, school taken from the signed-in rep's own approved account
+  src/lib/repDashboardApi.ts       browser client for GET /api/rep/dashboard
+  src/pages/RepDashboard.tsx       the page
+CHANGED (additions only, nothing removed or edited)
+  server/handler.ts                +1 import, +1 route handler (GET /api/rep/dashboard), +1 dispatch line
+  src/App.tsx                      +1 import, +1 route entry
+  api/index.mjs                    regenerated with npm run build:api
+NOT TOUCHED: navigation, authentication, homePathFor, other pages, database schema (no migration)
+AFTER COPYING: copy over the repo, restart the API. Open /rep/dashboard while signed in as an approved school representative.

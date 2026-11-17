@@ -13210,6 +13210,205 @@ async function listUniversityAthletes(user, page, dbArg) {
   };
 }
 
+// server/rep-dashboard.server.ts
+var REP_ROLE = "university_representative";
+var PENDING_LIMIT = 50;
+var ACTIVITY_LIMIT = 10;
+var RepDashboardError = class extends Error {
+  httpStatus;
+  code;
+  constructor(httpStatus, code, message) {
+    super(message);
+    this.httpStatus = httpStatus;
+    this.code = code;
+  }
+};
+async function resolveSchool(db, user) {
+  if (!user.roles.includes(REP_ROLE))
+    throw new RepDashboardError(403, "role_not_allowed", "Only school representatives can open this dashboard.");
+  const [row] = await db`
+    SELECT rp.university_name, rp.designation, lower(btrim(rp.university_name)) AS key, ra.status
+    FROM university_representative_profiles rp
+    LEFT JOIN rep_applications ra ON ra.user_id = rp.user_id
+    WHERE rp.user_id = ${user.id}`;
+  if (!row) throw new RepDashboardError(404, "no_school", "Your account isn't linked to a school yet.");
+  if (row.status !== null && row.status !== "approved")
+    throw new RepDashboardError(403, "school_not_approved", "Your school hasn't been approved by a Sportal administrator yet.");
+  const [u] = await db`
+    SELECT id, name, location, logo_url FROM universities WHERE name_key = ${row.key}`;
+  return {
+    key: row.key,
+    // The registered name when the school exists on Sportal, otherwise what the representative applied with.
+    name: u?.name ?? row.university_name.trim(),
+    universityId: u?.id ?? null,
+    location: u?.location ?? "",
+    logoUrl: u?.logo_url ?? "",
+    designation: row.designation
+  };
+}
+var VERIFIED_AND_ACTIVE2 = (db, alias) => db`
+  EXISTS (SELECT 1 FROM user_roles vr JOIN roles r ON r.id = vr.role_id WHERE vr.user_id = ${db(alias)}.id AND r.name = 'verified_coach')
+  AND EXISTS (SELECT 1 FROM coach_verifications cv WHERE cv.coach_id = ${db(alias)}.id AND cv.status = 'verified')
+  AND ${db(alias)}.is_active = TRUE AND ${db(alias)}.deleted_at IS NULL`;
+var personName = (db, up, u) => db`COALESCE(NULLIF(btrim(concat_ws(' ', ${db(up)}.first_name, ${db(up)}.last_name)), ''), ${db(u)}.display_name)`;
+async function loadStats(db, school) {
+  const uid = school.universityId;
+  const [pending] = await db`
+    SELECT count(*)::int AS n
+    FROM coach_verifications v
+    JOIN users u ON u.id = v.coach_id AND u.is_active = TRUE AND u.deleted_at IS NULL
+    JOIN coach_profiles cp ON cp.user_id = v.coach_id
+    WHERE v.status = 'pending' AND lower(btrim(v.organization)) = ${school.key}
+      AND cp.organization_type IN ('University', 'College')`;
+  if (!uid) return { totalCoaches: 0, activeCoaches: 0, totalAthletes: 0, pendingCoachRequests: pending?.n ?? 0 };
+  const [coaches] = await db`
+    SELECT count(*)::int AS total, (count(*) FILTER (WHERE u.is_active))::int AS active
+    FROM coach_profiles cp
+    JOIN users u ON u.id = cp.user_id AND u.deleted_at IS NULL
+    WHERE cp.university_id = ${uid}
+      AND EXISTS (SELECT 1 FROM user_roles vr JOIN roles r ON r.id = vr.role_id WHERE vr.user_id = u.id AND r.name = 'verified_coach')
+      AND EXISTS (SELECT 1 FROM coach_verifications cv WHERE cv.coach_id = u.id AND cv.status = 'verified')`;
+  const [athletes] = await db`
+    SELECT count(DISTINCT c.athlete_id)::int AS n
+    FROM coach_athlete_connections c
+    JOIN coach_profiles cp ON cp.user_id = c.coach_id AND cp.university_id = ${uid}
+    JOIN users cu ON cu.id = c.coach_id
+    JOIN users a ON a.id = c.athlete_id AND a.is_active = TRUE AND a.deleted_at IS NULL
+    LEFT JOIN athlete_profiles ap ON ap.user_id = a.id
+    WHERE c.status = 'accepted' AND COALESCE(ap.showcase_visible, TRUE) = TRUE
+      AND ${VERIFIED_AND_ACTIVE2(db, "cu")}`;
+  return {
+    totalCoaches: coaches?.total ?? 0,
+    activeCoaches: coaches?.active ?? 0,
+    totalAthletes: athletes?.n ?? 0,
+    pendingCoachRequests: pending?.n ?? 0
+  };
+}
+async function loadPending(db, school) {
+  const rows = await db`
+    SELECT v.coach_id, ${personName(db, "up", "u")} AS name,
+           COALESCE(cp.sport_specialization, '') AS sport, COALESCE(cp.coaching_position, '') AS position,
+           COALESCE(cp.program_name, '') AS program_name, v.credential_type, v.submitted_at,
+           count(*) OVER ()::int AS total
+    FROM coach_verifications v
+    JOIN users u ON u.id = v.coach_id AND u.is_active = TRUE AND u.deleted_at IS NULL
+    JOIN coach_profiles cp ON cp.user_id = v.coach_id
+    LEFT JOIN user_profiles up ON up.user_id = v.coach_id
+    WHERE v.status = 'pending' AND lower(btrim(v.organization)) = ${school.key}
+      AND cp.organization_type IN ('University', 'College')
+    ORDER BY v.submitted_at, v.coach_id
+    LIMIT ${PENDING_LIMIT}`;
+  return {
+    total: rows[0]?.total ?? 0,
+    items: rows.map((r) => ({
+      id: r.coach_id,
+      name: r.name,
+      sport: r.sport,
+      position: r.position,
+      programName: r.program_name,
+      credentialType: r.credential_type,
+      appliedAt: r.submitted_at.toISOString()
+    }))
+  };
+}
+async function loadActivities(db, school) {
+  const uid = school.universityId;
+  const out = [];
+  const push = (kind, key2, text3, at) => {
+    if (at) out.push({ id: `${kind}:${key2}:${at.getTime()}`, kind, text: text3, at: at.toISOString() });
+  };
+  const queries = [];
+  queries.push((async () => {
+    const rows = await db`
+      SELECT v.coach_id, ${personName(db, "up", "u")} AS name, v.status, v.submitted_at, v.reviewed_at
+      FROM coach_verifications v
+      JOIN users u ON u.id = v.coach_id AND u.is_active = TRUE AND u.deleted_at IS NULL
+      JOIN coach_profiles cp ON cp.user_id = v.coach_id
+      LEFT JOIN user_profiles up ON up.user_id = v.coach_id
+      WHERE lower(btrim(v.organization)) = ${school.key} AND cp.organization_type IN ('University', 'College')
+      ORDER BY GREATEST(v.submitted_at, COALESCE(v.reviewed_at, v.submitted_at)) DESC
+      LIMIT ${ACTIVITY_LIMIT}`;
+    for (const r of rows) {
+      push("coach_requested", r.coach_id, `Coach ${r.name} requested verification for your school.`, r.submitted_at);
+      if (r.status === "verified") push("coach_approved", r.coach_id, `Coach ${r.name} was approved as a verified coach.`, r.reviewed_at);
+      if (r.status === "rejected") push("coach_rejected", r.coach_id, `Coach ${r.name}'s verification request was not approved.`, r.reviewed_at);
+    }
+  })());
+  if (uid) {
+    queries.push((async () => {
+      const rows = await db`
+        SELECT c.id, ${personName(db, "aup", "a")} AS athlete, ${personName(db, "cup", "cu")} AS coach,
+               COALESCE(c.responded_at, c.updated_at) AS at
+        FROM coach_athlete_connections c
+        JOIN coach_profiles cp ON cp.user_id = c.coach_id AND cp.university_id = ${uid}
+        JOIN users cu ON cu.id = c.coach_id AND cu.deleted_at IS NULL
+        LEFT JOIN user_profiles cup ON cup.user_id = cu.id
+        JOIN users a ON a.id = c.athlete_id AND a.is_active = TRUE AND a.deleted_at IS NULL
+        LEFT JOIN user_profiles aup ON aup.user_id = a.id
+        LEFT JOIN athlete_profiles ap ON ap.user_id = a.id
+        WHERE c.status = 'accepted' AND COALESCE(ap.showcase_visible, TRUE) = TRUE
+          AND ${VERIFIED_AND_ACTIVE2(db, "cu")}
+        ORDER BY at DESC LIMIT ${ACTIVITY_LIMIT}`;
+      for (const r of rows) push("athlete_connected", r.id, `${r.athlete} connected with Coach ${r.coach}.`, r.at);
+    })());
+    queries.push((async () => {
+      const rows = await db`
+        SELECT aa.id, ${personName(db, "aup", "a")} AS athlete, ${personName(db, "cup", "cu")} AS coach, aa.created_at AS at
+        FROM athlete_applications aa
+        JOIN coach_profiles cp ON cp.user_id = aa.coach_id AND cp.university_id = ${uid}
+        JOIN users cu ON cu.id = aa.coach_id AND cu.deleted_at IS NULL
+        LEFT JOIN user_profiles cup ON cup.user_id = cu.id
+        JOIN users a ON a.id = aa.athlete_id AND a.is_active = TRUE AND a.deleted_at IS NULL
+        LEFT JOIN user_profiles aup ON aup.user_id = a.id
+        LEFT JOIN athlete_profiles ap ON ap.user_id = a.id
+        WHERE COALESCE(ap.showcase_visible, TRUE) = TRUE
+          AND ${VERIFIED_AND_ACTIVE2(db, "cu")}
+        ORDER BY aa.created_at DESC LIMIT ${ACTIVITY_LIMIT}`;
+      for (const r of rows) push("athlete_applied_coach", r.id, `${r.athlete} applied to Coach ${r.coach}'s program.`, r.at);
+    })());
+  }
+  queries.push((async () => {
+    const rows = await db`
+      SELECT s.id, s.name, s.created_at AS at FROM scholarships s
+      WHERE lower(btrim(s.university)) = ${school.key}
+      ORDER BY s.created_at DESC LIMIT ${ACTIVITY_LIMIT}`;
+    for (const r of rows) push("scholarship_posted", r.id, `Scholarship posted: ${r.name}.`, r.at);
+  })());
+  queries.push((async () => {
+    const rows = await db`
+      SELECT sa.id, ${personName(db, "aup", "a")} AS athlete, s.name AS scholarship, sa.created_at AS at
+      FROM scholarship_applications sa
+      JOIN scholarships s ON s.id = sa.scholarship_id AND lower(btrim(s.university)) = ${school.key}
+      JOIN users a ON a.id = sa.athlete_id AND a.is_active = TRUE AND a.deleted_at IS NULL
+      LEFT JOIN user_profiles aup ON aup.user_id = a.id
+      LEFT JOIN athlete_profiles ap ON ap.user_id = a.id
+      WHERE sa.status <> 'withdrawn' AND COALESCE(ap.showcase_visible, TRUE) = TRUE
+      ORDER BY sa.created_at DESC LIMIT ${ACTIVITY_LIMIT}`;
+    for (const r of rows) push("scholarship_applied", r.id, `${r.athlete} applied for ${r.scholarship}.`, r.at);
+  })());
+  await Promise.all(queries);
+  return out.sort((a, b) => a.at < b.at ? 1 : a.at > b.at ? -1 : a.id < b.id ? 1 : -1).slice(0, ACTIVITY_LIMIT);
+}
+async function getRepDashboard(user, dbArg) {
+  const db = dbArg ?? await getDb();
+  const school = await resolveSchool(db, user);
+  const [stats, pendingRequests, activities, [me]] = await Promise.all([
+    loadStats(db, school),
+    loadPending(db, school),
+    loadActivities(db, school),
+    db`SELECT first_name FROM user_profiles WHERE user_id = ${user.id}`
+  ]);
+  const firstName = me?.first_name?.trim() || user.displayName.split(/\s+/)[0] || user.displayName;
+  return {
+    rep: { name: user.displayName, firstName, designation: school.designation },
+    school: { name: school.name, location: school.location, logoUrl: school.logoUrl, registered: school.universityId !== null },
+    stats,
+    pendingRequests,
+    activities,
+    generatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+}
+
 // server/coach-applications.server.ts
 import { randomUUID as randomUUID13 } from "node:crypto";
 var APPLICATIONS_PER_DAY = 10;
@@ -14171,6 +14370,17 @@ async function handleUniversity(req, path) {
     throw err;
   }
 }
+async function handleRepDashboard(req, path) {
+  if (req.method !== "GET" || path !== "/api/rep/dashboard") return null;
+  const user = await getUserBySessionToken(bearer(req));
+  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
+  try {
+    return send(req, 200, { ok: true, ...await getRepDashboard(user) });
+  } catch (err) {
+    if (err instanceof RepDashboardError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
+    throw err;
+  }
+}
 async function handleCoachApplications(req, path) {
   const statusRoute = /^\/api\/coach-applications\/([^/]+)\/status$/.exec(path);
   const isRoot = path === "/api/coach-applications";
@@ -14449,6 +14659,8 @@ async function handle(req) {
     if (coachApps) return coachApps;
     const university = await handleUniversity(req, path);
     if (university) return university;
+    const repDashboard = await handleRepDashboard(req, path);
+    if (repDashboard) return repDashboard;
     return send(req, 404, { error: "not_found" });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";

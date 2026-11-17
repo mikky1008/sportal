@@ -1,14 +1,15 @@
 import type { ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import { IonContent, IonFooter, IonPage } from "@ionic/react";
-import { LogOut } from "lucide-react";
+import { Bell, LogOut } from "lucide-react";
 import { useUnreadCount } from "@/lib/notificationsApi";
 import { useAthleteProfile } from "@/lib/profileStore";
 import { Link } from "@/router-compat";
-import { BottomNav, nav } from "@/layouts/Nav";
+import { BottomNav, nav, repNav } from "@/layouts/Nav";
 import { useAuth } from "@/auth/AuthContext";
-import { homePathFor } from "@/lib/roles";
+import { homePathFor, primaryRole } from "@/lib/roles";
 import { useIsDesktop } from "@/lib/useIsDesktop";
+import { cn } from "@/lib/utils";
 import {
   AppHeader, DropdownDivider, DropdownPanel, HeaderBack, HeaderBrand, HeaderNavItem, HeaderPill, HeaderPillDivider,
   HeaderSearch, HeaderUser, MenuGlyph, NotificationBell, PageBody, dropdownItemClass, useDropdown,
@@ -33,6 +34,8 @@ const MENU_ITEMS = ["/profile", "/training-plans", "/scholarships", "/recruiting
 /** Every screen is one of these: an Ionic page with a top navigation bar, scrolling content and (on phones) a tab bar. */
 export function Page({ children, shell = true, backTo, hideTabs }: PageProps) {
   const desktop = useIsDesktop();
+  const { user } = useAuth();
+  const isRep = !!user && primaryRole(user.roles) === "university_representative";
   if (!shell) {
     return (
       <IonPage>
@@ -43,7 +46,7 @@ export function Page({ children, shell = true, backTo, hideTabs }: PageProps) {
   return (
     <IonPage>
       <IonContent fullscreen>
-        <TopBar backTo={backTo} />
+        {isRep ? <RepTopBar backTo={backTo} /> : <TopBar backTo={backTo} />}
         <PageBody>{children}</PageBody>
       </IonContent>
       {!desktop && !hideTabs && (
@@ -88,6 +91,76 @@ function TopBar({ backTo }: { backTo?: string }) {
           </Link>
           <HeaderPillDivider />
           <MenuDropdown />
+        </HeaderPill>
+      </div>
+    </AppHeader>
+  );
+}
+
+/**
+ * Top navigation for a school representative: Dashboard, My Coaches and Scholarships (the athlete
+ * tabs don't apply to them), search, notifications, and their own name. There is no athlete profile
+ * page for them, so the name is not a link; the menu holds Notifications and Sign out.
+ */
+function RepTopBar({ backTo }: { backTo?: string }) {
+  const { user, signOut } = useAuth();
+  const { pathname } = useLocation();
+  const unread = useUnreadCount();
+  const menu = useDropdown();
+  const isActive = (to: string) => pathname === to || pathname.startsWith(to + "/");
+  const name = user?.displayName ?? "Representative";
+  const shortName = user?.firstName ?? name.split(/\s+/)[0] ?? name;
+  const home = user ? homePathFor(user.roles) : "/rep/dashboard";
+
+  return (
+    <AppHeader>
+      {backTo && <HeaderBack to={backTo} />}
+      <HeaderBrand to={home} label="Sportal home" />
+
+      <nav aria-label="Main" className="ml-2 hidden items-center md:flex">
+        {repNav.map(({ to, label, icon }) => (
+          <HeaderNavItem key={to} to={to} label={label} icon={icon} active={isActive(to)} />
+        ))}
+      </nav>
+
+      <HeaderSearch placeholder="Search scholarships..." />
+
+      <div className="ml-auto flex items-center gap-2 sm:gap-3">
+        <NotificationBell count={unread} to="/notifications" />
+        <HeaderPill>
+          <HeaderUser name={name} shortName={shortName} />
+          <HeaderPillDivider />
+          <div ref={menu.ref} className="relative">
+            <button
+              type="button"
+              onClick={() => menu.setOpen((v) => !v)}
+              aria-label="Menu"
+              aria-haspopup="menu"
+              aria-expanded={menu.open}
+              className="rounded-full p-1.5 transition hover:text-shell-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shell-focus"
+            >
+              <MenuGlyph open={menu.open} />
+            </button>
+            {menu.open && (
+              <DropdownPanel>
+                {repNav.map(({ to, label, icon: Icon }) => (
+                  <Link key={to} to={to} direction="root" role="menuitem" className={cn(dropdownItemClass(isActive(to)), "md:hidden")}>
+                    <Icon className="h-4 w-4" />
+                    {label}
+                  </Link>
+                ))}
+                <Link to="/notifications" direction="root" role="menuitem" className={dropdownItemClass(isActive("/notifications"))}>
+                  <Bell className="h-4 w-4" />
+                  Notifications
+                </Link>
+                <DropdownDivider />
+                <button type="button" role="menuitem" onClick={() => void signOut()} className={dropdownItemClass()}>
+                  <LogOut className="h-4 w-4" />
+                  Sign out
+                </button>
+              </DropdownPanel>
+            )}
+          </div>
         </HeaderPill>
       </div>
     </AppHeader>

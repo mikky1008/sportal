@@ -1,0 +1,14 @@
+School Representative: Dashboard + My Coaches + navigation  (copy over the repo, then restart the API / redeploy)
+
+NEW
+  server/rep-dashboard.server.ts, server/rep-coaches.server.ts
+  src/lib/repDashboardApi.ts, src/lib/repCoachesApi.ts
+  src/pages/RepDashboard.tsx (/rep/dashboard), src/pages/RepCoaches.tsx (/rep/coaches)
+CHANGED
+  server/handler.ts        additions only (rep dashboard + my coaches routes)
+  src/App.tsx              additions only (two routes)
+  src/lib/roles.ts         a school rep now lands on /rep/dashboard (was /scholarships); also what "Dashboard" / the logo link to
+  src/layouts/Nav.tsx      phone tab bar for reps: Dashboard, Coaches, Scholarships, Notifications (athlete bar unchanged)
+  src/components/Page.tsx  top bar for reps: Dashboard, My Coaches, Scholarships; own name; menu = Notifications + Sign out;
+                           search placeholder "Search scholarships..." (athlete and coach bars unchanged)
+  api/index.mjs            regenerated (npm run build:api)

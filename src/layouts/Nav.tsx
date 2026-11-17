@@ -1,10 +1,10 @@
 import { useLocation } from "react-router-dom";
 import {
-  LayoutDashboard, User, Activity, Trophy, GraduationCap, UserSearch, Bell, Settings, Plus, ClipboardList,
+  LayoutDashboard, User, Activity, Trophy, GraduationCap, UserSearch, Bell, Settings, Plus, ClipboardList, Users,
 } from "lucide-react";
 import { Link } from "@/router-compat";
 import { useAuth } from "@/auth/AuthContext";
-import { homePathFor } from "@/lib/roles";
+import { homePathFor, primaryRole } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 
 export const nav = [
@@ -21,6 +21,14 @@ export const nav = [
 
 const tabs = [nav[0], nav[2], nav[3], nav[1]] as const;
 
+/** The School Representative's own pages (the athlete tabs above do not apply to them). */
+export const repNav = [
+  { to: "/rep/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/rep/coaches", label: "My Coaches", icon: Users },
+  { to: "/scholarships", label: "Scholarships", icon: GraduationCap },
+] as const;
+
+
 function useIsActive() {
   const { pathname } = useLocation();
   return (to: string) => pathname === to || pathname.startsWith(to + "/");
@@ -28,6 +36,27 @@ function useIsActive() {
 
 /** Phone tab bar: Dashboard, Performance, a big Practice button, Rankings, Profile. */
 export function BottomNav() {
+  const { user } = useAuth();
+  if (user && primaryRole(user.roles) === "university_representative") return <RepBottomNav />;
+  return <AthleteBottomNav />;
+}
+
+/** Phone tab bar for a school representative: Dashboard, My Coaches, Scholarships, Notifications. */
+function RepBottomNav() {
+  const isActive = useIsActive();
+  const items = [...repNav, nav[7]] as const;
+  return (
+    <nav aria-label="Mobile" className="border-t bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur">
+      <div className="grid grid-cols-4 items-end">
+        {items.map((item) => (
+          <TabItem key={item.to} {...item} label={item.to === "/rep/coaches" ? "Coaches" : item.label} active={isActive(item.to)} />
+        ))}
+      </div>
+    </nav>
+  );
+}
+
+function AthleteBottomNav() {
   const isActive = useIsActive();
   const { user } = useAuth();
   const home = user ? homePathFor(user.roles) : "/dashboard";

@@ -163,7 +163,7 @@ function CoachDialog({ coachId, school, onClose, onChanged }: { coachId: string 
           <div className="mt-4 rounded-2xl border p-4">
             <h3 className="font-semibold">Manage affiliation</h3>
             {coach.status === "pending" && (
-              <p className="mt-1 text-sm text-muted-foreground">This request is waiting for review. A Sportal administrator approves coaches; once approved they join {school} automatically.</p>
+              <p className="mt-1 text-sm text-muted-foreground">This request is waiting for a decision. Approve it or reject it with a reason in Coach Requests; once approved they join {school}.</p>
             )}
             {coach.status === "affiliated" && !confirming && (
               <>

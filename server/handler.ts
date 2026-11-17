@@ -128,6 +128,10 @@
 //   GET  /api/rep/coaches                           university representative ?q&sport&status=affiliated|pending|removed&limit&offset -> { ok, school, items, total, sports, counts }
 //   GET  /api/rep/coaches/:id                       university representative -> { ok, coach }
 //   POST /api/rep/coaches/:id/affiliation           university representative { action: "remove" | "restore" } -> { ok, coach }
+// School Representative "Coach Requests" (only requests sent to the representative's own approved school):
+//   GET  /api/rep/coach-requests                    university representative ?q&status=pending|approved|rejected&limit&offset -> { ok, school, items, total, counts }
+//   GET  /api/rep/coach-requests/:id                university representative -> { ok, request }   (id = the coach's user id)
+//   POST /api/rep/coach-requests/:id/decision       university representative { decision: "approve" | "reject", reason? } -> { ok, request }   (reason required to reject)
 //
 // Athlete applications to a coach's program ("show interest"):
 //   POST /api/coach-applications                    student-athlete { coachId } -> 201 { ok, application }   409 already_applied | already_connected, 429 rate_limited
@@ -232,6 +236,9 @@ import {
   UniversityError,
 } from "./university.server.ts";
 import { getRepDashboard, RepDashboardError } from "./rep-dashboard.server.ts";
+import {
+  REQUEST_STATUSES, REQUESTS_PAGE_DEFAULT, REQUESTS_PAGE_MAX, decideCoachRequest, getCoachRequest, listCoachRequests, type RequestStatus,
+} from "./rep-coach-requests.server.ts";
 import {
   AFFILIATION_STATUSES, COACHES_PAGE_DEFAULT, COACHES_PAGE_MAX, getRepCoach, listRepCoaches, setCoachAffiliation, type AffiliationStatus,
 } from "./rep-coaches.server.ts";
@@ -966,6 +973,46 @@ async function handleRepCoaches(req: Request, path: string): Promise<Response | 
   }
 }
 
+/** School Representative "Coach Requests". Returns null for any other path. */
+async function handleRepCoachRequests(req: Request, path: string): Promise<Response | null> {
+  const one = /^\/api\/rep\/coach-requests\/([^/]+)(\/decision)?$/.exec(path);
+  const isList = req.method === "GET" && path === "/api/rep/coach-requests";
+  const isOne = req.method === "GET" && !!one && !one[2];
+  const isDecision = req.method === "POST" && !!one && !!one[2];
+  if (!isList && !isOne && !isDecision) return null;
+  const user = await getUserBySessionToken(bearer(req));
+  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
+  try {
+    if (isList) {
+      const params = new URL(req.url).searchParams;
+      const limit = Number(params.get("limit") ?? REQUESTS_PAGE_DEFAULT);
+      const offset = Number(params.get("offset") ?? 0);
+      const status = params.get("status");
+      if (status !== null && status !== "" && !(REQUEST_STATUSES as readonly string[]).includes(status))
+        return send(req, 400, { ok: false, code: "validation", message: "status must be pending, approved or rejected." });
+      return send(req, 200, {
+        ok: true,
+        ...(await listCoachRequests(user, {
+          q: params.get("q") ?? undefined,
+          status: (status || undefined) as RequestStatus | undefined,
+          limit: Number.isInteger(limit) && limit >= 1 ? Math.min(limit, REQUESTS_PAGE_MAX) : REQUESTS_PAGE_DEFAULT,
+          offset: Number.isInteger(offset) && offset >= 0 ? offset : 0,
+        })),
+      });
+    }
+    const id = decodeURIComponent((one as RegExpExecArray)[1] ?? "").slice(0, 100);
+    if (isOne) return send(req, 200, { ok: true, request: await getCoachRequest(user, id) });
+    const body = await readJson(req);
+    const parsed = z.object({ decision: z.enum(["approve", "reject"]), reason: z.unknown().optional() }).safeParse(body);
+    if (!parsed.success) return send(req, 400, { ok: false, code: "validation", message: 'Send { decision: "approve" | "reject", reason }.' });
+    return send(req, 200, { ok: true, request: await decideCoachRequest(user, id, parsed.data.decision, parsed.data.reason, requestMeta(req)) });
+  } catch (err) {
+    if (err instanceof RepDashboardError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
+    if (err instanceof ConnectionError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message, ...err.extra });
+    throw err;
+  }
+}
+
 /** Returns null when the path is not a coach-applications route, so the caller can keep matching. */
 async function handleCoachApplications(req: Request, path: string): Promise<Response | null> {
   const statusRoute = /^\/api\/coach-applications\/([^/]+)\/status$/.exec(path);
@@ -1280,6 +1327,8 @@ export async function handle(req: Request): Promise<Response> {
     if (repDashboard) return repDashboard;
     const repCoaches = await handleRepCoaches(req, path);
     if (repCoaches) return repCoaches;
+    const repCoachRequests = await handleRepCoachRequests(req, path);
+    if (repCoachRequests) return repCoachRequests;
     return send(req, 404, { error: "not_found" });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";

@@ -1,6 +1,6 @@
 import { useLocation } from "react-router-dom";
 import {
-  LayoutDashboard, User, Activity, Trophy, GraduationCap, UserSearch, Bell, Settings, Plus, ClipboardList, Users,
+  LayoutDashboard, User, Activity, Trophy, GraduationCap, UserSearch, Bell, Settings, Plus, ClipboardList, Users, UserCheck,
 } from "lucide-react";
 import { Link } from "@/router-compat";
 import { useAuth } from "@/auth/AuthContext";
@@ -25,6 +25,7 @@ const tabs = [nav[0], nav[2], nav[3], nav[1]] as const;
 export const repNav = [
   { to: "/rep/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/rep/coaches", label: "My Coaches", icon: Users },
+  { to: "/rep/requests", label: "Coach Requests", icon: UserCheck },
   { to: "/scholarships", label: "Scholarships", icon: GraduationCap },
 ] as const;
 
@@ -41,15 +42,17 @@ export function BottomNav() {
   return <AthleteBottomNav />;
 }
 
-/** Phone tab bar for a school representative: Dashboard, My Coaches, Scholarships, Notifications. */
+const SHORT_LABEL: Record<string, string> = { "/rep/requests": "Requests" };
+
+/** Phone tab bar for a school representative: Dashboard, Coaches, Requests, Scholarships, Notifications. */
 function RepBottomNav() {
   const isActive = useIsActive();
   const items = [...repNav, nav[7]] as const;
   return (
     <nav aria-label="Mobile" className="border-t bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur">
-      <div className="grid grid-cols-4 items-end">
+      <div className="grid grid-cols-5 items-end">
         {items.map((item) => (
-          <TabItem key={item.to} {...item} label={item.to === "/rep/coaches" ? "Coaches" : item.label} active={isActive(item.to)} />
+          <TabItem key={item.to} {...item} label={SHORT_LABEL[item.to] ?? item.label} active={isActive(item.to)} />
         ))}
       </div>
     </nav>

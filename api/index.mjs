@@ -11143,8 +11143,8 @@ async function createSession2(actor, body, dbArg) {
 }
 async function requestSessionReview(actor, id, dbArg) {
   requireAthlete3(actor);
-  const notFound7 = new ConnectionError(404, "session_not_found", "Session not found.");
-  if (!UUID_RE3.test(id)) throw notFound7;
+  const notFound8 = new ConnectionError(404, "session_not_found", "Session not found.");
+  if (!UUID_RE3.test(id)) throw notFound8;
   const db = dbArg ?? await getDb();
   const [row] = await db`
     UPDATE practice_sessions SET status = 'pending_review'
@@ -11152,11 +11152,11 @@ async function requestSessionReview(actor, id, dbArg) {
     RETURNING id`;
   if (!row) {
     const existing = await viewById2(db, id, actor.id);
-    if (!existing) throw notFound7;
+    if (!existing) throw notFound8;
     throw new ConnectionError(409, "cannot_request_review", existing.status === "Coach-Verified" ? "A coach has already verified this session." : "This session is already waiting for review.");
   }
   const view2 = await viewById2(db, id, actor.id);
-  if (!view2) throw notFound7;
+  if (!view2) throw notFound8;
   return view2;
 }
 function requireVerifiedCoach(actor) {
@@ -11181,8 +11181,8 @@ async function listSessionsForReview(actor, opts = {}, dbArg) {
 }
 async function verifySession(actor, id, meta = {}, dbArg) {
   requireVerifiedCoach(actor);
-  const notFound7 = new ConnectionError(404, "session_not_found", "Session not found.");
-  if (!UUID_RE3.test(id)) throw notFound7;
+  const notFound8 = new ConnectionError(404, "session_not_found", "Session not found.");
+  if (!UUID_RE3.test(id)) throw notFound8;
   const db = dbArg ?? await getDb();
   const ts = /* @__PURE__ */ new Date();
   let athleteId = "";
@@ -11194,7 +11194,7 @@ async function verifySession(actor, id, meta = {}, dbArg) {
       JOIN coach_athlete_connections c ON c.athlete_id = s.athlete_id AND c.coach_id = ${actor.id} AND c.status = 'accepted'
       WHERE s.id = ${id}
       FOR UPDATE OF s`;
-    if (!row) throw notFound7;
+    if (!row) throw notFound8;
     if (row.status === "coach_verified") throw new ConnectionError(409, "already_verified", "This session is already verified.");
     await tx`
       UPDATE practice_sessions SET status = 'coach_verified', verified_by = ${actor.id}, verified_at = ${ts}
@@ -11205,7 +11205,7 @@ async function verifySession(actor, id, meta = {}, dbArg) {
   await audit("practice_session.verified", { userId: actor.id, ...meta, detail: { sessionId: id } }, db);
   await notify(athleteId, { category: "verification", title: "Result verified", message: `${actor.displayName} verified your ${skillName} result. It now counts in rankings.`, link: "/performance" }, db);
   const view2 = await viewById2(db, id);
-  if (!view2) throw notFound7;
+  if (!view2) throw notFound8;
   return view2;
 }
 
@@ -13409,15 +13409,128 @@ async function getRepDashboard(user, dbArg) {
   };
 }
 
+// server/rep-coach-requests.server.ts
+var REQUESTS_PAGE_DEFAULT = 20;
+var REQUESTS_PAGE_MAX = 50;
+var SEARCH_MAX3 = 80;
+var REQUEST_STATUSES = ["pending", "approved", "rejected"];
+var likeLiteral5 = (t) => t.replace(/[\\%_]/g, (c2) => `\\${c2}`);
+var safePhoto3 = (url) => url && /^https?:\/\//i.test(url) && url.length <= 500 ? url : null;
+var notFound4 = () => new RepDashboardError(404, "request_not_found", "That request could not be found at your school.");
+var LABEL3 = { pending: "pending", verified: "approved", rejected: "rejected" };
+var SCOPE = (db, school) => db`
+  FROM coach_verifications v
+  JOIN users u ON u.id = v.coach_id AND u.deleted_at IS NULL
+  JOIN coach_profiles cp ON cp.user_id = v.coach_id
+  LEFT JOIN user_profiles up ON up.user_id = v.coach_id
+  WHERE lower(btrim(v.organization)) = ${school.key} AND cp.organization_type IN ('University', 'College')
+    AND (v.status <> 'pending' OR u.is_active = TRUE)`;
+var NAME = (db) => db`COALESCE(NULLIF(btrim(concat_ws(' ', up.first_name, up.last_name)), ''), u.display_name)`;
+var toRequest = (r) => {
+  const status = LABEL3[r.status] ?? "pending";
+  return {
+    id: r.id,
+    name: r.name,
+    photo: safePhoto3(r.avatar_url),
+    email: r.email,
+    sport: r.sport,
+    position: r.position,
+    credentialType: r.credential_type,
+    status,
+    appliedAt: r.submitted_at.toISOString(),
+    decidedAt: r.reviewed_at ? r.reviewed_at.toISOString() : null,
+    reason: status === "rejected" ? r.review_note : ""
+  };
+};
+async function listCoachRequests(user, opts, dbArg) {
+  const db = dbArg ?? await getDb();
+  const school = await resolveSchool(db, user);
+  const needle = opts.q?.trim().slice(0, SEARCH_MAX3);
+  const pattern = needle ? `%${likeLiteral5(needle)}%` : null;
+  const dbStatus = opts.status === "approved" ? "verified" : opts.status;
+  const rows = await db`
+    SELECT u.id, ${NAME(db)} AS name, u.email, up.avatar_url, COALESCE(cp.sport_specialization, '') AS sport,
+           COALESCE(cp.coaching_position, '') AS position, v.credential_type, v.status, v.submitted_at, v.reviewed_at,
+           v.review_note, count(*) OVER ()::int AS total
+    ${SCOPE(db, school)}
+      ${dbStatus ? db`AND v.status = ${dbStatus}` : db``}
+      ${pattern ? db`AND (${NAME(db)} ILIKE ${pattern} OR u.email ILIKE ${pattern})` : db``}
+    ORDER BY (v.status = 'pending') DESC, CASE WHEN v.status = 'pending' THEN v.submitted_at END ASC,
+             v.reviewed_at DESC NULLS LAST, u.id
+    LIMIT ${opts.limit} OFFSET ${opts.offset}`;
+  const tallies = await db`SELECT v.status, count(*)::int AS n ${SCOPE(db, school)} GROUP BY v.status`;
+  const counts = { pending: 0, approved: 0, rejected: 0 };
+  for (const t of tallies) {
+    const s = LABEL3[t.status];
+    if (s) counts[s] += t.n;
+  }
+  return { school: { name: school.name }, items: rows.map(toRequest), total: rows[0]?.total ?? 0, counts };
+}
+async function loadDetail(db, school, coachId) {
+  const [r] = await db`
+    SELECT u.id, ${NAME(db)} AS name, u.email, up.avatar_url, COALESCE(cp.sport_specialization, '') AS sport,
+           COALESCE(cp.coaching_position, '') AS position, v.credential_type, v.status, v.submitted_at, v.reviewed_at, v.review_note,
+           v.organization, cp.program_name, cp.competition_level, cp.years_experience, cp.background, cp.certifications,
+           v.credential_reference, v.official_email
+    ${SCOPE(db, school)} AND u.id = ${coachId}`;
+  if (!r) throw notFound4();
+  return {
+    ...toRequest(r),
+    organization: r.organization.trim(),
+    programName: r.program_name,
+    competitionLevel: r.competition_level,
+    yearsExperience: r.years_experience,
+    background: r.background,
+    supportingDocuments: [
+      { label: "Credential type", value: r.credential_type },
+      { label: "Credential reference (ID / license no.)", value: r.credential_reference },
+      { label: "Official school email", value: r.official_email },
+      { label: "Certifications", value: r.certifications }
+    ]
+  };
+}
+async function getCoachRequest(user, coachId, dbArg) {
+  const db = dbArg ?? await getDb();
+  return loadDetail(db, await resolveSchool(db, user), coachId);
+}
+var withBegin = (tx) => new Proxy(tx, { get: (t, p2, r) => p2 === "begin" ? (fn) => fn(t) : Reflect.get(t, p2, r) });
+async function decideCoachRequest(user, coachId, decision, rawReason, meta = {}, dbArg) {
+  const db = dbArg ?? await getDb();
+  const school = await resolveSchool(db, user);
+  if (rawReason !== void 0 && rawReason !== null && typeof rawReason !== "string")
+    throw new ConnectionError(400, "validation", "The reason must be text.", { fieldErrors: { note: "Must be text." } });
+  const reason = typeof rawReason === "string" ? rawReason.trim() : "";
+  if (decision === "reject" && (reason.length < 1 || reason.length > NOTE_MAX))
+    throw new ConnectionError(400, "validation", "Rejecting a request needs a reason the coach can read.", {
+      fieldErrors: { note: `Give a reason, up to ${NOTE_MAX} characters.` }
+    });
+  const current = await loadDetail(db, school, coachId);
+  if (current.status !== "pending")
+    throw new RepDashboardError(409, "not_pending", current.status === "approved" ? "This request was already approved." : "This request was already rejected.");
+  await db.begin(async (tx) => {
+    const [row] = await tx`SELECT status FROM coach_verifications WHERE coach_id = ${coachId} FOR UPDATE`;
+    if (!row || row.status !== "pending")
+      throw new RepDashboardError(409, "not_pending", row?.status === "verified" ? "This request was already approved." : "This request was already decided.");
+    const inTx = withBegin(tx);
+    await applyReview(inTx, { coachId, decision, note: decision === "reject" ? reason : "", reviewerId: user.id, meta });
+    await audit(
+      decision === "approve" ? "rep.coach_request_approved" : "rep.coach_request_rejected",
+      { userId: user.id, ...meta, detail: { coachId, school: school.name } },
+      inTx
+    );
+  });
+  return loadDetail(db, school, coachId);
+}
+
 // server/rep-coaches.server.ts
 var COACHES_PAGE_DEFAULT = 20;
 var COACHES_PAGE_MAX = 50;
-var SEARCH_MAX3 = 80;
+var SEARCH_MAX4 = 80;
 var AFFILIATION_STATUSES = ["affiliated", "pending", "removed"];
-var likeLiteral5 = (t) => t.replace(/[\\%_]/g, (c2) => `\\${c2}`);
-var safePhoto3 = (url) => url && /^https?:\/\//i.test(url) && url.length <= 500 ? url : null;
-var notFound4 = () => new RepDashboardError(404, "coach_not_found", "That coach could not be found at your school.");
-var SCOPE = (db, school) => db`
+var likeLiteral6 = (t) => t.replace(/[\\%_]/g, (c2) => `\\${c2}`);
+var safePhoto4 = (url) => url && /^https?:\/\//i.test(url) && url.length <= 500 ? url : null;
+var notFound5 = () => new RepDashboardError(404, "coach_not_found", "That coach could not be found at your school.");
+var SCOPE2 = (db, school) => db`
   FROM coach_profiles cp
   JOIN users u ON u.id = cp.user_id AND u.deleted_at IS NULL
   JOIN coach_verifications v ON v.coach_id = cp.user_id
@@ -13429,12 +13542,12 @@ var SCOPE = (db, school) => db`
     END AS status) s
   WHERE s.status IS NOT NULL AND lower(btrim(v.organization)) = ${school.key}
     AND cp.organization_type IN ('University', 'College')`;
-var NAME = (db) => db`COALESCE(NULLIF(btrim(concat_ws(' ', up.first_name, up.last_name)), ''), u.display_name)`;
+var NAME2 = (db) => db`COALESCE(NULLIF(btrim(concat_ws(' ', up.first_name, up.last_name)), ''), u.display_name)`;
 var toCoach = (r) => ({
   id: r.id,
   name: r.name,
   email: r.email,
-  photo: safePhoto3(r.avatar_url),
+  photo: safePhoto4(r.avatar_url),
   sport: r.sport,
   position: r.position,
   status: r.status,
@@ -13443,36 +13556,36 @@ var toCoach = (r) => ({
 async function listRepCoaches(user, opts, dbArg) {
   const db = dbArg ?? await getDb();
   const school = await resolveSchool(db, user);
-  const needle = opts.q?.trim().slice(0, SEARCH_MAX3);
-  const pattern = needle ? `%${likeLiteral5(needle)}%` : null;
+  const needle = opts.q?.trim().slice(0, SEARCH_MAX4);
+  const pattern = needle ? `%${likeLiteral6(needle)}%` : null;
   const sport = opts.sport?.trim().slice(0, 80) || null;
   const rows = await db`
-    SELECT u.id, ${NAME(db)} AS name, u.email, up.avatar_url, COALESCE(cp.sport_specialization, '') AS sport,
+    SELECT u.id, ${NAME2(db)} AS name, u.email, up.avatar_url, COALESCE(cp.sport_specialization, '') AS sport,
            COALESCE(cp.coaching_position, '') AS position, s.status, u.is_active, count(*) OVER ()::int AS total
-    ${SCOPE(db, school)}
+    ${SCOPE2(db, school)}
       ${opts.status ? db`AND s.status = ${opts.status}` : db``}
       ${sport ? db`AND lower(cp.sport_specialization) = lower(${sport})` : db``}
-      ${pattern ? db`AND (${NAME(db)} ILIKE ${pattern} OR u.email ILIKE ${pattern})` : db``}
-    ORDER BY ${NAME(db)}, u.id
+      ${pattern ? db`AND (${NAME2(db)} ILIKE ${pattern} OR u.email ILIKE ${pattern})` : db``}
+    ORDER BY ${NAME2(db)}, u.id
     LIMIT ${opts.limit} OFFSET ${opts.offset}`;
   const meta = await db`
-    SELECT s.status, COALESCE(cp.sport_specialization, '') AS sport ${SCOPE(db, school)}`;
+    SELECT s.status, COALESCE(cp.sport_specialization, '') AS sport ${SCOPE2(db, school)}`;
   const counts = { affiliated: 0, pending: 0, removed: 0 };
   for (const m of meta) counts[m.status] += 1;
   const sports2 = [...new Set(meta.map((m) => m.sport).filter(Boolean))].sort((a, b) => a.localeCompare(b));
   return { school: { name: school.name }, items: rows.map(toCoach), total: rows[0]?.total ?? 0, sports: sports2, counts };
 }
-async function loadDetail(db, school, coachId) {
+async function loadDetail2(db, school, coachId) {
   const [r] = await db`
-    SELECT u.id, ${NAME(db)} AS name, u.email, up.avatar_url, COALESCE(cp.sport_specialization, '') AS sport,
+    SELECT u.id, ${NAME2(db)} AS name, u.email, up.avatar_url, COALESCE(cp.sport_specialization, '') AS sport,
            COALESCE(cp.coaching_position, '') AS position, s.status, u.is_active,
            cp.program_name, cp.competition_level, cp.years_experience, cp.background, cp.certifications,
            v.credential_type, v.submitted_at, v.reviewed_at,
            (SELECT count(*)::int FROM coach_athlete_connections c
               JOIN users a ON a.id = c.athlete_id AND a.is_active = TRUE AND a.deleted_at IS NULL
               WHERE c.coach_id = u.id AND c.status = 'accepted') AS athletes
-    ${SCOPE(db, school)} AND u.id = ${coachId}`;
-  if (!r) throw notFound4();
+    ${SCOPE2(db, school)} AND u.id = ${coachId}`;
+  if (!r) throw notFound5();
   return {
     ...toCoach(r),
     programName: r.program_name,
@@ -13489,7 +13602,7 @@ async function loadDetail(db, school, coachId) {
 async function getRepCoach(user, coachId, dbArg) {
   const db = dbArg ?? await getDb();
   const school = await resolveSchool(db, user);
-  return loadDetail(db, school, coachId);
+  return loadDetail2(db, school, coachId);
 }
 async function setCoachAffiliation(user, coachId, action, meta = {}, dbArg) {
   const db = dbArg ?? await getDb();
@@ -13499,8 +13612,8 @@ async function setCoachAffiliation(user, coachId, action, meta = {}, dbArg) {
   await db.begin(async (tx) => {
     await tx`SELECT 1 FROM coach_profiles WHERE user_id = ${coachId} FOR UPDATE`;
     const [cur] = await tx`
-      SELECT s.status, u.is_active ${SCOPE(tx, school)} AND u.id = ${coachId}`;
-    if (!cur) throw notFound4();
+      SELECT s.status, u.is_active ${SCOPE2(tx, school)} AND u.id = ${coachId}`;
+    if (!cur) throw notFound5();
     if (action === "remove") {
       if (cur.status !== "affiliated") throw new RepDashboardError(409, "not_affiliated", "This coach isn't currently affiliated with your school.");
       await tx`UPDATE coach_profiles SET university_id = NULL, updated_at = ${/* @__PURE__ */ new Date()} WHERE user_id = ${coachId} AND university_id = ${uid}`;
@@ -13520,7 +13633,7 @@ async function setCoachAffiliation(user, coachId, action, meta = {}, dbArg) {
     action === "remove" ? { category: "system", title: "Affiliation ended", message: `${school.name} ended your affiliation with the school. Your coach verification is unchanged.` } : { category: "system", title: "Affiliation restored", message: `${school.name} restored your affiliation with the school.` },
     db
   );
-  return loadDetail(db, school, coachId);
+  return loadDetail2(db, school, coachId);
 }
 
 // server/coach-applications.server.ts
@@ -13535,7 +13648,7 @@ var CoachApplicationError = class extends Error {
     this.code = code;
   }
 };
-var notFound5 = () => new CoachApplicationError(404, "not_found", "Not found.");
+var notFound6 = () => new CoachApplicationError(404, "not_found", "Not found.");
 async function applyToCoach(user, coachId, meta = {}, dbArg) {
   if (!user.roles.includes(ATHLETE_ROLE)) throw new CoachApplicationError(403, "role_not_allowed", "Only student-athletes can show interest in a coach.");
   const db = dbArg ?? await getDb();
@@ -13544,7 +13657,7 @@ async function applyToCoach(user, coachId, meta = {}, dbArg) {
     FROM users u
     LEFT JOIN coach_profiles cp ON cp.user_id = u.id
     WHERE u.id = ${coachId} AND u.is_active = TRUE AND u.deleted_at IS NULL`;
-  if (!coach || !user.id || coachId === user.id || !await isVerifiedCoach(db, coachId)) throw notFound5();
+  if (!coach || !user.id || coachId === user.id || !await isVerifiedCoach(db, coachId)) throw notFound6();
   const [connected] = await db`SELECT 1 FROM coach_athlete_connections WHERE coach_id = ${coachId} AND athlete_id = ${user.id} AND status = 'accepted'`;
   if (connected) throw new CoachApplicationError(409, "already_connected", "You are already connected to this coach.");
   const id = randomUUID13();
@@ -13604,7 +13717,7 @@ async function setApplicationStatus2(user, applicationId, status, dbArg) {
   if (!user.roles.includes(COACH_ROLE)) throw new CoachApplicationError(403, "role_not_allowed", "Only coaches can do this.");
   if (!await isVerifiedCoach(db, user.id)) throw new CoachApplicationError(403, "coach_not_verified", "Your coach account must be verified first.");
   const rows = await db`UPDATE athlete_applications SET status = ${status}, updated_at = ${/* @__PURE__ */ new Date()} WHERE id = ${applicationId} AND coach_id = ${user.id} RETURNING id`;
-  if (rows.length === 0) throw notFound5();
+  if (rows.length === 0) throw notFound6();
   return status;
 }
 
@@ -13638,7 +13751,7 @@ function requireAthlete5(user) {
   if (!user.roles.includes(ATHLETE_ROLE)) throw new RecruitingError(403, "role_not_allowed", "Only student-athletes can do this.");
 }
 var isUuid = (id) => UUID_RE6.test(id);
-var notFound6 = () => new RecruitingError(404, "not_found", "Not found.");
+var notFound7 = () => new RecruitingError(404, "not_found", "Not found.");
 async function loadDirectory(db, opts = {}) {
   const rows = await db`
     SELECT u.id, up.first_name, up.last_name, u.display_name,
@@ -13730,7 +13843,7 @@ async function listAthletes(user, q, dbArg) {
   };
 }
 async function getAthlete(user, athleteId, dbArg) {
-  if (!isUuid(athleteId)) throw notFound6();
+  if (!isUuid(athleteId)) throw notFound7();
   const db = dbArg ?? await getDb();
   const own3 = user.roles.includes(ATHLETE_ROLE) && user.id === athleteId;
   let applicant = false;
@@ -13743,7 +13856,7 @@ async function getAthlete(user, athleteId, dbArg) {
   }
   if (!own3 && !applicant) await requireVerifiedCoach2(db, user);
   const [athlete] = await loadDirectory(db, { onlyId: athleteId, includeHidden: own3 || applicant });
-  if (!athlete) throw notFound6();
+  if (!athlete) throw notFound7();
   if (own3 || applicant) return { athlete, own: own3, applicant, watched: false, note: "", inquiry: null };
   const [w] = await db`SELECT note FROM coach_shortlist WHERE coach_id = ${user.id} AND athlete_id = ${athleteId}`;
   const [inq] = await db`
@@ -13768,7 +13881,7 @@ async function setNote(user, athleteId, rawNote, dbArg) {
   await requireVerifiedCoach2(db, user);
   const note = rawNote.trim();
   if (note.length > NOTE_MAX3) throw new RecruitingError(400, "validation", `Notes are limited to ${NOTE_MAX3} characters.`);
-  if (!isUuid(athleteId)) throw notFound6();
+  if (!isUuid(athleteId)) throw notFound7();
   const rows = await db`UPDATE coach_shortlist SET note = ${note} WHERE coach_id = ${user.id} AND athlete_id = ${athleteId} RETURNING athlete_id`;
   if (rows.length === 0) throw new RecruitingError(409, "not_saved", "Save the athlete to your watchlist before adding a note.");
   return { note };
@@ -13810,14 +13923,14 @@ async function sendInquiry(user, input, meta = {}, dbArg) {
   const message = input.message.trim();
   if (organization.length < 2 || organization.length > ORGANIZATION_MAX) throw new RecruitingError(400, "validation", "Name your organization or program (2-120 characters).");
   if (!message || message.length > INQUIRY_MESSAGE_MAX) throw new RecruitingError(400, "validation", `Write a message of up to ${INQUIRY_MESSAGE_MAX} characters.`);
-  if (!isUuid(input.athleteId)) throw notFound6();
+  if (!isUuid(input.athleteId)) throw notFound7();
   const [athlete] = await db`
     SELECT u.id, COALESCE(ap.showcase_visible, TRUE) AS visible
     FROM users u
     JOIN user_roles ur ON ur.user_id = u.id JOIN roles r ON r.id = ur.role_id
     LEFT JOIN athlete_profiles ap ON ap.user_id = u.id
     WHERE u.id = ${input.athleteId} AND r.name = ${ATHLETE_ROLE} AND u.is_active = TRUE AND u.deleted_at IS NULL`;
-  if (!athlete) throw notFound6();
+  if (!athlete) throw notFound7();
   if (!athlete.visible) throw new RecruitingError(409, "showcase_hidden", "This athlete has hidden their showcase, so new inquiries are closed.");
   const id = randomUUID14();
   const now6 = /* @__PURE__ */ new Date();
@@ -13839,7 +13952,7 @@ async function sendInquiry(user, input, meta = {}, dbArg) {
 }
 async function respondToInquiry(user, inquiryId, decision, meta = {}, dbArg) {
   requireAthlete5(user);
-  if (!isUuid(inquiryId)) throw notFound6();
+  if (!isUuid(inquiryId)) throw notFound7();
   const db = dbArg ?? await getDb();
   const now6 = /* @__PURE__ */ new Date();
   const updated = await db`
@@ -13848,7 +13961,7 @@ async function respondToInquiry(user, inquiryId, decision, meta = {}, dbArg) {
   const hit = updated[0];
   if (!hit) {
     const [exists] = await db`SELECT 1 FROM recruitment_inquiries WHERE id = ${inquiryId} AND athlete_id = ${user.id}`;
-    if (!exists) throw notFound6();
+    if (!exists) throw notFound7();
     throw new RecruitingError(409, "already_answered", "This inquiry has already been answered.");
   }
   await audit(`recruiting.inquiry_${decision}`, { userId: user.id, ...meta, detail: { inquiryId } }, db);
@@ -13861,11 +13974,11 @@ async function respondToInquiry(user, inquiryId, decision, meta = {}, dbArg) {
   return toInquiry(row);
 }
 async function loadParticipantInquiry(db, user, inquiryId) {
-  if (!isUuid(inquiryId)) throw notFound6();
+  if (!isUuid(inquiryId)) throw notFound7();
   const [r] = await db`
     SELECT coach_id, athlete_id, status FROM recruitment_inquiries
     WHERE id = ${inquiryId} AND (coach_id = ${user.id} OR athlete_id = ${user.id})`;
-  if (!r) throw notFound6();
+  if (!r) throw notFound7();
   return r;
 }
 async function listMessages(user, inquiryId, dbArg) {
@@ -14532,6 +14645,44 @@ async function handleRepCoaches(req, path) {
     throw err;
   }
 }
+async function handleRepCoachRequests(req, path) {
+  const one2 = /^\/api\/rep\/coach-requests\/([^/]+)(\/decision)?$/.exec(path);
+  const isList = req.method === "GET" && path === "/api/rep/coach-requests";
+  const isOne = req.method === "GET" && !!one2 && !one2[2];
+  const isDecision = req.method === "POST" && !!one2 && !!one2[2];
+  if (!isList && !isOne && !isDecision) return null;
+  const user = await getUserBySessionToken(bearer(req));
+  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
+  try {
+    if (isList) {
+      const params = new URL(req.url).searchParams;
+      const limit3 = Number(params.get("limit") ?? REQUESTS_PAGE_DEFAULT);
+      const offset = Number(params.get("offset") ?? 0);
+      const status = params.get("status");
+      if (status !== null && status !== "" && !REQUEST_STATUSES.includes(status))
+        return send(req, 400, { ok: false, code: "validation", message: "status must be pending, approved or rejected." });
+      return send(req, 200, {
+        ok: true,
+        ...await listCoachRequests(user, {
+          q: params.get("q") ?? void 0,
+          status: status || void 0,
+          limit: Number.isInteger(limit3) && limit3 >= 1 ? Math.min(limit3, REQUESTS_PAGE_MAX) : REQUESTS_PAGE_DEFAULT,
+          offset: Number.isInteger(offset) && offset >= 0 ? offset : 0
+        })
+      });
+    }
+    const id = decodeURIComponent(one2[1] ?? "").slice(0, 100);
+    if (isOne) return send(req, 200, { ok: true, request: await getCoachRequest(user, id) });
+    const body = await readJson(req);
+    const parsed = external_exports.object({ decision: external_exports.enum(["approve", "reject"]), reason: external_exports.unknown().optional() }).safeParse(body);
+    if (!parsed.success) return send(req, 400, { ok: false, code: "validation", message: 'Send { decision: "approve" | "reject", reason }.' });
+    return send(req, 200, { ok: true, request: await decideCoachRequest(user, id, parsed.data.decision, parsed.data.reason, requestMeta(req)) });
+  } catch (err) {
+    if (err instanceof RepDashboardError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
+    if (err instanceof ConnectionError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message, ...err.extra });
+    throw err;
+  }
+}
 async function handleCoachApplications(req, path) {
   const statusRoute = /^\/api\/coach-applications\/([^/]+)\/status$/.exec(path);
   const isRoot = path === "/api/coach-applications";
@@ -14814,6 +14965,8 @@ async function handle(req) {
     if (repDashboard) return repDashboard;
     const repCoaches = await handleRepCoaches(req, path);
     if (repCoaches) return repCoaches;
+    const repCoachRequests = await handleRepCoachRequests(req, path);
+    if (repCoachRequests) return repCoachRequests;
     return send(req, 404, { error: "not_found" });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Redirect } from "react-router-dom";
+import { Link } from "@/router-compat";
 import { format, formatDistanceToNow, parseISO } from "date-fns";
 import {
   BadgeCheck, Building2, Clock, FileText, GraduationCap, Handshake, MapPin, Send, ShieldCheck, ShieldX, UserCheck, UserPlus, Users,
@@ -184,10 +185,11 @@ function ReviewModal({ request, school, onClose }: { request: PendingCoachReques
             <Detail label="Application date" value={prettyDate(request.appliedAt)} />
           </dl>
           <p className="mt-4 rounded-xl bg-accent px-3 py-2.5 text-sm text-accent-foreground">
-            A Sportal administrator makes the final decision on coach verification. Once approved, this coach appears in your Total and Active Coaches.
+            Open this request in Coach Requests to read the supporting documents and approve it, or reject it with a reason.
           </p>
-          <div className="mt-5 flex justify-end">
+          <div className="mt-5 flex flex-wrap justify-end gap-2">
             <button type="button" className={btn.secondary} onClick={onClose}>Close</button>
+            <Link to="/rep/requests" direction="forward" className={btn.primary}>Open Coach Requests</Link>
           </div>
         </>
       )}

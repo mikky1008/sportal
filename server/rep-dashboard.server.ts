@@ -80,7 +80,7 @@ export interface RepDashboard {
   generatedAt: string;
 }
 
-interface School {
+export interface School {
   key: string;
   name: string;
   universityId: string | null;
@@ -90,7 +90,7 @@ interface School {
 }
 
 /** The signed-in representative's own approved school, or why they have none. */
-async function resolveSchool(db: Db, user: PublicUser): Promise<School> {
+export async function resolveSchool(db: Db, user: PublicUser): Promise<School> {
   if (!user.roles.includes(REP_ROLE))
     throw new RepDashboardError(403, "role_not_allowed", "Only school representatives can open this dashboard.");
 

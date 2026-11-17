@@ -1,0 +1,14 @@
+School Representative: My Coaches  (route: /rep/coaches)
+This zip also contains the Dashboard files from the previous round, so it can be copied over on its own.
+
+NEW
+  server/rep-coaches.server.ts   list / profile / remove-restore affiliation, always limited to the rep's own approved school
+  src/lib/repCoachesApi.ts       browser client
+  src/pages/RepCoaches.tsx       the page
+CHANGED (additions only)
+  server/handler.ts              +1 import, +3 routes in one handler (GET /api/rep/coaches, GET /api/rep/coaches/:id, POST /api/rep/coaches/:id/affiliation), +1 dispatch line
+  src/App.tsx                    +1 import, +1 route entry (/rep/coaches)
+  server/rep-dashboard.server.ts (my file from last round) exports resolveSchool + School so both pages share one school lookup
+  api/index.mjs                  regenerated with npm run build:api
+NOT TOUCHED: navigation, authentication, homePathFor, other pages, database schema (no migration)
+AFTER COPYING: restart the API, open /rep/coaches as an approved school representative.

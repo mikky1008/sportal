@@ -226,3 +226,72 @@ export const investigateReport = (id: string) => apiRequest<{ report: ReportDeta
 export const dismissReport = (id: string, note: string) => apiRequest<{ report: ReportDetail }>(reportPath(id, "/dismiss"), { method: "POST", body: { note } });
 export const resolveReport = (id: string, body: { actions: ModerationAction[]; note: string; message: string }) =>
   apiRequest<{ report: ReportDetail; effects: string[] }>(reportPath(id, "/resolve"), { method: "POST", body });
+
+// ---- Settings (server/admin-settings.server.ts, server/system-info.server.ts) ----
+export interface AdminProfile {
+  displayName: string;
+  firstName: string;
+  lastName: string;
+  /** read-only: set by ADMIN_EMAIL on the server */
+  email: string;
+  /** read-only: set by ADMIN_USERNAME on the server */
+  username: string;
+  avatar: string | null;
+  createdAt: string;
+  lastLoginAt: string | null;
+  passwordChangedAt: string | null;
+}
+
+export interface AdminSession {
+  id: string;
+  current: boolean;
+  device: string;
+  browser: string;
+  os: string;
+  ip: string | null;
+  signedInAt: string;
+  lastActiveAt: string;
+  expiresAt: string;
+}
+
+export interface AdminPreferences { applications: boolean; reports: boolean; registrations: boolean; security: boolean }
+
+/** What the top bar shows. A bell number is null when the administrator switched that notification off. */
+export interface AdminHeader {
+  displayName: string;
+  avatar: string | null;
+  bell: { applications: number | null; reports: number | null; registrations: number | null; securityAlerts: number | null };
+}
+
+export interface SystemInfo {
+  application: { name: string; version: string; environment: string; runtime: string; region: string | null; serverTime: string; startedAt: string; uptimeSeconds: number };
+  database: { engine: string; reachable: boolean; latencyMs: number; sizeBytes: number | null; schemaVersion: number; migrationsApplied: number };
+  platform: {
+    users: number; athletes: number; coaches: number; schoolRepresentatives: number; suspendedAccounts: number; schools: number;
+    scholarships: number; openReports: number; activeSessions: number; activityEvents: number;
+  };
+  security: {
+    adminSessionHours: number; userSessionHours: number; rememberDays: number; adminPasswordMinLength: number; userPasswordMinLength: number;
+    lockoutAttempts: number; lockoutMinutes: number; adminAccountSource: string;
+  };
+}
+
+export const fetchAdminHeader = () => apiRequest<{ header: AdminHeader }>("/api/admin/header");
+export const fetchAdminProfile = () => apiRequest<{ profile: AdminProfile }>("/api/admin/settings/profile");
+export const saveAdminProfile = (b: { displayName: string; firstName: string; lastName: string }) =>
+  apiRequest<{ profile: AdminProfile }>("/api/admin/settings/profile", { method: "PUT", body: b });
+export const saveAdminAvatar = (dataUrl: string) => apiRequest<{ profile: AdminProfile }>("/api/admin/settings/avatar", { method: "PUT", body: { dataUrl } });
+export const removeAdminAvatar = () => apiRequest<{ profile: AdminProfile }>("/api/admin/settings/avatar", { method: "DELETE" });
+export const changeAdminPassword = (b: { currentPassword: string; newPassword: string; confirmPassword: string }) =>
+  apiRequest<{ otherSessionsSignedOut: number }>("/api/admin/settings/password", { method: "POST", body: b });
+export const fetchAdminSessions = () => apiRequest<{ sessions: AdminSession[] }>("/api/admin/settings/sessions");
+export const revokeAdminSession = (id: string) => apiRequest<Record<string, never>>(`/api/admin/settings/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
+export const revokeOtherAdminSessions = () => apiRequest<{ revoked: number }>("/api/admin/settings/sessions/revoke-others", { method: "POST", body: {} });
+export const fetchAdminPreferences = () => apiRequest<{ preferences: AdminPreferences }>("/api/admin/settings/notifications");
+export const saveAdminPreferences = (b: Partial<AdminPreferences>) => apiRequest<{ preferences: AdminPreferences }>("/api/admin/settings/notifications", { method: "PUT", body: b });
+export const fetchSystemInfo = () => apiRequest<{ system: SystemInfo }>("/api/admin/settings/system");
+
+// The top bar listens for this: after Settings saves a name, a photo or a notification preference, it reloads.
+const headerListeners = new Set<() => void>();
+export const onAdminHeaderChange = (fn: () => void) => { headerListeners.add(fn); return () => { headerListeners.delete(fn); }; };
+export const notifyAdminHeaderChanged = () => headerListeners.forEach((fn) => fn());

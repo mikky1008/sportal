@@ -57,6 +57,8 @@ export interface RequestMeta {
 
 const now = () => new Date();
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
+/** The id a session token is stored under. The token itself is never stored. */
+export const hashSessionToken = sha256;
 
 export function normalizeIdentifier(raw: string): string {
   return raw.trim().toLowerCase().slice(0, 254);
@@ -261,7 +263,7 @@ export async function setUserActive(userId: string, active: boolean, dbArg?: Db)
 
 // ---------- rate limiting ----------
 
-async function checkRateLimit(db: Db, identifier: string, ip: string | null): Promise<number | null> {
+export async function checkRateLimit(db: Db, identifier: string, ip: string | null): Promise<number | null> {
   const since = new Date(Date.now() - RATE_LIMIT.windowMs);
   const [byId] = await db<{ n: number; oldest: Date | null }[]>`
     SELECT COUNT(*)::int AS n, MIN(created_at) AS oldest FROM login_attempts
@@ -283,7 +285,7 @@ async function checkRateLimit(db: Db, identifier: string, ip: string | null): Pr
   return Math.max(1, Math.ceil((unlockAt - Date.now()) / 1000));
 }
 
-async function recordAttempt(db: Db, identifier: string, ip: string | null, success: boolean): Promise<void> {
+export async function recordAttempt(db: Db, identifier: string, ip: string | null, success: boolean): Promise<void> {
   await db`INSERT INTO login_attempts (identifier, ip, success, created_at) VALUES (${identifier}, ${ip}, ${success}, ${now()})`;
 }
 

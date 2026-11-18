@@ -25,6 +25,10 @@ const EVENTS: Record<string, ActivityCategory> = {
   "admin.provisioned": "security",
   "admin.password_rotated": "security",
   "admin.role_revoked": "security",
+  "admin.password_changed": "security",
+  "admin.password_change_failed": "security",
+  "admin.session_revoked": "security",
+  "admin.sessions_revoked": "security",
 
   "user.created": "accounts",
   "coach_verification.requested": "accounts",
@@ -35,6 +39,7 @@ const EVENTS: Record<string, ActivityCategory> = {
   "admin.user_reactivated": "administration",
   "admin.rep_approved": "administration",
   "admin.rep_rejected": "administration",
+  "admin.profile_updated": "administration",
 
   "connection.requested": "platform",
   "connection.accepted": "platform",
@@ -146,6 +151,14 @@ function describe(event: string, d: Record<string, unknown>, names: Map<string, 
     case "admin.provisioned": return "Administrator account set up";
     case "admin.password_rotated": return "Administrator password updated";
     case "admin.role_revoked": return "Administrator access removed from this account";
+    case "admin.password_changed": return "Changed their password";
+    case "admin.password_change_failed": return "Entered the wrong current password while changing their password";
+    case "admin.session_revoked": return `Signed out another device${str(d["device"]) ? ` (${str(d["device"])})` : ""}`;
+    case "admin.sessions_revoked": return "Signed out all their other devices";
+    case "admin.profile_updated": {
+      const what = Array.isArray(d["changed"]) ? d["changed"].map((c) => String(c)).join(", ") : "";
+      return `Updated their profile${what ? ` (${what})` : ""}`;
+    }
     case "user.created": {
       const roles = Array.isArray(d["roles"]) ? d["roles"].map((r) => ROLE_LABEL[String(r)]).filter(Boolean) : [];
       return roles.length ? `Created a ${roles[0]} account` : "Created an account";

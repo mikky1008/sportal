@@ -1,28 +1,28 @@
-Sportal administrator: login, dashboard, user management, school verification, platform monitoring
+Sportal administrator: login, dashboard, user management, school verification, platform monitoring, settings
 
-THIS ROUND (Platform Monitoring)
+THIS ROUND (Settings)
 NEW
-  server/reports.server.ts         filing reports (users) + investigate / dismiss / resolve (admin)
-  server/monitoring.server.ts      overview numbers + Activity Logs (from the audit log)
-  src/pages/AdminMonitoring.tsx    the page
-  src/components/report-dialog.tsx "Report this profile" dialog
-  src/lib/reportsApi.ts
-  tests-api/part11-monitoring.mjs
+  server/admin-settings.server.ts   profile, photo, password, sessions, notification preferences, top-bar summary
+  server/system-info.server.ts      read-only platform information
+  src/pages/AdminSettings.tsx       the page (4 tabs)
+  src/lib/useAdminHeader.ts         top bar name/photo/bell, reloads when Settings changes them
+  tests-api/part12-admin-settings.mjs
+  tests-api/part12b-admin-password-sync.mjs
 CHANGED
-  server/db.server.ts              migration 13 (content_reports table)
-  server/handler.ts                POST /api/reports, /api/admin/monitoring/*, /api/admin/reports/*
-  server/admin.server.ts           pendingReports for the bell, report events in the dashboard feed
-  src/components/athlete-detail-dialog.tsx   adds "Report this profile"
-  src/layouts/AdminLayout.tsx      Platform Monitoring tab enabled; bell counts waiting reports
-  src/components/admin-ui.tsx, src/lib/adminApi.ts, src/App.tsx, src/pages/AdminDashboard.tsx
-  README.md, api/index.mjs (generated: npm run build:api)
+  server/db.server.ts               migration 14 (admin_account_state, admin_preferences)
+  server/admin-account.server.ts    IMPORTANT: ADMIN_PASSWORD no longer overwrites a password chosen in Settings at every restart;
+                                    it only resets the password when its own value changes
+  server/auth.server.ts             exports hashSessionToken, checkRateLimit, recordAttempt
+  server/handler.ts                 /api/admin/header and /api/admin/settings/*
+  server/monitoring.server.ts, server/admin.server.ts   new security events in the activity log
+  src/layouts/AdminLayout.tsx       Settings tab enabled; the bell honours your notification preferences; name + photo in the top bar
+  src/auth/AuthContext.tsx          refreshUser() so a changed name shows everywhere
+  src/lib/adminApi.ts, src/App.tsx
+  README.md, .env.example, api/index.mjs (generated: npm run build:api)
 
-EARLIER ROUNDS (already delivered, included so this zip is complete)
-  admin login/provisioning, dashboard, top nav, User Management, School Verification
-  (server/admin-config, admin-account, admin-users, rep-documents, rep-applications; src/pages/Admin*.tsx; Signup.tsx ...)
+EARLIER ROUNDS (already delivered, included so this zip is complete): admin login, dashboard, User Management,
+School Verification, Platform Monitoring.
 
 AFTER COPYING
-  1. Restart the API once: migration 13 runs by itself. Nothing existing is changed or removed.
-  2. ADMIN_EMAIL / ADMIN_PASSWORD must be set. Sign in at /admin/login.
-  3. Platform Monitoring is empty until someone files a report. To try it: sign in as a coach who is connected
-     to an athlete (My Athletes > View Athlete Profile > Report this profile), then open /admin/monitoring.
+  1. Restart the API once: migration 14 runs by itself. Your administrator keeps their current password.
+  2. Sign in at /admin/login and open Settings.

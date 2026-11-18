@@ -27,7 +27,7 @@ const ACTIVITY_EVENTS = [
   "login.success", "login.failed", "user.created", "logout",
   "admin.provisioned", "admin.password_rotated", "admin.role_revoked",
   "admin.rep_approved", "admin.rep_rejected", "admin.user_suspended", "admin.user_reactivated",
-  "report.submitted", "report.dismissed", "report.resolved",
+  "report.submitted", "report.dismissed", "report.resolved", "admin.password_changed",
 ];
 
 /** `user.created` rows carry { roles: [...] } in their detail; nothing else is read from it. */

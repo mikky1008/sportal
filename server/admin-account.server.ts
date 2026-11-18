@@ -5,8 +5,11 @@
 //
 // What it guarantees, all inside one transaction under an advisory lock (two cold-starting
 // serverless instances never race):
-//  - the account exists, holds the `admin` role, and its password matches ADMIN_PASSWORD
-//    (change the variable and redeploy to rotate the password; the old sessions are revoked);
+//  - the account exists and holds the `admin` role. ADMIN_PASSWORD sets the password when the account
+//    is created and again whenever that variable CHANGES (change it and redeploy to reset the
+//    password; the old sessions are revoked). In between, the administrator can change their own
+//    password in Settings and it is left alone: what the variable held last time is remembered in
+//    admin_account_state, and the password is only reset when the variable is different;
 //  - NO other account holds the `admin` role. Anything that does is stripped and signed out, so the
 //    environment variables are the only way to be an administrator;
 //  - it fails closed: if ADMIN_EMAIL belongs to an ordinary account, nothing is promoted.
@@ -52,16 +55,31 @@ export async function provisionAdminAccount(dbArg?: Db, env: Record<string, stri
     let created = false;
     let passwordChanged = false;
 
+    const rotate = async (reason: "created" | "changed"): Promise<string> => {
+      const hash = await hashPassword(cfg.password);
+      if (reason === "changed") {
+        await tx`UPDATE users SET password_hash = ${hash}, password_changed_at = ${ts}, updated_at = ${ts} WHERE id = ${adminId}`;
+        await tx`DELETE FROM sessions WHERE user_id = ${adminId}`;
+        await audit("admin.password_rotated", { userId: adminId }, tx as unknown as Db);
+        passwordChanged = true;
+      }
+      return hash;
+    };
+    const remember = (hash: string) => tx`
+      INSERT INTO admin_account_state (user_id, env_password_hash, updated_at) VALUES (${adminId}, ${hash}, ${ts})
+      ON CONFLICT (user_id) DO UPDATE SET env_password_hash = EXCLUDED.env_password_hash, updated_at = EXCLUDED.updated_at`;
+
     if (!existing) {
       const [nameTaken] = await tx`SELECT 1 AS x FROM users WHERE lower(username) = ${cfg.username.toLowerCase()}`;
       if (nameTaken) return { state: "disabled", reason: `ADMIN_USERNAME "${cfg.username}" is already used by another account. Choose a different one.` };
       adminId = randomUUID();
-      const hash = await hashPassword(cfg.password);
+      const hash = await rotate("created");
       await tx`
         INSERT INTO users (id, email, username, password_hash, display_name, password_changed_at, created_at, updated_at)
         VALUES (${adminId}, ${cfg.email}, ${cfg.username}, ${hash}, ${cfg.displayName}, ${ts}, ${ts}, ${ts})`;
       await tx`INSERT INTO user_profiles (user_id, first_name, last_name, updated_at) VALUES (${adminId}, NULL, NULL, ${ts})`;
       await tx`INSERT INTO user_roles (user_id, role_id, granted_at) VALUES (${adminId}, ${role.id}, ${ts})`;
+      await remember(hash);
       await audit("admin.provisioned", { userId: adminId }, tx as unknown as Db);
       created = true;
     } else {
@@ -71,11 +89,15 @@ export async function provisionAdminAccount(dbArg?: Db, env: Record<string, stri
       if (!holdsRole)
         return { state: "disabled", reason: "ADMIN_EMAIL belongs to an existing non-administrator account. Use an email address that nobody has registered with." };
 
-      if (!(await verifyPassword(cfg.password, existing.password_hash))) {
-        await tx`UPDATE users SET password_hash = ${await hashPassword(cfg.password)}, password_changed_at = ${ts}, updated_at = ${ts} WHERE id = ${adminId}`;
-        await tx`DELETE FROM sessions WHERE user_id = ${adminId}`;
-        await audit("admin.password_rotated", { userId: adminId }, tx as unknown as Db);
-        passwordChanged = true;
+      const [state] = await tx<{ env_password_hash: string }[]>`SELECT env_password_hash FROM admin_account_state WHERE user_id = ${adminId}`;
+      if (!state) {
+        // First time this account is tracked (an account from before Settings existed). Its password was kept
+        // equal to ADMIN_PASSWORD, so if it still matches there is nothing to change: just remember it.
+        if (await verifyPassword(cfg.password, existing.password_hash)) await remember(existing.password_hash);
+        else await remember(await rotate("changed"));
+      } else if (!(await verifyPassword(cfg.password, state.env_password_hash))) {
+        // The variable was changed by whoever runs the server: that is the way back in if the password is lost.
+        await remember(await rotate("changed"));
       }
       if (existing.username.toLowerCase() !== cfg.username.toLowerCase()) {
         const [nameTaken] = await tx`SELECT 1 AS x FROM users WHERE lower(username) = ${cfg.username.toLowerCase()} AND id <> ${adminId}`;

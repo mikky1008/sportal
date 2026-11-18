@@ -18,6 +18,14 @@
 //   GET  /api/admin/reports    administrator ?status&type&limit&offset -> { ok, items, total, counts }   Reported Content
 //   GET  /api/admin/reports/:id administrator                    -> { ok, report }
 //   POST /api/admin/reports/:id/investigate | dismiss { note? } | resolve { actions[], note?, message? } -> { ok, report }
+//   GET  /api/admin/header     administrator                     -> { ok, header }   top bar: name, photo, bell (honours notification preferences)
+//   GET|PUT /api/admin/settings/profile administrator { displayName, firstName?, lastName? } -> { ok, profile }   (email and username are read-only)
+//   PUT|DELETE /api/admin/settings/avatar administrator { dataUrl } -> { ok, profile }
+//   POST /api/admin/settings/password administrator { currentPassword, newPassword, confirmPassword? } -> { ok, otherSessionsSignedOut }
+//   GET  /api/admin/settings/sessions administrator              -> { ok, sessions }  the administrator's own signed-in devices
+//   DELETE /api/admin/settings/sessions/:id | POST .../sessions/revoke-others administrator -> { ok }
+//   GET|PUT /api/admin/settings/notifications administrator { applications?, reports?, registrations?, security? } -> { ok, preferences }
+//   GET  /api/admin/settings/system administrator                -> { ok, system }   read-only platform information
 //   GET  /api/admin/overview  administrator                       -> { ok, overview }                 Admin Dashboard numbers
 //   GET  /api/auth/me         Authorization: Bearer <token>       -> { user }
 //   POST /api/auth/logout     Authorization: Bearer <token>       -> { ok }
@@ -122,16 +130,6 @@
 //   GET  /api/coach/university                      coach -> { ok, affiliated: true, university } | { ok, affiliated: false, reason: "not_verified" | "no_university" }
 //   GET  /api/coach/university/coaches              coach ?q&limit&offset -> { ok, affiliated, items, total }   verified, active coaches of the same university
 //   GET  /api/coach/university/athletes             coach ?q&limit&offset -> { ok, affiliated, items, total }   athletes with an accepted connection to a verified coach of it
-// School Representative Dashboard (read-only; the school is always the signed-in representative's own approved school):
-//   GET  /api/rep/dashboard                         university representative -> { ok, rep, school, stats, pendingRequests, activities, generatedAt }
-// School Representative "My Coaches" (only coaches of the representative's own approved school):
-//   GET  /api/rep/coaches                           university representative ?q&sport&status=affiliated|pending|removed&limit&offset -> { ok, school, items, total, sports, counts }
-//   GET  /api/rep/coaches/:id                       university representative -> { ok, coach }
-//   POST /api/rep/coaches/:id/affiliation           university representative { action: "remove" | "restore" } -> { ok, coach }
-// School Representative "Coach Requests" (only requests sent to the representative's own approved school):
-//   GET  /api/rep/coach-requests                    university representative ?q&status=pending|approved|rejected&limit&offset -> { ok, school, items, total, counts }
-//   GET  /api/rep/coach-requests/:id                university representative -> { ok, request }   (id = the coach's user id)
-//   POST /api/rep/coach-requests/:id/decision       university representative { decision: "approve" | "reject", reason? } -> { ok, request }   (reason required to reject)
 //
 // Athlete applications to a coach's program ("show interest"):
 //   POST /api/coach-applications                    student-athlete { coachId } -> 201 { ok, application }   409 already_applied | already_connected, 429 rate_limited
@@ -223,6 +221,11 @@ import {
   CONTENT_TYPES, REPORT_STATUSES, dismissReport, fileReport, getReport, investigateReport, listReports, resolveReport,
   type ContentType, type ReportStatus,
 } from "./reports.server.ts";
+import {
+  AVATAR_MAX_CHARS, changeAdminPassword, getAdminHeader, getAdminPreferences, getAdminProfile, listAdminSessions,
+  revokeAdminSession, revokeOtherAdminSessions, setAdminAvatar, updateAdminPreferences, updateAdminProfile,
+} from "./admin-settings.server.ts";
+import { getSystemInfo } from "./system-info.server.ts";
 import { REGISTER_WITH_DOCS_MAX_BODY } from "./rep-documents.server.ts";
 import { APPLICATION_STATUSES, getApplication, getApplicationDocument, listApplications as listRepApplications, reviewApplication as reviewRepApplication, type ApplicationStatus } from "./rep-applications.server.ts";
 import { getAdminOverview } from "./admin.server.ts";
@@ -235,13 +238,6 @@ import {
   UNIVERSITY_PAGE_MAX,
   UniversityError,
 } from "./university.server.ts";
-import { getRepDashboard, RepDashboardError } from "./rep-dashboard.server.ts";
-import {
-  REQUEST_STATUSES, REQUESTS_PAGE_DEFAULT, REQUESTS_PAGE_MAX, decideCoachRequest, getCoachRequest, listCoachRequests, type RequestStatus,
-} from "./rep-coach-requests.server.ts";
-import {
-  AFFILIATION_STATUSES, COACHES_PAGE_DEFAULT, COACHES_PAGE_MAX, getRepCoach, listRepCoaches, setCoachAffiliation, type AffiliationStatus,
-} from "./rep-coaches.server.ts";
 import {
   applyToCoach,
   CoachApplicationError,
@@ -534,6 +530,47 @@ async function handleSchoolVerification(req: Request, path: string): Promise<Res
     const reason = body && typeof body === "object" ? body["reason"] : undefined;
     const application = await reviewRepApplication(user, id, m![2] === "approve" ? "approve" : "reject", reason, requestMeta(req));
     return send(req, 200, { ok: true, application });
+  } catch (err) {
+    if (err instanceof ConnectionError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message, ...err.extra });
+    throw err;
+  }
+}
+
+/** The administrator's own Settings. Everything here acts on the signed-in administrator's account only. Returns null for any other path. */
+async function handleAdminSettings(req: Request, path: string): Promise<Response | null> {
+  const m = req.method;
+  const sess = /^\/api\/admin\/settings\/sessions\/([^/]+)$/.exec(path);
+  const known =
+    (m === "GET" && (path === "/api/admin/header" || path === "/api/admin/settings/profile" || path === "/api/admin/settings/sessions" ||
+      path === "/api/admin/settings/notifications" || path === "/api/admin/settings/system")) ||
+    (m === "PUT" && (path === "/api/admin/settings/profile" || path === "/api/admin/settings/avatar" || path === "/api/admin/settings/notifications")) ||
+    (m === "DELETE" && (path === "/api/admin/settings/avatar" || (!!sess && sess[1] !== "revoke-others"))) ||
+    (m === "POST" && (path === "/api/admin/settings/password" || path === "/api/admin/settings/sessions/revoke-others"));
+  if (!known) return null;
+
+  const token = bearer(req);
+  const user = await getUserBySessionToken(token);
+  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
+  const meta = requestMeta(req);
+  try {
+    if (path === "/api/admin/header") return send(req, 200, { ok: true, header: await getAdminHeader(user) });
+    if (path === "/api/admin/settings/profile")
+      return send(req, 200, { ok: true, profile: m === "GET" ? await getAdminProfile(user) : await updateAdminProfile(user, await readJson(req), meta) });
+    if (path === "/api/admin/settings/avatar") {
+      if (m === "DELETE") return send(req, 200, { ok: true, profile: await setAdminAvatar(user, null, meta) });
+      const body = (await readJson(req, AVATAR_MAX_CHARS + 2000)) as Record<string, unknown> | null;
+      return send(req, 200, { ok: true, profile: await setAdminAvatar(user, body && typeof body === "object" ? body["dataUrl"] : undefined, meta) });
+    }
+    if (path === "/api/admin/settings/password") return send(req, 200, { ok: true, ...(await changeAdminPassword(user, await readJson(req), token, meta)) });
+    if (path === "/api/admin/settings/sessions") return send(req, 200, { ok: true, sessions: await listAdminSessions(user, token) });
+    if (path === "/api/admin/settings/sessions/revoke-others") return send(req, 200, { ok: true, ...(await revokeOtherAdminSessions(user, token, meta)) });
+    if (sess) {
+      await revokeAdminSession(user, decodeURIComponent(sess[1]!), token, meta);
+      return send(req, 200, { ok: true });
+    }
+    if (path === "/api/admin/settings/notifications")
+      return send(req, 200, { ok: true, preferences: m === "GET" ? await getAdminPreferences(user) : await updateAdminPreferences(user, await readJson(req)) });
+    return send(req, 200, { ok: true, system: await getSystemInfo(user) });
   } catch (err) {
     if (err instanceof ConnectionError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message, ...err.extra });
     throw err;
@@ -921,98 +958,6 @@ async function handleUniversity(req: Request, path: string): Promise<Response | 
   }
 }
 
-/** School Representative Dashboard. Read-only. Returns null for any other path. */
-async function handleRepDashboard(req: Request, path: string): Promise<Response | null> {
-  if (req.method !== "GET" || path !== "/api/rep/dashboard") return null;
-  const user = await getUserBySessionToken(bearer(req));
-  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
-  try {
-    return send(req, 200, { ok: true, ...(await getRepDashboard(user)) });
-  } catch (err) {
-    if (err instanceof RepDashboardError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
-    throw err;
-  }
-}
-
-/** School Representative "My Coaches". Returns null for any other path. */
-async function handleRepCoaches(req: Request, path: string): Promise<Response | null> {
-  const one = /^\/api\/rep\/coaches\/([^/]+)(\/affiliation)?$/.exec(path);
-  const isList = req.method === "GET" && path === "/api/rep/coaches";
-  const isOne = req.method === "GET" && !!one && !one[2];
-  const isAffiliation = req.method === "POST" && !!one && !!one[2];
-  if (!isList && !isOne && !isAffiliation) return null;
-  const user = await getUserBySessionToken(bearer(req));
-  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
-  try {
-    if (isList) {
-      const params = new URL(req.url).searchParams;
-      const limit = Number(params.get("limit") ?? COACHES_PAGE_DEFAULT);
-      const offset = Number(params.get("offset") ?? 0);
-      const status = params.get("status");
-      if (status !== null && status !== "" && !(AFFILIATION_STATUSES as readonly string[]).includes(status))
-        return send(req, 400, { ok: false, code: "validation", message: "status must be affiliated, pending or removed." });
-      return send(req, 200, {
-        ok: true,
-        ...(await listRepCoaches(user, {
-          q: params.get("q") ?? undefined,
-          sport: params.get("sport") ?? undefined,
-          status: (status || undefined) as AffiliationStatus | undefined,
-          limit: Number.isInteger(limit) && limit >= 1 ? Math.min(limit, COACHES_PAGE_MAX) : COACHES_PAGE_DEFAULT,
-          offset: Number.isInteger(offset) && offset >= 0 ? offset : 0,
-        })),
-      });
-    }
-    const id = decodeURIComponent((one as RegExpExecArray)[1] ?? "").slice(0, 100);
-    if (isOne) return send(req, 200, { ok: true, coach: await getRepCoach(user, id) });
-    const parsed = z.object({ action: z.enum(["remove", "restore"]) }).safeParse(await readJson(req));
-    if (!parsed.success) return send(req, 400, { ok: false, code: "validation", message: 'Send { action: "remove" | "restore" }.' });
-    return send(req, 200, { ok: true, coach: await setCoachAffiliation(user, id, parsed.data.action, requestMeta(req)) });
-  } catch (err) {
-    if (err instanceof RepDashboardError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
-    throw err;
-  }
-}
-
-/** School Representative "Coach Requests". Returns null for any other path. */
-async function handleRepCoachRequests(req: Request, path: string): Promise<Response | null> {
-  const one = /^\/api\/rep\/coach-requests\/([^/]+)(\/decision)?$/.exec(path);
-  const isList = req.method === "GET" && path === "/api/rep/coach-requests";
-  const isOne = req.method === "GET" && !!one && !one[2];
-  const isDecision = req.method === "POST" && !!one && !!one[2];
-  if (!isList && !isOne && !isDecision) return null;
-  const user = await getUserBySessionToken(bearer(req));
-  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
-  try {
-    if (isList) {
-      const params = new URL(req.url).searchParams;
-      const limit = Number(params.get("limit") ?? REQUESTS_PAGE_DEFAULT);
-      const offset = Number(params.get("offset") ?? 0);
-      const status = params.get("status");
-      if (status !== null && status !== "" && !(REQUEST_STATUSES as readonly string[]).includes(status))
-        return send(req, 400, { ok: false, code: "validation", message: "status must be pending, approved or rejected." });
-      return send(req, 200, {
-        ok: true,
-        ...(await listCoachRequests(user, {
-          q: params.get("q") ?? undefined,
-          status: (status || undefined) as RequestStatus | undefined,
-          limit: Number.isInteger(limit) && limit >= 1 ? Math.min(limit, REQUESTS_PAGE_MAX) : REQUESTS_PAGE_DEFAULT,
-          offset: Number.isInteger(offset) && offset >= 0 ? offset : 0,
-        })),
-      });
-    }
-    const id = decodeURIComponent((one as RegExpExecArray)[1] ?? "").slice(0, 100);
-    if (isOne) return send(req, 200, { ok: true, request: await getCoachRequest(user, id) });
-    const body = await readJson(req);
-    const parsed = z.object({ decision: z.enum(["approve", "reject"]), reason: z.unknown().optional() }).safeParse(body);
-    if (!parsed.success) return send(req, 400, { ok: false, code: "validation", message: 'Send { decision: "approve" | "reject", reason }.' });
-    return send(req, 200, { ok: true, request: await decideCoachRequest(user, id, parsed.data.decision, parsed.data.reason, requestMeta(req)) });
-  } catch (err) {
-    if (err instanceof RepDashboardError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
-    if (err instanceof ConnectionError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message, ...err.extra });
-    throw err;
-  }
-}
-
 /** Returns null when the path is not a coach-applications route, so the caller can keep matching. */
 async function handleCoachApplications(req: Request, path: string): Promise<Response | null> {
   const statusRoute = /^\/api\/coach-applications\/([^/]+)\/status$/.exec(path);
@@ -1284,6 +1229,8 @@ export async function handle(req: Request): Promise<Response> {
     if (schoolVerification) return schoolVerification;
     const monitoring = await handleMonitoring(req, path);
     if (monitoring) return monitoring;
+    const adminSettings = await handleAdminSettings(req, path);
+    if (adminSettings) return adminSettings;
     if (req.method === "POST" && path === "/api/reports") return await handleFileReport(req);
     if (req.method === "POST" && path === "/api/auth/login") return await handleLogin(req);
     if (req.method === "POST" && path === "/api/auth/register") return await handleRegister(req);
@@ -1323,12 +1270,6 @@ export async function handle(req: Request): Promise<Response> {
     if (coachApps) return coachApps;
     const university = await handleUniversity(req, path);
     if (university) return university;
-    const repDashboard = await handleRepDashboard(req, path);
-    if (repDashboard) return repDashboard;
-    const repCoaches = await handleRepCoaches(req, path);
-    if (repCoaches) return repCoaches;
-    const repCoachRequests = await handleRepCoachRequests(req, path);
-    if (repCoachRequests) return repCoachRequests;
     return send(req, 404, { error: "not_found" });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";

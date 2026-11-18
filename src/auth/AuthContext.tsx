@@ -25,6 +25,8 @@ interface AuthValue {
   /** Make this user the signed-in one and go to `landing`. Call it after signIn / signUp succeeded. */
   accept: (user: PublicUser, landing?: string) => void;
   signOut: () => Promise<void>;
+  /** Reloads the signed-in user from the server (after their name was changed, say) without signing anyone in or out. */
+  refreshUser: () => Promise<void>;
 }
 
 const Ctx = createContext<AuthValue | null>(null);
@@ -99,9 +101,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setEpoch((n) => n + 1);
   }, []);
 
+  const refreshUser = useCallback(async () => {
+    const u = await client.fetchCurrentUser().catch(() => null);
+    if (u) setUser(u);
+  }, []);
+
   const value = useMemo(
-    () => ({ user, ready, epoch, landing, signIn, signInAdmin, signUp, accept, signOut }),
-    [user, ready, epoch, landing, signIn, signInAdmin, signUp, accept, signOut],
+    () => ({ user, ready, epoch, landing, signIn, signInAdmin, signUp, accept, signOut, refreshUser }),
+    [user, ready, epoch, landing, signIn, signInAdmin, signUp, accept, signOut, refreshUser],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

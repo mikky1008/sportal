@@ -25,15 +25,15 @@ export function primaryRole(roles: readonly string[]): AccountRole | null {
 export const POST_SIGNUP_PATH: Record<AccountRole, string> = {
   student_athlete: "/complete-profile",
   coach: "/coach/dashboard",
-  university_representative: "/rep/dashboard",
+  university_representative: "/scholarships",
 };
 
 /** The administrator's landing page (the Admin Dashboard). */
 export const ADMIN_HOME_PATH = "/admin/dashboard";
 
-/** Where a signed-in user lands by default (no saved redirect): coaches and university representatives each get their own dashboard. */
+/** Where a signed-in user lands by default (no saved redirect): coaches get their own dashboard, university representatives their scholarships. */
 export function homePathFor(roles: readonly string[]): string {
   if (roles.includes("admin")) return ADMIN_HOME_PATH;
   const role = primaryRole(roles);
-  return role === "coach" ? "/coach/dashboard" : role === "university_representative" ? "/rep/dashboard" : "/dashboard";
+  return role === "coach" ? "/coach/dashboard" : role === "university_representative" ? "/scholarships" : "/dashboard";
 }

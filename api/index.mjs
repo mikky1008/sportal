@@ -9231,6 +9231,30 @@ var MIGRATIONS = [
       -- the activity log reads the audit log newest-first
       CREATE INDEX idx_audit_created ON audit_log (created_at DESC, id DESC);
     `
+  },
+  {
+    version: 14,
+    name: "admin_settings",
+    sql: `
+      -- What the administrator's account was last set to from ADMIN_PASSWORD. The server resets the
+      -- administrator's password from the environment only when that value CHANGES, so a password the
+      -- administrator chose in Settings is not undone every time the server restarts.
+      CREATE TABLE admin_account_state (
+        user_id           TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        env_password_hash TEXT NOT NULL,
+        updated_at        TIMESTAMPTZ NOT NULL
+      );
+
+      -- Which notifications the administrator wants in the bell. No row means everything is on.
+      CREATE TABLE admin_preferences (
+        user_id              TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        notify_applications  BOOLEAN NOT NULL DEFAULT TRUE,
+        notify_reports       BOOLEAN NOT NULL DEFAULT TRUE,
+        notify_registrations BOOLEAN NOT NULL DEFAULT TRUE,
+        notify_security      BOOLEAN NOT NULL DEFAULT TRUE,
+        updated_at           TIMESTAMPTZ NOT NULL
+      );
+    `
   }
 ];
 var MIGRATION_LOCK_ID = 727274001;
@@ -9386,6 +9410,7 @@ var RATE_LIMIT = {
 var SIGNUP_LIMIT = { windowMs: 60 * 60 * 1e3, max: 5 };
 var now2 = () => /* @__PURE__ */ new Date();
 var sha2562 = (s) => createHash("sha256").update(s).digest("hex");
+var hashSessionToken = sha2562;
 function normalizeIdentifier(raw) {
   return raw.trim().toLowerCase().slice(0, 254);
 }
@@ -10815,12 +10840,12 @@ async function getMyProfile(actor, dbArg) {
 function readDraft(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw fail({}, "Send the profile as an object.");
   const r = raw;
-  const bad2 = {};
+  const bad3 = {};
   const text3 = (k) => {
     const v = r[k];
     if (v === void 0 || v === null) return "";
     if (typeof v !== "string") {
-      bad2[k] = "Must be text.";
+      bad3[k] = "Must be text.";
       return "";
     }
     return v;
@@ -10833,7 +10858,7 @@ function readDraft(raw) {
   const ach = r["achievements"];
   let achievements = [];
   if (ach !== void 0) {
-    if (!Array.isArray(ach)) bad2["achievements"] = "Must be a list.";
+    if (!Array.isArray(ach)) bad3["achievements"] = "Must be a list.";
     else
       achievements = ach.slice(0, LIMITS.achievements + 1).map((x) => {
         const o = x && typeof x === "object" ? x : {};
@@ -10856,7 +10881,7 @@ function readDraft(raw) {
     bio: text3("bio"),
     achievements
   };
-  if (Object.keys(bad2).length > 0) throw fail(bad2);
+  if (Object.keys(bad3).length > 0) throw fail(bad3);
   return draft;
 }
 function flatten(errors) {
@@ -11143,8 +11168,8 @@ async function createSession2(actor, body, dbArg) {
 }
 async function requestSessionReview(actor, id, dbArg) {
   requireAthlete3(actor);
-  const notFound8 = new ConnectionError(404, "session_not_found", "Session not found.");
-  if (!UUID_RE3.test(id)) throw notFound8;
+  const notFound6 = new ConnectionError(404, "session_not_found", "Session not found.");
+  if (!UUID_RE3.test(id)) throw notFound6;
   const db = dbArg ?? await getDb();
   const [row] = await db`
     UPDATE practice_sessions SET status = 'pending_review'
@@ -11152,11 +11177,11 @@ async function requestSessionReview(actor, id, dbArg) {
     RETURNING id`;
   if (!row) {
     const existing = await viewById2(db, id, actor.id);
-    if (!existing) throw notFound8;
+    if (!existing) throw notFound6;
     throw new ConnectionError(409, "cannot_request_review", existing.status === "Coach-Verified" ? "A coach has already verified this session." : "This session is already waiting for review.");
   }
   const view2 = await viewById2(db, id, actor.id);
-  if (!view2) throw notFound8;
+  if (!view2) throw notFound6;
   return view2;
 }
 function requireVerifiedCoach(actor) {
@@ -11181,8 +11206,8 @@ async function listSessionsForReview(actor, opts = {}, dbArg) {
 }
 async function verifySession(actor, id, meta = {}, dbArg) {
   requireVerifiedCoach(actor);
-  const notFound8 = new ConnectionError(404, "session_not_found", "Session not found.");
-  if (!UUID_RE3.test(id)) throw notFound8;
+  const notFound6 = new ConnectionError(404, "session_not_found", "Session not found.");
+  if (!UUID_RE3.test(id)) throw notFound6;
   const db = dbArg ?? await getDb();
   const ts = /* @__PURE__ */ new Date();
   let athleteId = "";
@@ -11194,7 +11219,7 @@ async function verifySession(actor, id, meta = {}, dbArg) {
       JOIN coach_athlete_connections c ON c.athlete_id = s.athlete_id AND c.coach_id = ${actor.id} AND c.status = 'accepted'
       WHERE s.id = ${id}
       FOR UPDATE OF s`;
-    if (!row) throw notFound8;
+    if (!row) throw notFound6;
     if (row.status === "coach_verified") throw new ConnectionError(409, "already_verified", "This session is already verified.");
     await tx`
       UPDATE practice_sessions SET status = 'coach_verified', verified_by = ${actor.id}, verified_at = ${ts}
@@ -11205,7 +11230,7 @@ async function verifySession(actor, id, meta = {}, dbArg) {
   await audit("practice_session.verified", { userId: actor.id, ...meta, detail: { sessionId: id } }, db);
   await notify(athleteId, { category: "verification", title: "Result verified", message: `${actor.displayName} verified your ${skillName} result. It now counts in rankings.`, link: "/performance" }, db);
   const view2 = await viewById2(db, id);
-  if (!view2) throw notFound8;
+  if (!view2) throw notFound6;
   return view2;
 }
 
@@ -11740,14 +11765,14 @@ function readBody(raw, accountEmail) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw fail3({}, "Send the profile as an object.");
   const r = raw;
   const out = { ...EMPTY_COACH };
-  const bad2 = {};
+  const bad3 = {};
   for (const k of COACH_PROFILE_KEYS) {
     const v = r[k];
     if (v === void 0) continue;
-    if (typeof v !== "string") bad2[k] = "Must be text.";
+    if (typeof v !== "string") bad3[k] = "Must be text.";
     else out[k] = v.trim();
   }
-  if (Object.keys(bad2).length > 0) throw fail3(bad2);
+  if (Object.keys(bad3).length > 0) throw fail3(bad3);
   out.email = accountEmail;
   return out;
 }
@@ -12216,16 +12241,30 @@ async function provisionAdminAccount(dbArg, env = process.env) {
     let adminId;
     let created = false;
     let passwordChanged = false;
+    const rotate = async (reason) => {
+      const hash = await hashPassword(cfg.password);
+      if (reason === "changed") {
+        await tx`UPDATE users SET password_hash = ${hash}, password_changed_at = ${ts}, updated_at = ${ts} WHERE id = ${adminId}`;
+        await tx`DELETE FROM sessions WHERE user_id = ${adminId}`;
+        await audit("admin.password_rotated", { userId: adminId }, tx);
+        passwordChanged = true;
+      }
+      return hash;
+    };
+    const remember = (hash) => tx`
+      INSERT INTO admin_account_state (user_id, env_password_hash, updated_at) VALUES (${adminId}, ${hash}, ${ts})
+      ON CONFLICT (user_id) DO UPDATE SET env_password_hash = EXCLUDED.env_password_hash, updated_at = EXCLUDED.updated_at`;
     if (!existing) {
       const [nameTaken] = await tx`SELECT 1 AS x FROM users WHERE lower(username) = ${cfg.username.toLowerCase()}`;
       if (nameTaken) return { state: "disabled", reason: `ADMIN_USERNAME "${cfg.username}" is already used by another account. Choose a different one.` };
       adminId = randomUUID10();
-      const hash = await hashPassword(cfg.password);
+      const hash = await rotate("created");
       await tx`
         INSERT INTO users (id, email, username, password_hash, display_name, password_changed_at, created_at, updated_at)
         VALUES (${adminId}, ${cfg.email}, ${cfg.username}, ${hash}, ${cfg.displayName}, ${ts}, ${ts}, ${ts})`;
       await tx`INSERT INTO user_profiles (user_id, first_name, last_name, updated_at) VALUES (${adminId}, NULL, NULL, ${ts})`;
       await tx`INSERT INTO user_roles (user_id, role_id, granted_at) VALUES (${adminId}, ${role.id}, ${ts})`;
+      await remember(hash);
       await audit("admin.provisioned", { userId: adminId }, tx);
       created = true;
     } else {
@@ -12233,11 +12272,12 @@ async function provisionAdminAccount(dbArg, env = process.env) {
       const [holdsRole] = await tx`SELECT 1 AS x FROM user_roles WHERE user_id = ${adminId} AND role_id = ${role.id}`;
       if (!holdsRole)
         return { state: "disabled", reason: "ADMIN_EMAIL belongs to an existing non-administrator account. Use an email address that nobody has registered with." };
-      if (!await verifyPassword(cfg.password, existing.password_hash)) {
-        await tx`UPDATE users SET password_hash = ${await hashPassword(cfg.password)}, password_changed_at = ${ts}, updated_at = ${ts} WHERE id = ${adminId}`;
-        await tx`DELETE FROM sessions WHERE user_id = ${adminId}`;
-        await audit("admin.password_rotated", { userId: adminId }, tx);
-        passwordChanged = true;
+      const [state] = await tx`SELECT env_password_hash FROM admin_account_state WHERE user_id = ${adminId}`;
+      if (!state) {
+        if (await verifyPassword(cfg.password, existing.password_hash)) await remember(existing.password_hash);
+        else await remember(await rotate("changed"));
+      } else if (!await verifyPassword(cfg.password, state.env_password_hash)) {
+        await remember(await rotate("changed"));
       }
       if (existing.username.toLowerCase() !== cfg.username.toLowerCase()) {
         const [nameTaken] = await tx`SELECT 1 AS x FROM users WHERE lower(username) = ${cfg.username.toLowerCase()} AND id <> ${adminId}`;
@@ -12295,7 +12335,8 @@ var ACTIVITY_EVENTS = [
   "admin.user_reactivated",
   "report.submitted",
   "report.dismissed",
-  "report.resolved"
+  "report.resolved",
+  "admin.password_changed"
 ];
 function rolesFromDetail(detail) {
   if (!detail) return null;
@@ -12320,7 +12361,7 @@ async function getAdminOverview(actor) {
   const [reports] = await db`SELECT COUNT(*)::int AS n FROM content_reports WHERE status = 'pending'`;
   const [ok] = await db`
     SELECT COUNT(*)::int AS n FROM audit_log WHERE event IN ('login.success', 'admin.login.success') AND created_at > ${since}`;
-  const [bad2] = await db`
+  const [bad3] = await db`
     SELECT COUNT(*)::int AS n FROM audit_log WHERE event IN ('login.failed', 'admin.login.failed') AND created_at > ${since}`;
   const recent = await db`
     SELECT event, identifier, detail, created_at FROM audit_log WHERE event IN ${db(ACTIVITY_EVENTS)}
@@ -12368,7 +12409,7 @@ async function getAdminOverview(actor) {
     },
     pendingVerifications: pending?.n ?? 0,
     pendingReports: reports?.n ?? 0,
-    signIns24h: { succeeded: ok?.n ?? 0, failed: bad2?.n ?? 0 },
+    signIns24h: { succeeded: ok?.n ?? 0, failed: bad3?.n ?? 0 },
     recentActivity: recent.map((r) => ({ event: r.event, identifier: r.identifier, roles: rolesFromDetail(r.detail), at: r.created_at.toISOString() }))
   };
 }
@@ -12385,6 +12426,10 @@ var EVENTS = {
   "admin.provisioned": "security",
   "admin.password_rotated": "security",
   "admin.role_revoked": "security",
+  "admin.password_changed": "security",
+  "admin.password_change_failed": "security",
+  "admin.session_revoked": "security",
+  "admin.sessions_revoked": "security",
   "user.created": "accounts",
   "coach_verification.requested": "accounts",
   "coach_verification.approved": "accounts",
@@ -12393,6 +12438,7 @@ var EVENTS = {
   "admin.user_reactivated": "administration",
   "admin.rep_approved": "administration",
   "admin.rep_rejected": "administration",
+  "admin.profile_updated": "administration",
   "connection.requested": "platform",
   "connection.accepted": "platform",
   "connection.declined": "platform",
@@ -12485,6 +12531,18 @@ function describe2(event, d2, names) {
       return "Administrator password updated";
     case "admin.role_revoked":
       return "Administrator access removed from this account";
+    case "admin.password_changed":
+      return "Changed their password";
+    case "admin.password_change_failed":
+      return "Entered the wrong current password while changing their password";
+    case "admin.session_revoked":
+      return `Signed out another device${str2(d2["device"]) ? ` (${str2(d2["device"])})` : ""}`;
+    case "admin.sessions_revoked":
+      return "Signed out all their other devices";
+    case "admin.profile_updated": {
+      const what = Array.isArray(d2["changed"]) ? d2["changed"].map((c2) => String(c2)).join(", ") : "";
+      return `Updated their profile${what ? ` (${what})` : ""}`;
+    }
     case "user.created": {
       const roles = Array.isArray(d2["roles"]) ? d2["roles"].map((r) => ROLE_LABEL[String(r)]).filter(Boolean) : [];
       return roles.length ? `Created a ${roles[0]} account` : "Created an account";
@@ -12825,6 +12883,387 @@ async function resolveReport(actor, id, raw, meta) {
     await audit("report.resolved", { userId: actor.id, ...meta, detail: { reportId: id, targetUserId: target, actions, ...note ? { note } : {} } }, tx);
   });
   return { report: await getReport(actor, id), effects };
+}
+
+// server/admin-settings.server.ts
+var NAME_MIN = 2;
+var NAME_MAX = 80;
+var PART_MAX = 40;
+var AVATAR_MAX_CHARS = 3e5;
+var bad2 = (message, fieldErrors) => new ConnectionError(400, "validation", message, fieldErrors ? { fieldErrors } : void 0);
+var stripControl = (s) => s.replace(/[\u0000-\u001f\u007f]/g, "").replace(/\s+/g, " ").trim();
+var safeAvatar = (v) => v && v.length <= AVATAR_MAX_CHARS && validatePhotoDataUrl(v) === null ? v : null;
+async function getAdminProfile(actor) {
+  requireAdmin(actor);
+  const db = await getDb();
+  const [r] = await db`
+    SELECT u.display_name, u.email, u.username, u.created_at, u.last_login_at, u.password_changed_at,
+           up.first_name, up.last_name, up.avatar_url
+    FROM users u LEFT JOIN user_profiles up ON up.user_id = u.id
+    WHERE u.id = ${actor.id} AND u.deleted_at IS NULL`;
+  if (!r) throw new ConnectionError(404, "not_found", "Your account could not be found.");
+  return {
+    displayName: r.display_name,
+    firstName: r.first_name ?? "",
+    lastName: r.last_name ?? "",
+    email: r.email,
+    username: r.username,
+    avatar: safeAvatar(r.avatar_url),
+    createdAt: r.created_at.toISOString(),
+    lastLoginAt: r.last_login_at ? r.last_login_at.toISOString() : null,
+    passwordChangedAt: r.password_changed_at ? r.password_changed_at.toISOString() : null
+  };
+}
+async function updateAdminProfile(actor, raw, meta) {
+  requireAdmin(actor);
+  const body = raw && typeof raw === "object" ? raw : {};
+  const text3 = (k) => typeof body[k] === "string" ? stripControl(body[k]) : "";
+  const displayName2 = text3("displayName");
+  if (displayName2.length < NAME_MIN || displayName2.length > NAME_MAX)
+    throw bad2(`Enter a name of ${NAME_MIN} to ${NAME_MAX} characters.`, { displayName: `Enter a name of ${NAME_MIN} to ${NAME_MAX} characters.` });
+  const firstName = text3("firstName");
+  const lastName = text3("lastName");
+  if (firstName.length > PART_MAX) throw bad2("First name is too long.", { firstName: `Keep it under ${PART_MAX} characters.` });
+  if (lastName.length > PART_MAX) throw bad2("Last name is too long.", { lastName: `Keep it under ${PART_MAX} characters.` });
+  const db = await getDb();
+  const before = await getAdminProfile(actor);
+  const ts = /* @__PURE__ */ new Date();
+  await db.begin(async (txRaw) => {
+    const tx = txRaw;
+    await tx`UPDATE users SET display_name = ${displayName2}, updated_at = ${ts} WHERE id = ${actor.id}`;
+    await tx`
+      INSERT INTO user_profiles (user_id, first_name, last_name, updated_at) VALUES (${actor.id}, ${firstName || null}, ${lastName || null}, ${ts})
+      ON CONFLICT (user_id) DO UPDATE SET first_name = EXCLUDED.first_name, last_name = EXCLUDED.last_name, updated_at = EXCLUDED.updated_at`;
+    const changed = [
+      before.displayName !== displayName2 && "name",
+      (before.firstName !== firstName || before.lastName !== lastName) && "first and last name"
+    ].filter(Boolean);
+    if (changed.length) await audit("admin.profile_updated", { userId: actor.id, ...meta, detail: { changed } }, tx);
+  });
+  return getAdminProfile(actor);
+}
+async function setAdminAvatar(actor, dataUrl, meta) {
+  requireAdmin(actor);
+  const db = await getDb();
+  let value2 = null;
+  if (dataUrl !== null) {
+    if (typeof dataUrl !== "string") throw bad2("Choose an image.");
+    const problem = validatePhotoDataUrl(dataUrl);
+    if (problem) throw bad2(problem, { avatar: problem });
+    if (dataUrl.length > AVATAR_MAX_CHARS) throw bad2("That image is too large. Try a smaller one.", { avatar: "That image is too large." });
+    value2 = dataUrl;
+  }
+  const ts = /* @__PURE__ */ new Date();
+  await db`
+    INSERT INTO user_profiles (user_id, avatar_url, updated_at) VALUES (${actor.id}, ${value2}, ${ts})
+    ON CONFLICT (user_id) DO UPDATE SET avatar_url = EXCLUDED.avatar_url, updated_at = EXCLUDED.updated_at`;
+  await audit("admin.profile_updated", { userId: actor.id, ...meta, detail: { changed: [value2 ? "photo" : "photo removed"] } }, db);
+  return getAdminProfile(actor);
+}
+async function changeAdminPassword(actor, raw, currentToken, meta) {
+  requireAdmin(actor);
+  const body = raw && typeof raw === "object" ? raw : {};
+  const current = typeof body["currentPassword"] === "string" ? body["currentPassword"] : "";
+  const next = typeof body["newPassword"] === "string" ? body["newPassword"] : "";
+  if (!current) throw bad2("Enter your current password.", { currentPassword: "Enter your current password." });
+  if (current.length > 128 || next.length > 128) throw bad2("That password is too long.");
+  if (typeof body["confirmPassword"] === "string" && body["confirmPassword"] !== next)
+    throw bad2("The passwords don't match.", { confirmPassword: "The passwords don't match." });
+  const weak = next.length < ADMIN_PASSWORD_MIN ? `Use at least ${ADMIN_PASSWORD_MIN} characters.` : checkPasswordStrength(next);
+  if (weak) throw bad2(weak, { newPassword: weak });
+  if (next === current) throw bad2("Choose a password you haven't used here.", { newPassword: "The new password must be different." });
+  const db = await getDb();
+  const bucket = `admin-pw:${actor.id}`;
+  const wait = await checkRateLimit(db, bucket, meta.ip);
+  if (wait !== null) {
+    const mins = Math.ceil(wait / 60);
+    throw new ConnectionError(429, "rate_limited", `Too many wrong passwords. Try again in about ${mins} minute${mins === 1 ? "" : "s"}.`, { retryAfterSec: wait });
+  }
+  const [row] = await db`SELECT password_hash FROM users WHERE id = ${actor.id} AND deleted_at IS NULL`;
+  if (!row) throw new ConnectionError(404, "not_found", "Your account could not be found.");
+  if (!await verifyPassword(current, row.password_hash)) {
+    await recordAttempt(db, bucket, meta.ip, false);
+    await audit("admin.password_change_failed", { userId: actor.id, ...meta }, db);
+    throw bad2("That isn't your current password.", { currentPassword: "That isn't your current password." });
+  }
+  const hash = await hashPassword(next);
+  const keep = currentToken ? hashSessionToken(currentToken) : "";
+  const ts = /* @__PURE__ */ new Date();
+  let signedOut = 0;
+  await db.begin(async (txRaw) => {
+    const tx = txRaw;
+    await tx`UPDATE users SET password_hash = ${hash}, password_changed_at = ${ts}, updated_at = ${ts} WHERE id = ${actor.id}`;
+    const gone = await tx`DELETE FROM sessions WHERE user_id = ${actor.id} AND token_hash <> ${keep} RETURNING token_hash`;
+    signedOut = gone.length;
+    await tx`DELETE FROM login_attempts WHERE identifier = ${bucket}`;
+    await audit("admin.password_changed", { userId: actor.id, ...meta, detail: { otherSessionsSignedOut: signedOut } }, tx);
+  });
+  return { otherSessionsSignedOut: signedOut };
+}
+function describeDevice(ua) {
+  const s = ua ?? "";
+  const browser = !s ? "Unknown browser" : /Edg\//.test(s) ? "Edge" : /OPR\/|Opera/.test(s) ? "Opera" : /Firefox\//.test(s) ? "Firefox" : /Chrome\/|CriOS\//.test(s) ? "Chrome" : /Safari\//.test(s) ? "Safari" : /curl|node|axios|python|okhttp/i.test(s) ? "API client" : "Browser";
+  const os2 = /Windows/.test(s) ? "Windows" : /Android/.test(s) ? "Android" : /iPhone|iPad|iPod/.test(s) ? "iOS" : /Mac OS X|Macintosh/.test(s) ? "macOS" : /CrOS/.test(s) ? "ChromeOS" : /Linux/.test(s) ? "Linux" : "";
+  return { device: os2 ? `${browser} on ${os2}` : browser, browser, os: os2 };
+}
+var opaqueId = (tokenHash) => hashSessionToken(`session-list:${tokenHash}`).slice(0, 24);
+async function activeSessions(db, userId) {
+  return db`
+    SELECT token_hash, created_at, last_seen_at, expires_at, ip, user_agent FROM sessions
+    WHERE user_id = ${userId} AND revoked_at IS NULL AND expires_at > ${/* @__PURE__ */ new Date()}
+    ORDER BY last_seen_at DESC, created_at DESC`;
+}
+async function listAdminSessions(actor, currentToken) {
+  requireAdmin(actor);
+  const db = await getDb();
+  const mine = currentToken ? hashSessionToken(currentToken) : "";
+  return (await activeSessions(db, actor.id)).map((r) => ({
+    id: opaqueId(r.token_hash),
+    current: r.token_hash === mine,
+    ...describeDevice(r.user_agent),
+    ip: r.ip,
+    signedInAt: r.created_at.toISOString(),
+    lastActiveAt: r.last_seen_at.toISOString(),
+    expiresAt: r.expires_at.toISOString()
+  }));
+}
+async function revokeAdminSession(actor, sessionId, currentToken, meta) {
+  requireAdmin(actor);
+  const db = await getDb();
+  const mine = currentToken ? hashSessionToken(currentToken) : "";
+  const target = (await activeSessions(db, actor.id)).find((r) => opaqueId(r.token_hash) === sessionId);
+  if (!target) throw new ConnectionError(404, "session_not_found", "That session has already ended.");
+  if (target.token_hash === mine) throw new ConnectionError(400, "current_session", "This is the device you're using. Use Sign out instead.");
+  await db`DELETE FROM sessions WHERE token_hash = ${target.token_hash} AND user_id = ${actor.id}`;
+  await audit("admin.session_revoked", { userId: actor.id, ...meta, detail: { device: describeDevice(target.user_agent).device } }, db);
+}
+async function revokeOtherAdminSessions(actor, currentToken, meta) {
+  requireAdmin(actor);
+  const db = await getDb();
+  const keep = currentToken ? hashSessionToken(currentToken) : "";
+  const gone = await db`DELETE FROM sessions WHERE user_id = ${actor.id} AND token_hash <> ${keep} RETURNING token_hash`;
+  if (gone.length) await audit("admin.sessions_revoked", { userId: actor.id, ...meta, detail: { count: gone.length } }, db);
+  return { revoked: gone.length };
+}
+var DEFAULT_PREFS = { applications: true, reports: true, registrations: true, security: true };
+async function getAdminPreferences(actor) {
+  requireAdmin(actor);
+  const db = await getDb();
+  const [r] = await db`
+    SELECT notify_applications AS a, notify_reports AS r, notify_registrations AS g, notify_security AS s
+    FROM admin_preferences WHERE user_id = ${actor.id}`;
+  return r ? { applications: r.a, reports: r.r, registrations: r.g, security: r.s } : { ...DEFAULT_PREFS };
+}
+async function updateAdminPreferences(actor, raw) {
+  requireAdmin(actor);
+  const body = raw && typeof raw === "object" ? raw : {};
+  const next = await getAdminPreferences(actor);
+  for (const key2 of Object.keys(DEFAULT_PREFS)) {
+    if (body[key2] === void 0) continue;
+    if (typeof body[key2] !== "boolean") throw bad2(`"${key2}" must be true or false.`);
+    next[key2] = body[key2];
+  }
+  const db = await getDb();
+  await db`
+    INSERT INTO admin_preferences (user_id, notify_applications, notify_reports, notify_registrations, notify_security, updated_at)
+    VALUES (${actor.id}, ${next.applications}, ${next.reports}, ${next.registrations}, ${next.security}, ${/* @__PURE__ */ new Date()})
+    ON CONFLICT (user_id) DO UPDATE SET
+      notify_applications = EXCLUDED.notify_applications, notify_reports = EXCLUDED.notify_reports,
+      notify_registrations = EXCLUDED.notify_registrations, notify_security = EXCLUDED.notify_security,
+      updated_at = EXCLUDED.updated_at`;
+  return next;
+}
+async function getAdminHeader(actor) {
+  requireAdmin(actor);
+  const db = await getDb();
+  const prefs = await getAdminPreferences(actor);
+  const profile = await getAdminProfile(actor);
+  const day = new Date(Date.now() - 24 * 60 * 60 * 1e3);
+  const week = new Date(Date.now() - 7 * 24 * 60 * 60 * 1e3);
+  const count = async (q) => (await q)[0]?.n ?? 0;
+  return {
+    displayName: profile.displayName,
+    avatar: profile.avatar,
+    bell: {
+      applications: prefs.applications ? await count(db`SELECT COUNT(*)::int AS n FROM rep_applications ra JOIN users u ON u.id = ra.user_id AND u.deleted_at IS NULL WHERE ra.status = 'pending'`) : null,
+      reports: prefs.reports ? await count(db`SELECT COUNT(*)::int AS n FROM content_reports WHERE status = 'pending'`) : null,
+      registrations: prefs.registrations ? await count(db`
+            SELECT COUNT(*)::int AS n FROM users u
+            WHERE u.deleted_at IS NULL AND u.created_at > ${week}
+              AND NOT EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id AND r.name = 'admin')`) : null,
+      securityAlerts: prefs.security ? await count(db`SELECT COUNT(*)::int AS n FROM audit_log WHERE event IN ('admin.login.failed', 'admin.login.blocked') AND created_at > ${day}`) : null
+    }
+  };
+}
+
+// package.json
+var package_default = {
+  name: "sportal-ionic",
+  private: true,
+  version: "1.0.0",
+  type: "module",
+  engines: {
+    node: ">=22.5"
+  },
+  scripts: {
+    dev: "vite",
+    "build:api": "esbuild server/vercel-entry.ts --bundle --platform=node --target=node22 --format=esm --outfile=api/index.mjs --log-level=warning",
+    build: "npm run build:api && tsc --noEmit && vite build",
+    preview: "vite preview",
+    api: "node --env-file-if-exists=.env --experimental-strip-types --no-warnings server/index.ts",
+    "review:coach": "node --env-file-if-exists=.env --experimental-strip-types --no-warnings scripts/review-coach.ts",
+    "seed:demo": "node --env-file-if-exists=.env --experimental-strip-types --no-warnings scripts/seed-demo.ts",
+    "user:create": "node --env-file-if-exists=.env --experimental-strip-types --no-warnings scripts/create-user.ts",
+    "cap:sync": "npm run build && npx cap sync",
+    android: "npm run cap:sync && npx cap open android",
+    ios: "npm run cap:sync && npx cap open ios"
+  },
+  dependencies: {
+    "@capacitor/core": "^7.0.0",
+    "@capacitor/preferences": "^7.0.0",
+    "@capacitor/splash-screen": "^7.0.0",
+    "@capacitor/status-bar": "^7.0.0",
+    "@hookform/resolvers": "^5.2.2",
+    "@ionic/react": "^8.0.0",
+    "@ionic/react-router": "^8.0.0",
+    "@radix-ui/react-accordion": "^1.2.12",
+    "@radix-ui/react-alert-dialog": "^1.1.15",
+    "@radix-ui/react-aspect-ratio": "^1.1.8",
+    "@radix-ui/react-avatar": "^1.1.11",
+    "@radix-ui/react-checkbox": "^1.3.3",
+    "@radix-ui/react-collapsible": "^1.1.12",
+    "@radix-ui/react-context-menu": "^2.2.16",
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@radix-ui/react-dropdown-menu": "^2.1.16",
+    "@radix-ui/react-hover-card": "^1.1.15",
+    "@radix-ui/react-label": "^2.1.8",
+    "@radix-ui/react-menubar": "^1.1.16",
+    "@radix-ui/react-navigation-menu": "^1.2.14",
+    "@radix-ui/react-popover": "^1.1.15",
+    "@radix-ui/react-progress": "^1.1.8",
+    "@radix-ui/react-radio-group": "^1.3.8",
+    "@radix-ui/react-scroll-area": "^1.2.10",
+    "@radix-ui/react-select": "^2.2.6",
+    "@radix-ui/react-separator": "^1.1.8",
+    "@radix-ui/react-slider": "^1.3.6",
+    "@radix-ui/react-slot": "^1.2.4",
+    "@radix-ui/react-switch": "^1.2.6",
+    "@radix-ui/react-tabs": "^1.1.13",
+    "@radix-ui/react-toggle": "^1.1.10",
+    "@radix-ui/react-toggle-group": "^1.1.11",
+    "@radix-ui/react-tooltip": "^1.2.8",
+    "class-variance-authority": "^0.7.1",
+    clsx: "^2.1.1",
+    cmdk: "^1.1.1",
+    "date-fns": "^4.1.0",
+    "embla-carousel-react": "^8.6.0",
+    "input-otp": "^1.4.2",
+    ionicons: "^7.4.0",
+    "lucide-react": "^0.575.0",
+    postgres: "^4.0.0",
+    react: "^19.2.0",
+    "react-day-picker": "^9.14.0",
+    "react-dom": "^19.2.0",
+    "react-hook-form": "^7.71.2",
+    "react-resizable-panels": "^4.6.5",
+    "react-router": "^5.3.4",
+    "react-router-dom": "^5.3.4",
+    recharts: "^2.15.4",
+    sonner: "^2.0.7",
+    "tailwind-merge": "^3.5.0",
+    tailwindcss: "^4.2.1",
+    "tw-animate-css": "^1.3.4",
+    vaul: "^1.1.2",
+    zod: "^3.25.76"
+  },
+  devDependencies: {
+    "@capacitor/android": "^7.0.0",
+    "@capacitor/cli": "^7.0.0",
+    "@capacitor/ios": "^7.0.0",
+    "@tailwindcss/vite": "^4.2.1",
+    "@types/node": "^22.16.5",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@types/react-router": "^5.1.20",
+    "@types/react-router-dom": "^5.3.3",
+    "@vitejs/plugin-react": "^5.0.0",
+    esbuild: "^0.28.2",
+    typescript: "^5.8.3",
+    vite: "^7.0.0"
+  }
+};
+
+// server/system-info.server.ts
+var STARTED_AT = Date.now();
+async function getSystemInfo(actor) {
+  requireAdmin(actor);
+  const db = await getDb();
+  const t0 = performance.now();
+  const [ver] = await db`SELECT version() AS v`;
+  const latencyMs = Math.max(1, Math.round(performance.now() - t0));
+  const engine = /^PostgreSQL\s+[\d.]+/.exec(ver?.v ?? "")?.[0] ?? "PostgreSQL";
+  const [size] = await db`SELECT pg_database_size(current_database())::text AS n`;
+  const [mig] = await db`SELECT MAX(version)::int AS v, COUNT(*)::int AS n FROM schema_migrations`;
+  const [p2] = await db`
+    WITH people AS (
+      SELECT u.id, u.is_active,
+             ARRAY(SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id) AS roles
+      FROM users u WHERE u.deleted_at IS NULL
+    )
+    SELECT
+      (SELECT COUNT(*) FROM people WHERE NOT ('admin' = ANY(roles)))::int AS users,
+      (SELECT COUNT(*) FROM people WHERE 'student_athlete' = ANY(roles))::int AS athletes,
+      (SELECT COUNT(*) FROM people WHERE roles && ARRAY['coach', 'verified_coach'])::int AS coaches,
+      (SELECT COUNT(*) FROM people WHERE 'university_representative' = ANY(roles))::int AS reps,
+      (SELECT COUNT(*) FROM people WHERE NOT is_active AND NOT ('admin' = ANY(roles)))::int AS suspended,
+      (SELECT COUNT(*) FROM universities)::int AS schools,
+      (SELECT COUNT(*) FROM scholarships)::int AS scholarships,
+      (SELECT COUNT(*) FROM content_reports WHERE status IN ('pending', 'investigating'))::int AS open_reports,
+      (SELECT COUNT(*) FROM sessions WHERE revoked_at IS NULL AND expires_at > now())::int AS sessions,
+      (SELECT COUNT(*) FROM audit_log)::int AS events`;
+  const now6 = Date.now();
+  return {
+    application: {
+      name: "Sportal",
+      version: package_default.version,
+      environment: process.env["VERCEL_ENV"] ?? process.env["NODE_ENV"] ?? "development",
+      runtime: `Node.js ${process.version.replace(/^v/, "")}`,
+      region: process.env["VERCEL_REGION"] ?? null,
+      serverTime: new Date(now6).toISOString(),
+      startedAt: new Date(STARTED_AT).toISOString(),
+      uptimeSeconds: Math.floor((now6 - STARTED_AT) / 1e3)
+    },
+    database: {
+      engine,
+      reachable: true,
+      latencyMs,
+      sizeBytes: size?.n ? Number(size.n) : null,
+      schemaVersion: mig?.v ?? 0,
+      migrationsApplied: mig?.n ?? 0
+    },
+    platform: {
+      users: p2?.users ?? 0,
+      athletes: p2?.athletes ?? 0,
+      coaches: p2?.coaches ?? 0,
+      schoolRepresentatives: p2?.reps ?? 0,
+      suspendedAccounts: p2?.suspended ?? 0,
+      schools: p2?.schools ?? 0,
+      scholarships: p2?.scholarships ?? 0,
+      openReports: p2?.open_reports ?? 0,
+      activeSessions: p2?.sessions ?? 0,
+      activityEvents: p2?.events ?? 0
+    },
+    security: {
+      adminSessionHours: ADMIN_SESSION_TTL_MS / 36e5,
+      userSessionHours: SESSION_TTL_MS / 36e5,
+      rememberDays: REMEMBER_TTL_MS / 864e5,
+      adminPasswordMinLength: ADMIN_PASSWORD_MIN,
+      userPasswordMinLength: PASSWORD_RULES.min,
+      lockoutAttempts: RATE_LIMIT.maxFailuresPerIdentifier,
+      lockoutMinutes: RATE_LIMIT.windowMs / 6e4,
+      adminAccountSource: "Server environment variables (ADMIN_EMAIL, ADMIN_PASSWORD)"
+    }
+  };
 }
 
 // server/rep-applications.server.ts
@@ -13210,432 +13649,6 @@ async function listUniversityAthletes(user, page, dbArg) {
   };
 }
 
-// server/rep-dashboard.server.ts
-var REP_ROLE = "university_representative";
-var PENDING_LIMIT = 50;
-var ACTIVITY_LIMIT = 10;
-var RepDashboardError = class extends Error {
-  httpStatus;
-  code;
-  constructor(httpStatus, code, message) {
-    super(message);
-    this.httpStatus = httpStatus;
-    this.code = code;
-  }
-};
-async function resolveSchool(db, user) {
-  if (!user.roles.includes(REP_ROLE))
-    throw new RepDashboardError(403, "role_not_allowed", "Only school representatives can open this dashboard.");
-  const [row] = await db`
-    SELECT rp.university_name, rp.designation, lower(btrim(rp.university_name)) AS key, ra.status
-    FROM university_representative_profiles rp
-    LEFT JOIN rep_applications ra ON ra.user_id = rp.user_id
-    WHERE rp.user_id = ${user.id}`;
-  if (!row) throw new RepDashboardError(404, "no_school", "Your account isn't linked to a school yet.");
-  if (row.status !== null && row.status !== "approved")
-    throw new RepDashboardError(403, "school_not_approved", "Your school hasn't been approved by a Sportal administrator yet.");
-  const [u] = await db`
-    SELECT id, name, location, logo_url FROM universities WHERE name_key = ${row.key}`;
-  return {
-    key: row.key,
-    // The registered name when the school exists on Sportal, otherwise what the representative applied with.
-    name: u?.name ?? row.university_name.trim(),
-    universityId: u?.id ?? null,
-    location: u?.location ?? "",
-    logoUrl: u?.logo_url ?? "",
-    designation: row.designation
-  };
-}
-var VERIFIED_AND_ACTIVE2 = (db, alias) => db`
-  EXISTS (SELECT 1 FROM user_roles vr JOIN roles r ON r.id = vr.role_id WHERE vr.user_id = ${db(alias)}.id AND r.name = 'verified_coach')
-  AND EXISTS (SELECT 1 FROM coach_verifications cv WHERE cv.coach_id = ${db(alias)}.id AND cv.status = 'verified')
-  AND ${db(alias)}.is_active = TRUE AND ${db(alias)}.deleted_at IS NULL`;
-var personName = (db, up, u) => db`COALESCE(NULLIF(btrim(concat_ws(' ', ${db(up)}.first_name, ${db(up)}.last_name)), ''), ${db(u)}.display_name)`;
-async function loadStats(db, school) {
-  const uid = school.universityId;
-  const [pending] = await db`
-    SELECT count(*)::int AS n
-    FROM coach_verifications v
-    JOIN users u ON u.id = v.coach_id AND u.is_active = TRUE AND u.deleted_at IS NULL
-    JOIN coach_profiles cp ON cp.user_id = v.coach_id
-    WHERE v.status = 'pending' AND lower(btrim(v.organization)) = ${school.key}
-      AND cp.organization_type IN ('University', 'College')`;
-  if (!uid) return { totalCoaches: 0, activeCoaches: 0, totalAthletes: 0, pendingCoachRequests: pending?.n ?? 0 };
-  const [coaches] = await db`
-    SELECT count(*)::int AS total, (count(*) FILTER (WHERE u.is_active))::int AS active
-    FROM coach_profiles cp
-    JOIN users u ON u.id = cp.user_id AND u.deleted_at IS NULL
-    WHERE cp.university_id = ${uid}
-      AND EXISTS (SELECT 1 FROM user_roles vr JOIN roles r ON r.id = vr.role_id WHERE vr.user_id = u.id AND r.name = 'verified_coach')
-      AND EXISTS (SELECT 1 FROM coach_verifications cv WHERE cv.coach_id = u.id AND cv.status = 'verified')`;
-  const [athletes] = await db`
-    SELECT count(DISTINCT c.athlete_id)::int AS n
-    FROM coach_athlete_connections c
-    JOIN coach_profiles cp ON cp.user_id = c.coach_id AND cp.university_id = ${uid}
-    JOIN users cu ON cu.id = c.coach_id
-    JOIN users a ON a.id = c.athlete_id AND a.is_active = TRUE AND a.deleted_at IS NULL
-    LEFT JOIN athlete_profiles ap ON ap.user_id = a.id
-    WHERE c.status = 'accepted' AND COALESCE(ap.showcase_visible, TRUE) = TRUE
-      AND ${VERIFIED_AND_ACTIVE2(db, "cu")}`;
-  return {
-    totalCoaches: coaches?.total ?? 0,
-    activeCoaches: coaches?.active ?? 0,
-    totalAthletes: athletes?.n ?? 0,
-    pendingCoachRequests: pending?.n ?? 0
-  };
-}
-async function loadPending(db, school) {
-  const rows = await db`
-    SELECT v.coach_id, ${personName(db, "up", "u")} AS name,
-           COALESCE(cp.sport_specialization, '') AS sport, COALESCE(cp.coaching_position, '') AS position,
-           COALESCE(cp.program_name, '') AS program_name, v.credential_type, v.submitted_at,
-           count(*) OVER ()::int AS total
-    FROM coach_verifications v
-    JOIN users u ON u.id = v.coach_id AND u.is_active = TRUE AND u.deleted_at IS NULL
-    JOIN coach_profiles cp ON cp.user_id = v.coach_id
-    LEFT JOIN user_profiles up ON up.user_id = v.coach_id
-    WHERE v.status = 'pending' AND lower(btrim(v.organization)) = ${school.key}
-      AND cp.organization_type IN ('University', 'College')
-    ORDER BY v.submitted_at, v.coach_id
-    LIMIT ${PENDING_LIMIT}`;
-  return {
-    total: rows[0]?.total ?? 0,
-    items: rows.map((r) => ({
-      id: r.coach_id,
-      name: r.name,
-      sport: r.sport,
-      position: r.position,
-      programName: r.program_name,
-      credentialType: r.credential_type,
-      appliedAt: r.submitted_at.toISOString()
-    }))
-  };
-}
-async function loadActivities(db, school) {
-  const uid = school.universityId;
-  const out = [];
-  const push = (kind, key2, text3, at) => {
-    if (at) out.push({ id: `${kind}:${key2}:${at.getTime()}`, kind, text: text3, at: at.toISOString() });
-  };
-  const queries = [];
-  queries.push((async () => {
-    const rows = await db`
-      SELECT v.coach_id, ${personName(db, "up", "u")} AS name, v.status, v.submitted_at, v.reviewed_at
-      FROM coach_verifications v
-      JOIN users u ON u.id = v.coach_id AND u.is_active = TRUE AND u.deleted_at IS NULL
-      JOIN coach_profiles cp ON cp.user_id = v.coach_id
-      LEFT JOIN user_profiles up ON up.user_id = v.coach_id
-      WHERE lower(btrim(v.organization)) = ${school.key} AND cp.organization_type IN ('University', 'College')
-      ORDER BY GREATEST(v.submitted_at, COALESCE(v.reviewed_at, v.submitted_at)) DESC
-      LIMIT ${ACTIVITY_LIMIT}`;
-    for (const r of rows) {
-      push("coach_requested", r.coach_id, `Coach ${r.name} requested verification for your school.`, r.submitted_at);
-      if (r.status === "verified") push("coach_approved", r.coach_id, `Coach ${r.name} was approved as a verified coach.`, r.reviewed_at);
-      if (r.status === "rejected") push("coach_rejected", r.coach_id, `Coach ${r.name}'s verification request was not approved.`, r.reviewed_at);
-    }
-  })());
-  if (uid) {
-    queries.push((async () => {
-      const rows = await db`
-        SELECT c.id, ${personName(db, "aup", "a")} AS athlete, ${personName(db, "cup", "cu")} AS coach,
-               COALESCE(c.responded_at, c.updated_at) AS at
-        FROM coach_athlete_connections c
-        JOIN coach_profiles cp ON cp.user_id = c.coach_id AND cp.university_id = ${uid}
-        JOIN users cu ON cu.id = c.coach_id AND cu.deleted_at IS NULL
-        LEFT JOIN user_profiles cup ON cup.user_id = cu.id
-        JOIN users a ON a.id = c.athlete_id AND a.is_active = TRUE AND a.deleted_at IS NULL
-        LEFT JOIN user_profiles aup ON aup.user_id = a.id
-        LEFT JOIN athlete_profiles ap ON ap.user_id = a.id
-        WHERE c.status = 'accepted' AND COALESCE(ap.showcase_visible, TRUE) = TRUE
-          AND ${VERIFIED_AND_ACTIVE2(db, "cu")}
-        ORDER BY at DESC LIMIT ${ACTIVITY_LIMIT}`;
-      for (const r of rows) push("athlete_connected", r.id, `${r.athlete} connected with Coach ${r.coach}.`, r.at);
-    })());
-    queries.push((async () => {
-      const rows = await db`
-        SELECT aa.id, ${personName(db, "aup", "a")} AS athlete, ${personName(db, "cup", "cu")} AS coach, aa.created_at AS at
-        FROM athlete_applications aa
-        JOIN coach_profiles cp ON cp.user_id = aa.coach_id AND cp.university_id = ${uid}
-        JOIN users cu ON cu.id = aa.coach_id AND cu.deleted_at IS NULL
-        LEFT JOIN user_profiles cup ON cup.user_id = cu.id
-        JOIN users a ON a.id = aa.athlete_id AND a.is_active = TRUE AND a.deleted_at IS NULL
-        LEFT JOIN user_profiles aup ON aup.user_id = a.id
-        LEFT JOIN athlete_profiles ap ON ap.user_id = a.id
-        WHERE COALESCE(ap.showcase_visible, TRUE) = TRUE
-          AND ${VERIFIED_AND_ACTIVE2(db, "cu")}
-        ORDER BY aa.created_at DESC LIMIT ${ACTIVITY_LIMIT}`;
-      for (const r of rows) push("athlete_applied_coach", r.id, `${r.athlete} applied to Coach ${r.coach}'s program.`, r.at);
-    })());
-  }
-  queries.push((async () => {
-    const rows = await db`
-      SELECT s.id, s.name, s.created_at AS at FROM scholarships s
-      WHERE lower(btrim(s.university)) = ${school.key}
-      ORDER BY s.created_at DESC LIMIT ${ACTIVITY_LIMIT}`;
-    for (const r of rows) push("scholarship_posted", r.id, `Scholarship posted: ${r.name}.`, r.at);
-  })());
-  queries.push((async () => {
-    const rows = await db`
-      SELECT sa.id, ${personName(db, "aup", "a")} AS athlete, s.name AS scholarship, sa.created_at AS at
-      FROM scholarship_applications sa
-      JOIN scholarships s ON s.id = sa.scholarship_id AND lower(btrim(s.university)) = ${school.key}
-      JOIN users a ON a.id = sa.athlete_id AND a.is_active = TRUE AND a.deleted_at IS NULL
-      LEFT JOIN user_profiles aup ON aup.user_id = a.id
-      LEFT JOIN athlete_profiles ap ON ap.user_id = a.id
-      WHERE sa.status <> 'withdrawn' AND COALESCE(ap.showcase_visible, TRUE) = TRUE
-      ORDER BY sa.created_at DESC LIMIT ${ACTIVITY_LIMIT}`;
-    for (const r of rows) push("scholarship_applied", r.id, `${r.athlete} applied for ${r.scholarship}.`, r.at);
-  })());
-  await Promise.all(queries);
-  return out.sort((a, b) => a.at < b.at ? 1 : a.at > b.at ? -1 : a.id < b.id ? 1 : -1).slice(0, ACTIVITY_LIMIT);
-}
-async function getRepDashboard(user, dbArg) {
-  const db = dbArg ?? await getDb();
-  const school = await resolveSchool(db, user);
-  const [stats, pendingRequests, activities, [me]] = await Promise.all([
-    loadStats(db, school),
-    loadPending(db, school),
-    loadActivities(db, school),
-    db`SELECT first_name FROM user_profiles WHERE user_id = ${user.id}`
-  ]);
-  const firstName = me?.first_name?.trim() || user.displayName.split(/\s+/)[0] || user.displayName;
-  return {
-    rep: { name: user.displayName, firstName, designation: school.designation },
-    school: { name: school.name, location: school.location, logoUrl: school.logoUrl, registered: school.universityId !== null },
-    stats,
-    pendingRequests,
-    activities,
-    generatedAt: (/* @__PURE__ */ new Date()).toISOString()
-  };
-}
-
-// server/rep-coach-requests.server.ts
-var REQUESTS_PAGE_DEFAULT = 20;
-var REQUESTS_PAGE_MAX = 50;
-var SEARCH_MAX3 = 80;
-var REQUEST_STATUSES = ["pending", "approved", "rejected"];
-var likeLiteral5 = (t) => t.replace(/[\\%_]/g, (c2) => `\\${c2}`);
-var safePhoto3 = (url) => url && /^https?:\/\//i.test(url) && url.length <= 500 ? url : null;
-var notFound4 = () => new RepDashboardError(404, "request_not_found", "That request could not be found at your school.");
-var LABEL3 = { pending: "pending", verified: "approved", rejected: "rejected" };
-var SCOPE = (db, school) => db`
-  FROM coach_verifications v
-  JOIN users u ON u.id = v.coach_id AND u.deleted_at IS NULL
-  JOIN coach_profiles cp ON cp.user_id = v.coach_id
-  LEFT JOIN user_profiles up ON up.user_id = v.coach_id
-  WHERE lower(btrim(v.organization)) = ${school.key} AND cp.organization_type IN ('University', 'College')
-    AND (v.status <> 'pending' OR u.is_active = TRUE)`;
-var NAME = (db) => db`COALESCE(NULLIF(btrim(concat_ws(' ', up.first_name, up.last_name)), ''), u.display_name)`;
-var toRequest = (r) => {
-  const status = LABEL3[r.status] ?? "pending";
-  return {
-    id: r.id,
-    name: r.name,
-    photo: safePhoto3(r.avatar_url),
-    email: r.email,
-    sport: r.sport,
-    position: r.position,
-    credentialType: r.credential_type,
-    status,
-    appliedAt: r.submitted_at.toISOString(),
-    decidedAt: r.reviewed_at ? r.reviewed_at.toISOString() : null,
-    reason: status === "rejected" ? r.review_note : ""
-  };
-};
-async function listCoachRequests(user, opts, dbArg) {
-  const db = dbArg ?? await getDb();
-  const school = await resolveSchool(db, user);
-  const needle = opts.q?.trim().slice(0, SEARCH_MAX3);
-  const pattern = needle ? `%${likeLiteral5(needle)}%` : null;
-  const dbStatus = opts.status === "approved" ? "verified" : opts.status;
-  const rows = await db`
-    SELECT u.id, ${NAME(db)} AS name, u.email, up.avatar_url, COALESCE(cp.sport_specialization, '') AS sport,
-           COALESCE(cp.coaching_position, '') AS position, v.credential_type, v.status, v.submitted_at, v.reviewed_at,
-           v.review_note, count(*) OVER ()::int AS total
-    ${SCOPE(db, school)}
-      ${dbStatus ? db`AND v.status = ${dbStatus}` : db``}
-      ${pattern ? db`AND (${NAME(db)} ILIKE ${pattern} OR u.email ILIKE ${pattern})` : db``}
-    ORDER BY (v.status = 'pending') DESC, CASE WHEN v.status = 'pending' THEN v.submitted_at END ASC,
-             v.reviewed_at DESC NULLS LAST, u.id
-    LIMIT ${opts.limit} OFFSET ${opts.offset}`;
-  const tallies = await db`SELECT v.status, count(*)::int AS n ${SCOPE(db, school)} GROUP BY v.status`;
-  const counts = { pending: 0, approved: 0, rejected: 0 };
-  for (const t of tallies) {
-    const s = LABEL3[t.status];
-    if (s) counts[s] += t.n;
-  }
-  return { school: { name: school.name }, items: rows.map(toRequest), total: rows[0]?.total ?? 0, counts };
-}
-async function loadDetail(db, school, coachId) {
-  const [r] = await db`
-    SELECT u.id, ${NAME(db)} AS name, u.email, up.avatar_url, COALESCE(cp.sport_specialization, '') AS sport,
-           COALESCE(cp.coaching_position, '') AS position, v.credential_type, v.status, v.submitted_at, v.reviewed_at, v.review_note,
-           v.organization, cp.program_name, cp.competition_level, cp.years_experience, cp.background, cp.certifications,
-           v.credential_reference, v.official_email
-    ${SCOPE(db, school)} AND u.id = ${coachId}`;
-  if (!r) throw notFound4();
-  return {
-    ...toRequest(r),
-    organization: r.organization.trim(),
-    programName: r.program_name,
-    competitionLevel: r.competition_level,
-    yearsExperience: r.years_experience,
-    background: r.background,
-    supportingDocuments: [
-      { label: "Credential type", value: r.credential_type },
-      { label: "Credential reference (ID / license no.)", value: r.credential_reference },
-      { label: "Official school email", value: r.official_email },
-      { label: "Certifications", value: r.certifications }
-    ]
-  };
-}
-async function getCoachRequest(user, coachId, dbArg) {
-  const db = dbArg ?? await getDb();
-  return loadDetail(db, await resolveSchool(db, user), coachId);
-}
-var withBegin = (tx) => new Proxy(tx, { get: (t, p2, r) => p2 === "begin" ? (fn) => fn(t) : Reflect.get(t, p2, r) });
-async function decideCoachRequest(user, coachId, decision, rawReason, meta = {}, dbArg) {
-  const db = dbArg ?? await getDb();
-  const school = await resolveSchool(db, user);
-  if (rawReason !== void 0 && rawReason !== null && typeof rawReason !== "string")
-    throw new ConnectionError(400, "validation", "The reason must be text.", { fieldErrors: { note: "Must be text." } });
-  const reason = typeof rawReason === "string" ? rawReason.trim() : "";
-  if (decision === "reject" && (reason.length < 1 || reason.length > NOTE_MAX))
-    throw new ConnectionError(400, "validation", "Rejecting a request needs a reason the coach can read.", {
-      fieldErrors: { note: `Give a reason, up to ${NOTE_MAX} characters.` }
-    });
-  const current = await loadDetail(db, school, coachId);
-  if (current.status !== "pending")
-    throw new RepDashboardError(409, "not_pending", current.status === "approved" ? "This request was already approved." : "This request was already rejected.");
-  await db.begin(async (tx) => {
-    const [row] = await tx`SELECT status FROM coach_verifications WHERE coach_id = ${coachId} FOR UPDATE`;
-    if (!row || row.status !== "pending")
-      throw new RepDashboardError(409, "not_pending", row?.status === "verified" ? "This request was already approved." : "This request was already decided.");
-    const inTx = withBegin(tx);
-    await applyReview(inTx, { coachId, decision, note: decision === "reject" ? reason : "", reviewerId: user.id, meta });
-    await audit(
-      decision === "approve" ? "rep.coach_request_approved" : "rep.coach_request_rejected",
-      { userId: user.id, ...meta, detail: { coachId, school: school.name } },
-      inTx
-    );
-  });
-  return loadDetail(db, school, coachId);
-}
-
-// server/rep-coaches.server.ts
-var COACHES_PAGE_DEFAULT = 20;
-var COACHES_PAGE_MAX = 50;
-var SEARCH_MAX4 = 80;
-var AFFILIATION_STATUSES = ["affiliated", "pending", "removed"];
-var likeLiteral6 = (t) => t.replace(/[\\%_]/g, (c2) => `\\${c2}`);
-var safePhoto4 = (url) => url && /^https?:\/\//i.test(url) && url.length <= 500 ? url : null;
-var notFound5 = () => new RepDashboardError(404, "coach_not_found", "That coach could not be found at your school.");
-var SCOPE2 = (db, school) => db`
-  FROM coach_profiles cp
-  JOIN users u ON u.id = cp.user_id AND u.deleted_at IS NULL
-  JOIN coach_verifications v ON v.coach_id = cp.user_id
-  LEFT JOIN user_profiles up ON up.user_id = cp.user_id
-  CROSS JOIN LATERAL (SELECT CASE
-      WHEN v.status = 'pending' AND u.is_active THEN 'pending'
-      WHEN v.status = 'verified' AND cp.university_id = ${school.universityId ?? ""} THEN 'affiliated'
-      WHEN v.status = 'verified' AND cp.university_id IS NULL THEN 'removed'
-    END AS status) s
-  WHERE s.status IS NOT NULL AND lower(btrim(v.organization)) = ${school.key}
-    AND cp.organization_type IN ('University', 'College')`;
-var NAME2 = (db) => db`COALESCE(NULLIF(btrim(concat_ws(' ', up.first_name, up.last_name)), ''), u.display_name)`;
-var toCoach = (r) => ({
-  id: r.id,
-  name: r.name,
-  email: r.email,
-  photo: safePhoto4(r.avatar_url),
-  sport: r.sport,
-  position: r.position,
-  status: r.status,
-  accountActive: r.is_active
-});
-async function listRepCoaches(user, opts, dbArg) {
-  const db = dbArg ?? await getDb();
-  const school = await resolveSchool(db, user);
-  const needle = opts.q?.trim().slice(0, SEARCH_MAX4);
-  const pattern = needle ? `%${likeLiteral6(needle)}%` : null;
-  const sport = opts.sport?.trim().slice(0, 80) || null;
-  const rows = await db`
-    SELECT u.id, ${NAME2(db)} AS name, u.email, up.avatar_url, COALESCE(cp.sport_specialization, '') AS sport,
-           COALESCE(cp.coaching_position, '') AS position, s.status, u.is_active, count(*) OVER ()::int AS total
-    ${SCOPE2(db, school)}
-      ${opts.status ? db`AND s.status = ${opts.status}` : db``}
-      ${sport ? db`AND lower(cp.sport_specialization) = lower(${sport})` : db``}
-      ${pattern ? db`AND (${NAME2(db)} ILIKE ${pattern} OR u.email ILIKE ${pattern})` : db``}
-    ORDER BY ${NAME2(db)}, u.id
-    LIMIT ${opts.limit} OFFSET ${opts.offset}`;
-  const meta = await db`
-    SELECT s.status, COALESCE(cp.sport_specialization, '') AS sport ${SCOPE2(db, school)}`;
-  const counts = { affiliated: 0, pending: 0, removed: 0 };
-  for (const m of meta) counts[m.status] += 1;
-  const sports2 = [...new Set(meta.map((m) => m.sport).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-  return { school: { name: school.name }, items: rows.map(toCoach), total: rows[0]?.total ?? 0, sports: sports2, counts };
-}
-async function loadDetail2(db, school, coachId) {
-  const [r] = await db`
-    SELECT u.id, ${NAME2(db)} AS name, u.email, up.avatar_url, COALESCE(cp.sport_specialization, '') AS sport,
-           COALESCE(cp.coaching_position, '') AS position, s.status, u.is_active,
-           cp.program_name, cp.competition_level, cp.years_experience, cp.background, cp.certifications,
-           v.credential_type, v.submitted_at, v.reviewed_at,
-           (SELECT count(*)::int FROM coach_athlete_connections c
-              JOIN users a ON a.id = c.athlete_id AND a.is_active = TRUE AND a.deleted_at IS NULL
-              WHERE c.coach_id = u.id AND c.status = 'accepted') AS athletes
-    ${SCOPE2(db, school)} AND u.id = ${coachId}`;
-  if (!r) throw notFound5();
-  return {
-    ...toCoach(r),
-    programName: r.program_name,
-    competitionLevel: r.competition_level,
-    yearsExperience: r.years_experience,
-    background: r.background,
-    certifications: r.certifications,
-    credentialType: r.credential_type,
-    athletesConnected: r.athletes,
-    appliedAt: r.submitted_at.toISOString(),
-    verifiedAt: r.status === "pending" || !r.reviewed_at ? null : r.reviewed_at.toISOString()
-  };
-}
-async function getRepCoach(user, coachId, dbArg) {
-  const db = dbArg ?? await getDb();
-  const school = await resolveSchool(db, user);
-  return loadDetail2(db, school, coachId);
-}
-async function setCoachAffiliation(user, coachId, action, meta = {}, dbArg) {
-  const db = dbArg ?? await getDb();
-  const school = await resolveSchool(db, user);
-  if (!school.universityId) throw new RepDashboardError(409, "school_not_registered", "Your school isn't registered on Sportal yet.");
-  const uid = school.universityId;
-  await db.begin(async (tx) => {
-    await tx`SELECT 1 FROM coach_profiles WHERE user_id = ${coachId} FOR UPDATE`;
-    const [cur] = await tx`
-      SELECT s.status, u.is_active ${SCOPE2(tx, school)} AND u.id = ${coachId}`;
-    if (!cur) throw notFound5();
-    if (action === "remove") {
-      if (cur.status !== "affiliated") throw new RepDashboardError(409, "not_affiliated", "This coach isn't currently affiliated with your school.");
-      await tx`UPDATE coach_profiles SET university_id = NULL, updated_at = ${/* @__PURE__ */ new Date()} WHERE user_id = ${coachId} AND university_id = ${uid}`;
-    } else {
-      if (cur.status !== "removed") throw new RepDashboardError(409, "not_removed", "This coach's affiliation wasn't removed, so there is nothing to restore.");
-      if (!cur.is_active) throw new RepDashboardError(409, "account_suspended", "This coach's account is suspended, so the affiliation can't be restored.");
-      await tx`UPDATE coach_profiles SET university_id = ${uid}, updated_at = ${/* @__PURE__ */ new Date()} WHERE user_id = ${coachId} AND university_id IS NULL`;
-    }
-    await audit(
-      action === "remove" ? "rep.coach_affiliation_removed" : "rep.coach_affiliation_restored",
-      { userId: user.id, ...meta, detail: { coachId, school: school.name } },
-      tx
-    );
-  });
-  await notify(
-    coachId,
-    action === "remove" ? { category: "system", title: "Affiliation ended", message: `${school.name} ended your affiliation with the school. Your coach verification is unchanged.` } : { category: "system", title: "Affiliation restored", message: `${school.name} restored your affiliation with the school.` },
-    db
-  );
-  return loadDetail2(db, school, coachId);
-}
-
 // server/coach-applications.server.ts
 import { randomUUID as randomUUID13 } from "node:crypto";
 var APPLICATIONS_PER_DAY = 10;
@@ -13648,7 +13661,7 @@ var CoachApplicationError = class extends Error {
     this.code = code;
   }
 };
-var notFound6 = () => new CoachApplicationError(404, "not_found", "Not found.");
+var notFound4 = () => new CoachApplicationError(404, "not_found", "Not found.");
 async function applyToCoach(user, coachId, meta = {}, dbArg) {
   if (!user.roles.includes(ATHLETE_ROLE)) throw new CoachApplicationError(403, "role_not_allowed", "Only student-athletes can show interest in a coach.");
   const db = dbArg ?? await getDb();
@@ -13657,7 +13670,7 @@ async function applyToCoach(user, coachId, meta = {}, dbArg) {
     FROM users u
     LEFT JOIN coach_profiles cp ON cp.user_id = u.id
     WHERE u.id = ${coachId} AND u.is_active = TRUE AND u.deleted_at IS NULL`;
-  if (!coach || !user.id || coachId === user.id || !await isVerifiedCoach(db, coachId)) throw notFound6();
+  if (!coach || !user.id || coachId === user.id || !await isVerifiedCoach(db, coachId)) throw notFound4();
   const [connected] = await db`SELECT 1 FROM coach_athlete_connections WHERE coach_id = ${coachId} AND athlete_id = ${user.id} AND status = 'accepted'`;
   if (connected) throw new CoachApplicationError(409, "already_connected", "You are already connected to this coach.");
   const id = randomUUID13();
@@ -13717,7 +13730,7 @@ async function setApplicationStatus2(user, applicationId, status, dbArg) {
   if (!user.roles.includes(COACH_ROLE)) throw new CoachApplicationError(403, "role_not_allowed", "Only coaches can do this.");
   if (!await isVerifiedCoach(db, user.id)) throw new CoachApplicationError(403, "coach_not_verified", "Your coach account must be verified first.");
   const rows = await db`UPDATE athlete_applications SET status = ${status}, updated_at = ${/* @__PURE__ */ new Date()} WHERE id = ${applicationId} AND coach_id = ${user.id} RETURNING id`;
-  if (rows.length === 0) throw notFound6();
+  if (rows.length === 0) throw notFound4();
   return status;
 }
 
@@ -13751,7 +13764,7 @@ function requireAthlete5(user) {
   if (!user.roles.includes(ATHLETE_ROLE)) throw new RecruitingError(403, "role_not_allowed", "Only student-athletes can do this.");
 }
 var isUuid = (id) => UUID_RE6.test(id);
-var notFound7 = () => new RecruitingError(404, "not_found", "Not found.");
+var notFound5 = () => new RecruitingError(404, "not_found", "Not found.");
 async function loadDirectory(db, opts = {}) {
   const rows = await db`
     SELECT u.id, up.first_name, up.last_name, u.display_name,
@@ -13843,7 +13856,7 @@ async function listAthletes(user, q, dbArg) {
   };
 }
 async function getAthlete(user, athleteId, dbArg) {
-  if (!isUuid(athleteId)) throw notFound7();
+  if (!isUuid(athleteId)) throw notFound5();
   const db = dbArg ?? await getDb();
   const own3 = user.roles.includes(ATHLETE_ROLE) && user.id === athleteId;
   let applicant = false;
@@ -13856,7 +13869,7 @@ async function getAthlete(user, athleteId, dbArg) {
   }
   if (!own3 && !applicant) await requireVerifiedCoach2(db, user);
   const [athlete] = await loadDirectory(db, { onlyId: athleteId, includeHidden: own3 || applicant });
-  if (!athlete) throw notFound7();
+  if (!athlete) throw notFound5();
   if (own3 || applicant) return { athlete, own: own3, applicant, watched: false, note: "", inquiry: null };
   const [w] = await db`SELECT note FROM coach_shortlist WHERE coach_id = ${user.id} AND athlete_id = ${athleteId}`;
   const [inq] = await db`
@@ -13881,7 +13894,7 @@ async function setNote(user, athleteId, rawNote, dbArg) {
   await requireVerifiedCoach2(db, user);
   const note = rawNote.trim();
   if (note.length > NOTE_MAX3) throw new RecruitingError(400, "validation", `Notes are limited to ${NOTE_MAX3} characters.`);
-  if (!isUuid(athleteId)) throw notFound7();
+  if (!isUuid(athleteId)) throw notFound5();
   const rows = await db`UPDATE coach_shortlist SET note = ${note} WHERE coach_id = ${user.id} AND athlete_id = ${athleteId} RETURNING athlete_id`;
   if (rows.length === 0) throw new RecruitingError(409, "not_saved", "Save the athlete to your watchlist before adding a note.");
   return { note };
@@ -13923,14 +13936,14 @@ async function sendInquiry(user, input, meta = {}, dbArg) {
   const message = input.message.trim();
   if (organization.length < 2 || organization.length > ORGANIZATION_MAX) throw new RecruitingError(400, "validation", "Name your organization or program (2-120 characters).");
   if (!message || message.length > INQUIRY_MESSAGE_MAX) throw new RecruitingError(400, "validation", `Write a message of up to ${INQUIRY_MESSAGE_MAX} characters.`);
-  if (!isUuid(input.athleteId)) throw notFound7();
+  if (!isUuid(input.athleteId)) throw notFound5();
   const [athlete] = await db`
     SELECT u.id, COALESCE(ap.showcase_visible, TRUE) AS visible
     FROM users u
     JOIN user_roles ur ON ur.user_id = u.id JOIN roles r ON r.id = ur.role_id
     LEFT JOIN athlete_profiles ap ON ap.user_id = u.id
     WHERE u.id = ${input.athleteId} AND r.name = ${ATHLETE_ROLE} AND u.is_active = TRUE AND u.deleted_at IS NULL`;
-  if (!athlete) throw notFound7();
+  if (!athlete) throw notFound5();
   if (!athlete.visible) throw new RecruitingError(409, "showcase_hidden", "This athlete has hidden their showcase, so new inquiries are closed.");
   const id = randomUUID14();
   const now6 = /* @__PURE__ */ new Date();
@@ -13952,7 +13965,7 @@ async function sendInquiry(user, input, meta = {}, dbArg) {
 }
 async function respondToInquiry(user, inquiryId, decision, meta = {}, dbArg) {
   requireAthlete5(user);
-  if (!isUuid(inquiryId)) throw notFound7();
+  if (!isUuid(inquiryId)) throw notFound5();
   const db = dbArg ?? await getDb();
   const now6 = /* @__PURE__ */ new Date();
   const updated = await db`
@@ -13961,7 +13974,7 @@ async function respondToInquiry(user, inquiryId, decision, meta = {}, dbArg) {
   const hit = updated[0];
   if (!hit) {
     const [exists] = await db`SELECT 1 FROM recruitment_inquiries WHERE id = ${inquiryId} AND athlete_id = ${user.id}`;
-    if (!exists) throw notFound7();
+    if (!exists) throw notFound5();
     throw new RecruitingError(409, "already_answered", "This inquiry has already been answered.");
   }
   await audit(`recruiting.inquiry_${decision}`, { userId: user.id, ...meta, detail: { inquiryId } }, db);
@@ -13974,11 +13987,11 @@ async function respondToInquiry(user, inquiryId, decision, meta = {}, dbArg) {
   return toInquiry(row);
 }
 async function loadParticipantInquiry(db, user, inquiryId) {
-  if (!isUuid(inquiryId)) throw notFound7();
+  if (!isUuid(inquiryId)) throw notFound5();
   const [r] = await db`
     SELECT coach_id, athlete_id, status FROM recruitment_inquiries
     WHERE id = ${inquiryId} AND (coach_id = ${user.id} OR athlete_id = ${user.id})`;
-  if (!r) throw notFound7();
+  if (!r) throw notFound5();
   return r;
 }
 async function listMessages(user, inquiryId, dbArg) {
@@ -14253,6 +14266,39 @@ async function handleSchoolVerification(req, path) {
     const reason = body && typeof body === "object" ? body["reason"] : void 0;
     const application = await reviewApplication(user, id, m[2] === "approve" ? "approve" : "reject", reason, requestMeta(req));
     return send(req, 200, { ok: true, application });
+  } catch (err) {
+    if (err instanceof ConnectionError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message, ...err.extra });
+    throw err;
+  }
+}
+async function handleAdminSettings(req, path) {
+  const m = req.method;
+  const sess = /^\/api\/admin\/settings\/sessions\/([^/]+)$/.exec(path);
+  const known = m === "GET" && (path === "/api/admin/header" || path === "/api/admin/settings/profile" || path === "/api/admin/settings/sessions" || path === "/api/admin/settings/notifications" || path === "/api/admin/settings/system") || m === "PUT" && (path === "/api/admin/settings/profile" || path === "/api/admin/settings/avatar" || path === "/api/admin/settings/notifications") || m === "DELETE" && (path === "/api/admin/settings/avatar" || !!sess && sess[1] !== "revoke-others") || m === "POST" && (path === "/api/admin/settings/password" || path === "/api/admin/settings/sessions/revoke-others");
+  if (!known) return null;
+  const token = bearer(req);
+  const user = await getUserBySessionToken(token);
+  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
+  const meta = requestMeta(req);
+  try {
+    if (path === "/api/admin/header") return send(req, 200, { ok: true, header: await getAdminHeader(user) });
+    if (path === "/api/admin/settings/profile")
+      return send(req, 200, { ok: true, profile: m === "GET" ? await getAdminProfile(user) : await updateAdminProfile(user, await readJson(req), meta) });
+    if (path === "/api/admin/settings/avatar") {
+      if (m === "DELETE") return send(req, 200, { ok: true, profile: await setAdminAvatar(user, null, meta) });
+      const body = await readJson(req, AVATAR_MAX_CHARS + 2e3);
+      return send(req, 200, { ok: true, profile: await setAdminAvatar(user, body && typeof body === "object" ? body["dataUrl"] : void 0, meta) });
+    }
+    if (path === "/api/admin/settings/password") return send(req, 200, { ok: true, ...await changeAdminPassword(user, await readJson(req), token, meta) });
+    if (path === "/api/admin/settings/sessions") return send(req, 200, { ok: true, sessions: await listAdminSessions(user, token) });
+    if (path === "/api/admin/settings/sessions/revoke-others") return send(req, 200, { ok: true, ...await revokeOtherAdminSessions(user, token, meta) });
+    if (sess) {
+      await revokeAdminSession(user, decodeURIComponent(sess[1]), token, meta);
+      return send(req, 200, { ok: true });
+    }
+    if (path === "/api/admin/settings/notifications")
+      return send(req, 200, { ok: true, preferences: m === "GET" ? await getAdminPreferences(user) : await updateAdminPreferences(user, await readJson(req)) });
+    return send(req, 200, { ok: true, system: await getSystemInfo(user) });
   } catch (err) {
     if (err instanceof ConnectionError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message, ...err.extra });
     throw err;
@@ -14597,92 +14643,6 @@ async function handleUniversity(req, path) {
     throw err;
   }
 }
-async function handleRepDashboard(req, path) {
-  if (req.method !== "GET" || path !== "/api/rep/dashboard") return null;
-  const user = await getUserBySessionToken(bearer(req));
-  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
-  try {
-    return send(req, 200, { ok: true, ...await getRepDashboard(user) });
-  } catch (err) {
-    if (err instanceof RepDashboardError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
-    throw err;
-  }
-}
-async function handleRepCoaches(req, path) {
-  const one2 = /^\/api\/rep\/coaches\/([^/]+)(\/affiliation)?$/.exec(path);
-  const isList = req.method === "GET" && path === "/api/rep/coaches";
-  const isOne = req.method === "GET" && !!one2 && !one2[2];
-  const isAffiliation = req.method === "POST" && !!one2 && !!one2[2];
-  if (!isList && !isOne && !isAffiliation) return null;
-  const user = await getUserBySessionToken(bearer(req));
-  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
-  try {
-    if (isList) {
-      const params = new URL(req.url).searchParams;
-      const limit3 = Number(params.get("limit") ?? COACHES_PAGE_DEFAULT);
-      const offset = Number(params.get("offset") ?? 0);
-      const status = params.get("status");
-      if (status !== null && status !== "" && !AFFILIATION_STATUSES.includes(status))
-        return send(req, 400, { ok: false, code: "validation", message: "status must be affiliated, pending or removed." });
-      return send(req, 200, {
-        ok: true,
-        ...await listRepCoaches(user, {
-          q: params.get("q") ?? void 0,
-          sport: params.get("sport") ?? void 0,
-          status: status || void 0,
-          limit: Number.isInteger(limit3) && limit3 >= 1 ? Math.min(limit3, COACHES_PAGE_MAX) : COACHES_PAGE_DEFAULT,
-          offset: Number.isInteger(offset) && offset >= 0 ? offset : 0
-        })
-      });
-    }
-    const id = decodeURIComponent(one2[1] ?? "").slice(0, 100);
-    if (isOne) return send(req, 200, { ok: true, coach: await getRepCoach(user, id) });
-    const parsed = external_exports.object({ action: external_exports.enum(["remove", "restore"]) }).safeParse(await readJson(req));
-    if (!parsed.success) return send(req, 400, { ok: false, code: "validation", message: 'Send { action: "remove" | "restore" }.' });
-    return send(req, 200, { ok: true, coach: await setCoachAffiliation(user, id, parsed.data.action, requestMeta(req)) });
-  } catch (err) {
-    if (err instanceof RepDashboardError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
-    throw err;
-  }
-}
-async function handleRepCoachRequests(req, path) {
-  const one2 = /^\/api\/rep\/coach-requests\/([^/]+)(\/decision)?$/.exec(path);
-  const isList = req.method === "GET" && path === "/api/rep/coach-requests";
-  const isOne = req.method === "GET" && !!one2 && !one2[2];
-  const isDecision = req.method === "POST" && !!one2 && !!one2[2];
-  if (!isList && !isOne && !isDecision) return null;
-  const user = await getUserBySessionToken(bearer(req));
-  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
-  try {
-    if (isList) {
-      const params = new URL(req.url).searchParams;
-      const limit3 = Number(params.get("limit") ?? REQUESTS_PAGE_DEFAULT);
-      const offset = Number(params.get("offset") ?? 0);
-      const status = params.get("status");
-      if (status !== null && status !== "" && !REQUEST_STATUSES.includes(status))
-        return send(req, 400, { ok: false, code: "validation", message: "status must be pending, approved or rejected." });
-      return send(req, 200, {
-        ok: true,
-        ...await listCoachRequests(user, {
-          q: params.get("q") ?? void 0,
-          status: status || void 0,
-          limit: Number.isInteger(limit3) && limit3 >= 1 ? Math.min(limit3, REQUESTS_PAGE_MAX) : REQUESTS_PAGE_DEFAULT,
-          offset: Number.isInteger(offset) && offset >= 0 ? offset : 0
-        })
-      });
-    }
-    const id = decodeURIComponent(one2[1] ?? "").slice(0, 100);
-    if (isOne) return send(req, 200, { ok: true, request: await getCoachRequest(user, id) });
-    const body = await readJson(req);
-    const parsed = external_exports.object({ decision: external_exports.enum(["approve", "reject"]), reason: external_exports.unknown().optional() }).safeParse(body);
-    if (!parsed.success) return send(req, 400, { ok: false, code: "validation", message: 'Send { decision: "approve" | "reject", reason }.' });
-    return send(req, 200, { ok: true, request: await decideCoachRequest(user, id, parsed.data.decision, parsed.data.reason, requestMeta(req)) });
-  } catch (err) {
-    if (err instanceof RepDashboardError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
-    if (err instanceof ConnectionError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message, ...err.extra });
-    throw err;
-  }
-}
 async function handleCoachApplications(req, path) {
   const statusRoute = /^\/api\/coach-applications\/([^/]+)\/status$/.exec(path);
   const isRoot = path === "/api/coach-applications";
@@ -14717,7 +14677,7 @@ async function handleRecruiting(req, path) {
   if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
   const meta = requestMeta(req);
   const params = new URL(req.url).searchParams;
-  const bad2 = (message) => send(req, 400, { ok: false, code: "validation", message });
+  const bad3 = (message) => send(req, 400, { ok: false, code: "validation", message });
   try {
     if (m === "GET" && path === "/api/recruiting/athletes") {
       const limit3 = Number(params.get("limit") ?? DIRECTORY_LIMIT_DEFAULT);
@@ -14742,23 +14702,23 @@ async function handleRecruiting(req, path) {
     if (m === "GET" && path === "/api/recruiting/watchlist") return send(req, 200, { ok: true, ...await listWatchlist(user) });
     if (noteRoute) {
       const parsed2 = external_exports.object({ note: external_exports.string() }).safeParse(await readJson(req));
-      if (!parsed2.success) return bad2("Send { note: text }.");
+      if (!parsed2.success) return bad3("Send { note: text }.");
       return send(req, 200, { ok: true, ...await setNote(user, noteRoute[1] ?? "", parsed2.data.note) });
     }
     if (m === "GET" && path === "/api/recruiting/inquiries") return send(req, 200, { ok: true, ...await listInquiries(user) });
     if (m === "POST" && path === "/api/recruiting/inquiries") {
       const parsed2 = external_exports.object({ athleteId: external_exports.string(), organization: external_exports.string(), message: external_exports.string() }).safeParse(await readJson(req));
-      if (!parsed2.success) return bad2("Send { athleteId, organization, message }.");
+      if (!parsed2.success) return bad3("Send { athleteId, organization, message }.");
       return send(req, 201, { ok: true, inquiry: await sendInquiry(user, parsed2.data, meta) });
     }
     if (respondRoute) {
       const parsed2 = external_exports.object({ decision: external_exports.enum(["accepted", "declined"]) }).safeParse(await readJson(req));
-      if (!parsed2.success) return bad2('Send { decision: "accepted" | "declined" }.');
+      if (!parsed2.success) return bad3('Send { decision: "accepted" | "declined" }.');
       return send(req, 200, { ok: true, inquiry: await respondToInquiry(user, respondRoute[1] ?? "", parsed2.data.decision, meta) });
     }
     if (m === "GET") return send(req, 200, { ok: true, ...await listMessages(user, messagesRoute[1] ?? "") });
     const parsed = external_exports.object({ body: external_exports.string() }).safeParse(await readJson(req));
-    if (!parsed.success) return bad2("Send { body: text }.");
+    if (!parsed.success) return bad3("Send { body: text }.");
     return send(req, 201, { ok: true, message: await sendMessage(user, messagesRoute[1] ?? "", parsed.data.body) });
   } catch (err) {
     if (err instanceof RecruitingError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
@@ -14922,6 +14882,8 @@ async function handle(req) {
     if (schoolVerification) return schoolVerification;
     const monitoring = await handleMonitoring(req, path);
     if (monitoring) return monitoring;
+    const adminSettings = await handleAdminSettings(req, path);
+    if (adminSettings) return adminSettings;
     if (req.method === "POST" && path === "/api/reports") return await handleFileReport(req);
     if (req.method === "POST" && path === "/api/auth/login") return await handleLogin(req);
     if (req.method === "POST" && path === "/api/auth/register") return await handleRegister(req);
@@ -14961,12 +14923,6 @@ async function handle(req) {
     if (coachApps) return coachApps;
     const university = await handleUniversity(req, path);
     if (university) return university;
-    const repDashboard = await handleRepDashboard(req, path);
-    if (repDashboard) return repDashboard;
-    const repCoaches = await handleRepCoaches(req, path);
-    if (repCoaches) return repCoaches;
-    const repCoachRequests = await handleRepCoachRequests(req, path);
-    if (repCoachRequests) return repCoachRequests;
     return send(req, 404, { error: "not_found" });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";

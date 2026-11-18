@@ -741,6 +741,30 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX idx_audit_created ON audit_log (created_at DESC, id DESC);
     `,
   },
+  {
+    version: 14,
+    name: "admin_settings",
+    sql: `
+      -- What the administrator's account was last set to from ADMIN_PASSWORD. The server resets the
+      -- administrator's password from the environment only when that value CHANGES, so a password the
+      -- administrator chose in Settings is not undone every time the server restarts.
+      CREATE TABLE admin_account_state (
+        user_id           TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        env_password_hash TEXT NOT NULL,
+        updated_at        TIMESTAMPTZ NOT NULL
+      );
+
+      -- Which notifications the administrator wants in the bell. No row means everything is on.
+      CREATE TABLE admin_preferences (
+        user_id              TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        notify_applications  BOOLEAN NOT NULL DEFAULT TRUE,
+        notify_reports       BOOLEAN NOT NULL DEFAULT TRUE,
+        notify_registrations BOOLEAN NOT NULL DEFAULT TRUE,
+        notify_security      BOOLEAN NOT NULL DEFAULT TRUE,
+        updated_at           TIMESTAMPTZ NOT NULL
+      );
+    `,
+  },
 ];
 
 const MIGRATION_LOCK_ID = 727_274_001;

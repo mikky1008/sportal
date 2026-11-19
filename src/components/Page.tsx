@@ -98,10 +98,14 @@ function TopBar({ backTo }: { backTo?: string }) {
 }
 
 /**
- * Top navigation for a school representative: Dashboard, My Coaches and Scholarships (the athlete
- * tabs don't apply to them), search, notifications, and their own name. There is no athlete profile
- * page for them, so the name is not a link; the menu holds Notifications and Sign out.
+ * Top navigation for a school representative: three tabs (Dashboard, My Coaches, Coach Requests) with the
+ * other pages (My Athletes, Scholarships) in the hamburger menu (the athlete tabs don't apply to them),
+ * search, notifications, and their own name. There is no athlete profile page for them, so the name is
+ * not a link; the menu also holds Notifications and Sign out.
  */
+/** How many of the representative's pages are tabs in the top bar; the rest are in the menu. */
+const REP_TABS = 3;
+
 function RepTopBar({ backTo }: { backTo?: string }) {
   const { user, signOut } = useAuth();
   const { pathname } = useLocation();
@@ -117,8 +121,8 @@ function RepTopBar({ backTo }: { backTo?: string }) {
       {backTo && <HeaderBack to={backTo} />}
       <HeaderBrand to={home} label="Sportal home" />
 
-      <nav aria-label="Main" className="ml-2 hidden items-center lg:flex">
-        {repNav.map(({ to, label, icon }) => (
+      <nav aria-label="Main" className="ml-2 hidden items-center md:flex">
+        {repNav.slice(0, REP_TABS).map(({ to, label, icon }) => (
           <HeaderNavItem key={to} to={to} label={label} icon={icon} active={isActive(to)} />
         ))}
       </nav>
@@ -143,8 +147,8 @@ function RepTopBar({ backTo }: { backTo?: string }) {
             </button>
             {menu.open && (
               <DropdownPanel>
-                {repNav.map(({ to, label, icon: Icon }) => (
-                  <Link key={to} to={to} direction="root" role="menuitem" className={cn(dropdownItemClass(isActive(to)), "lg:hidden")}>
+                {repNav.map(({ to, label, icon: Icon }, i) => (
+                  <Link key={to} to={to} direction="root" role="menuitem" className={cn(dropdownItemClass(isActive(to)), i < REP_TABS && "md:hidden")}>
                     <Icon className="h-4 w-4" />
                     {label}
                   </Link>

@@ -26,6 +26,7 @@ export const repNav = [
   { to: "/rep/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/rep/coaches", label: "My Coaches", icon: Users },
   { to: "/rep/requests", label: "Coach Requests", icon: UserCheck },
+  { to: "/rep/athletes", label: "My Athletes", icon: Trophy },
   { to: "/scholarships", label: "Scholarships", icon: GraduationCap },
 ] as const;
 
@@ -44,10 +45,10 @@ export function BottomNav() {
 
 const SHORT_LABEL: Record<string, string> = { "/rep/requests": "Requests" };
 
-/** Phone tab bar for a school representative: Dashboard, Coaches, Requests, Scholarships, Notifications. */
+/** Phone tab bar for a school representative: Dashboard, Coaches, Requests, Athletes, Scholarships (the bell stays in the top bar). */
 function RepBottomNav() {
   const isActive = useIsActive();
-  const items = [...repNav, nav[7]] as const;
+  const items = repNav;
   return (
     <nav aria-label="Mobile" className="border-t bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur">
       <div className="grid grid-cols-5 items-end">

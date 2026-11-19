@@ -117,7 +117,7 @@ function RepTopBar({ backTo }: { backTo?: string }) {
       {backTo && <HeaderBack to={backTo} />}
       <HeaderBrand to={home} label="Sportal home" />
 
-      <nav aria-label="Main" className="ml-2 hidden items-center md:flex">
+      <nav aria-label="Main" className="ml-2 hidden items-center lg:flex">
         {repNav.map(({ to, label, icon }) => (
           <HeaderNavItem key={to} to={to} label={label} icon={icon} active={isActive(to)} />
         ))}
@@ -144,7 +144,7 @@ function RepTopBar({ backTo }: { backTo?: string }) {
             {menu.open && (
               <DropdownPanel>
                 {repNav.map(({ to, label, icon: Icon }) => (
-                  <Link key={to} to={to} direction="root" role="menuitem" className={cn(dropdownItemClass(isActive(to)), "md:hidden")}>
+                  <Link key={to} to={to} direction="root" role="menuitem" className={cn(dropdownItemClass(isActive(to)), "lg:hidden")}>
                     <Icon className="h-4 w-4" />
                     {label}
                   </Link>

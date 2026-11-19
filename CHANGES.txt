@@ -1,3 +1,20 @@
+MERGED BUILD: administrator work + school representative work together
+
+SCHOOL REPRESENTATIVE (pages /rep/dashboard, /rep/coaches, /rep/requests, /rep/athletes)
+NEW
+  server/rep-dashboard.server.ts, rep-coaches.server.ts, rep-coach-requests.server.ts, rep-athletes.server.ts
+  src/lib/repDashboardApi.ts, repCoachesApi.ts, repRequestsApi.ts, repAthletesApi.ts
+  src/pages/RepDashboard.tsx, RepCoaches.tsx, RepRequests.tsx, RepAthletes.tsx
+CHANGED (additions alongside the administrator routes in the same files)
+  server/handler.ts          /api/rep/dashboard, /api/rep/coaches*, /api/rep/coach-requests*, /api/rep/athletes*
+  src/App.tsx                the four /rep/* routes
+  src/lib/roles.ts           a school representative lands on /rep/dashboard
+  src/layouts/Nav.tsx        representative tabs and phone bar
+  src/components/Page.tsx    representative top bar (Dashboard, My Coaches, Coach Requests, My Athletes, Scholarships)
+  api/index.mjs              regenerated from the merged source (npm run build:api)
+No database migration is needed for the representative pages (the administrator's migration 14 still runs by itself).
+
+ADMINISTRATOR WORK (unchanged, as delivered)
 Sportal administrator: login, dashboard, user management, school verification, platform monitoring, settings
 
 THIS ROUND (Settings)

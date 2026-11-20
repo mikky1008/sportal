@@ -144,6 +144,11 @@
 //   GET  /api/rep/athletes                          university representative ?q&sport&status=verified|unverified&limit&offset -> { ok, school, items, total, sports, counts }
 //   GET  /api/rep/athletes/:id                      university representative -> { ok, athlete }   (profile + recorded achievements)
 //   GET  /api/rep/athletes/:id/photo                university representative -> the athlete's approved profile photo (image bytes)
+// School Representative top bar and Settings (each acts on the signed-in representative's OWN account only):
+//   GET  /api/rep/header                            university representative -> { ok, header: { displayName, avatar, pendingCoachRequests } }
+//   GET|PUT /api/rep/settings/profile               university representative { firstName, lastName, designation } -> { ok, profile }   (school, email, username are read-only)
+//   PUT|DELETE /api/rep/settings/avatar             university representative { dataUrl } -> { ok, profile }
+//   POST /api/rep/settings/password                 university representative { currentPassword, newPassword, confirmPassword? } -> { ok, otherSessionsSignedOut }
 //
 // Athlete applications to a coach's program ("show interest"):
 //   POST /api/coach-applications                    student-athlete { coachId } -> 201 { ok, application }   409 already_applied | already_connected, 429 rate_limited
@@ -253,6 +258,9 @@ import {
   UniversityError,
 } from "./university.server.ts";
 import { getRepDashboard, RepDashboardError } from "./rep-dashboard.server.ts";
+import {
+  AVATAR_MAX_CHARS as REP_AVATAR_MAX_CHARS, changeRepPassword, getRepHeader, getRepProfile, setRepAvatar, updateRepProfile,
+} from "./rep-settings.server.ts";
 import {
   ATHLETES_PAGE_DEFAULT, ATHLETES_PAGE_MAX, VERIFICATION_STATUSES, getRepAthlete, getRepAthletePhoto, listRepAthletes, type AthleteVerification,
 } from "./rep-athletes.server.ts";
@@ -1114,6 +1122,36 @@ async function handleRepAthletes(req: Request, path: string): Promise<Response |
   }
 }
 
+/** School Representative top bar summary and Settings. Returns null for any other path. */
+async function handleRepSettings(req: Request, path: string): Promise<Response | null> {
+  const m = req.method;
+  const known =
+    (m === "GET" && (path === "/api/rep/header" || path === "/api/rep/settings/profile")) ||
+    (m === "PUT" && (path === "/api/rep/settings/profile" || path === "/api/rep/settings/avatar")) ||
+    (m === "DELETE" && path === "/api/rep/settings/avatar") ||
+    (m === "POST" && path === "/api/rep/settings/password");
+  if (!known) return null;
+  const token = bearer(req);
+  const user = await getUserBySessionToken(token);
+  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
+  const meta = requestMeta(req);
+  try {
+    if (path === "/api/rep/header") return send(req, 200, { ok: true, header: await getRepHeader(user) });
+    if (path === "/api/rep/settings/profile")
+      return send(req, 200, { ok: true, profile: m === "GET" ? await getRepProfile(user) : await updateRepProfile(user, await readJson(req), meta) });
+    if (path === "/api/rep/settings/avatar") {
+      if (m === "DELETE") return send(req, 200, { ok: true, profile: await setRepAvatar(user, null, meta) });
+      const body = (await readJson(req, REP_AVATAR_MAX_CHARS + 2000)) as Record<string, unknown> | null;
+      return send(req, 200, { ok: true, profile: await setRepAvatar(user, body && typeof body === "object" ? body["dataUrl"] : undefined, meta) });
+    }
+    return send(req, 200, { ok: true, ...(await changeRepPassword(user, await readJson(req), token, meta)) });
+  } catch (err) {
+    if (err instanceof RepDashboardError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
+    if (err instanceof ConnectionError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message, ...err.extra });
+    throw err;
+  }
+}
+
 /** Returns null when the path is not a coach-applications route, so the caller can keep matching. */
 async function handleCoachApplications(req: Request, path: string): Promise<Response | null> {
   const statusRoute = /^\/api\/coach-applications\/([^/]+)\/status$/.exec(path);
@@ -1434,6 +1472,8 @@ export async function handle(req: Request): Promise<Response> {
     if (repCoachRequests) return repCoachRequests;
     const repAthletes = await handleRepAthletes(req, path);
     if (repAthletes) return repAthletes;
+    const repSettings = await handleRepSettings(req, path);
+    if (repSettings) return repSettings;
     return send(req, 404, { error: "not_found" });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";

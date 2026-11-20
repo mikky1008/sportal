@@ -5,6 +5,8 @@ import {
 import { Link } from "@/router-compat";
 import { useAuth } from "@/auth/AuthContext";
 import { homePathFor, primaryRole } from "@/lib/roles";
+import { useRepHeader } from "@/lib/repSettingsApi";
+import { CountBadge } from "@/components/shell";
 import { cn } from "@/lib/utils";
 
 export const nav = [
@@ -48,12 +50,14 @@ const SHORT_LABEL: Record<string, string> = { "/rep/requests": "Requests" };
 /** Phone tab bar for a school representative: Dashboard, Coaches, Requests, Athletes, Scholarships (the bell stays in the top bar). */
 function RepBottomNav() {
   const isActive = useIsActive();
+  const { user } = useAuth();
+  const header = useRepHeader(user?.id);
   const items = repNav;
   return (
     <nav aria-label="Mobile" className="border-t bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur">
       <div className="grid grid-cols-5 items-end">
         {items.map((item) => (
-          <TabItem key={item.to} {...item} label={SHORT_LABEL[item.to] ?? item.label} active={isActive(item.to)} />
+          <TabItem key={item.to} {...item} label={SHORT_LABEL[item.to] ?? item.label} active={isActive(item.to)} badge={item.to === "/rep/requests" ? header?.pendingCoachRequests ?? 0 : 0} />
         ))}
       </div>
     </nav>
@@ -84,10 +88,13 @@ function AthleteBottomNav() {
   );
 }
 
-function TabItem({ to, label, icon: Icon, active }: { to: string; label: string; icon: typeof User; active: boolean }) {
+function TabItem({ to, label, icon: Icon, active, badge }: { to: string; label: string; icon: typeof User; active: boolean; badge?: number }) {
   return (
     <Link to={to} direction="root" className={cn("flex flex-col items-center gap-1 py-2.5 text-[11px] font-medium text-muted-foreground", active && "text-primary")}>
-      <Icon className="h-6 w-6" />
+      <span className="relative">
+        <Icon className="h-6 w-6" />
+        {badge ? <CountBadge count={badge} className="absolute -right-3 -top-1.5 ml-0 h-4 min-w-4 text-[10px]" /> : null}
+      </span>
       {label.replace("My ", "")}
     </Link>
   );

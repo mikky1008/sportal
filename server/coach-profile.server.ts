@@ -18,6 +18,7 @@ import { randomUUID } from "node:crypto";
 import { getDb, type Db } from "./db.server.ts";
 import { audit, type PublicUser, type RequestMeta } from "./auth.server.ts";
 import { notify } from "./notifications.server.ts";
+import { notifyRepsOfCoachRequest } from "./rep-notifications.server.ts";
 import { COACH_ROLE, ConnectionError, isVerifiedCoach, PAGE_DEFAULT, PAGE_MAX } from "./connections.server.ts";
 import {
   COACH_PROFILE_KEYS, EMPTY_COACH, validateCoach, type CoachProfile,
@@ -239,6 +240,8 @@ export async function requestVerification(actor: PublicUser, meta: Partial<Reque
     RETURNING coach_id`;
   if (!row) throw new ConnectionError(409, "already_requested", "Your verification request is already waiting for review.");
   await audit("coach_verification.requested", { userId: actor.id, ...meta }, db);
+  // Tell the school's representative(s). A failure here must never undo or block the coach's request.
+  try { await notifyRepsOfCoachRequest(db, actor.id); } catch { /* the request itself is already saved */ }
   return getVerificationState(db, actor.id);
 }
 

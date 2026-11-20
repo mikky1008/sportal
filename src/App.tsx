@@ -22,6 +22,7 @@ import RepDashboard from "@/pages/RepDashboard";
 import RepCoaches from "@/pages/RepCoaches";
 import RepRequests from "@/pages/RepRequests";
 import RepAthletes from "@/pages/RepAthletes";
+import RepSettings from "@/pages/RepSettings";
 import AdminVerifications from "@/pages/AdminVerifications";
 import AdminLogin from "@/pages/AdminLogin";
 import AdminDashboard from "@/pages/AdminDashboard";
@@ -57,6 +58,7 @@ const PROTECTED: { path: string; component: ComponentType }[] = [
   { path: "/rep/coaches", component: RepCoaches },
   { path: "/rep/requests", component: RepRequests },
   { path: "/rep/athletes", component: RepAthletes },
+  { path: "/rep/settings", component: RepSettings },
   { path: "/admin/dashboard", component: AdminDashboard },
   { path: "/admin/users", component: AdminUsers },
   { path: "/admin/monitoring", component: AdminMonitoring },

@@ -1,6 +1,19 @@
 MERGED BUILD: administrator work + school representative work together
 
-SCHOOL REPRESENTATIVE (pages /rep/dashboard, /rep/coaches, /rep/requests, /rep/athletes)
+SCHOOL REPRESENTATIVE (pages /rep/dashboard, /rep/coaches, /rep/requests, /rep/athletes, /rep/settings)
+LATEST ADDITIONS: new-request alerts + Settings
+  - When a coach submits a verification request, the approved representative(s) of that school get a bell notification
+    ("New coach request", links to /rep/requests). The "Coach Requests" tab shows a red count of requests waiting
+    (top bar, menu and phone bar); it updates after every decision and refreshes every minute.
+  - /rep/settings: edit first name, last name, position and profile photo; change password (signs out other devices,
+    wrong-password attempts are rate limited). School, email and username are read-only. Opened from the name/photo
+    in the top bar or the menu. The top bar now shows the representative's own photo.
+  NEW  server/rep-notifications.server.ts, server/rep-settings.server.ts, src/lib/repSettingsApi.ts, src/pages/RepSettings.tsx
+  CHANGED  server/coach-profile.server.ts (3 lines: tell the school's reps after a request is saved), server/handler.ts,
+           src/App.tsx, src/components/Page.tsx, src/components/shell.tsx (optional count badge on a tab), src/layouts/Nav.tsx,
+           src/pages/RepRequests.tsx (refresh the badge after a decision), .env.example (documentation only), api/index.mjs
+  No database migration.
+
 NEW
   server/rep-dashboard.server.ts, rep-coaches.server.ts, rep-coach-requests.server.ts, rep-athletes.server.ts
   src/lib/repDashboardApi.ts, repCoachesApi.ts, repRequestsApi.ts, repAthletesApi.ts

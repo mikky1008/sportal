@@ -68,14 +68,27 @@ interface NavItemProps {
   to?: string;
   /** used when the page doesn't exist yet */
   onClick?: () => void;
+  /** a count shown beside the label (hidden when 0) */
+  badge?: number;
 }
 
-export function HeaderNavItem({ label, icon: Icon, active, to, onClick }: NavItemProps) {
+/** A small red count, e.g. the coach requests waiting. Readable by screen readers as "N pending". */
+export function CountBadge({ count, className }: { count: number; className?: string }) {
+  return (
+    <span className={cn("ml-1.5 inline-grid h-5 min-w-5 place-items-center rounded-full bg-red-600 px-1 text-[11px] font-semibold leading-none text-white", className)}>
+      <span aria-hidden="true">{count > 99 ? "99+" : count}</span>
+      <span className="sr-only">{count} pending</span>
+    </span>
+  );
+}
+
+export function HeaderNavItem({ label, icon: Icon, active, to, onClick, badge }: NavItemProps) {
   const inner = (
     <>
       {/* icons only when there is room (xl); tablets get text-only tabs so the bar never wraps */}
       {Icon && <Icon className="hidden h-5 w-5 xl:block" />}
       {label}
+      {badge ? <CountBadge count={badge} /> : null}
       {active && <NavUnderline />}
     </>
   );

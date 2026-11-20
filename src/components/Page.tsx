@@ -1,17 +1,18 @@
 import type { ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import { IonContent, IonFooter, IonPage } from "@ionic/react";
-import { Bell, LogOut } from "lucide-react";
+import { Bell, LogOut, Settings } from "lucide-react";
 import { useUnreadCount } from "@/lib/notificationsApi";
 import { useAthleteProfile } from "@/lib/profileStore";
 import { Link } from "@/router-compat";
 import { BottomNav, nav, repNav } from "@/layouts/Nav";
 import { useAuth } from "@/auth/AuthContext";
 import { homePathFor, primaryRole } from "@/lib/roles";
+import { useRepHeader } from "@/lib/repSettingsApi";
 import { useIsDesktop } from "@/lib/useIsDesktop";
 import { cn } from "@/lib/utils";
 import {
-  AppHeader, DropdownDivider, DropdownPanel, HeaderBack, HeaderBrand, HeaderNavItem, HeaderPill, HeaderPillDivider,
+  AppHeader, CountBadge, DropdownDivider, DropdownPanel, HeaderBack, HeaderBrand, HeaderNavItem, HeaderPill, HeaderPillDivider,
   HeaderSearch, HeaderUser, MenuGlyph, NotificationBell, PageBody, dropdownItemClass, useDropdown,
 } from "@/components/shell";
 import juan from "@/assets/juan.jpg";
@@ -111,9 +112,11 @@ function RepTopBar({ backTo }: { backTo?: string }) {
   const { pathname } = useLocation();
   const unread = useUnreadCount();
   const menu = useDropdown();
+  const header = useRepHeader(user?.id);
   const isActive = (to: string) => pathname === to || pathname.startsWith(to + "/");
-  const name = user?.displayName ?? "Representative";
-  const shortName = user?.firstName ?? name.split(/\s+/)[0] ?? name;
+  const name = header?.displayName ?? user?.displayName ?? "Representative";
+  const shortName = header ? name.split(/\s+/)[0] ?? name : user?.firstName ?? name.split(/\s+/)[0] ?? name;
+  const pending = header?.pendingCoachRequests ?? 0;
   const home = user ? homePathFor(user.roles) : "/rep/dashboard";
 
   return (
@@ -123,7 +126,7 @@ function RepTopBar({ backTo }: { backTo?: string }) {
 
       <nav aria-label="Main" className="ml-2 hidden items-center md:flex">
         {repNav.slice(0, REP_TABS).map(({ to, label, icon }) => (
-          <HeaderNavItem key={to} to={to} label={label} icon={icon} active={isActive(to)} />
+          <HeaderNavItem key={to} to={to} label={label} icon={icon} active={isActive(to)} badge={to === "/rep/requests" ? pending : 0} />
         ))}
       </nav>
 
@@ -132,7 +135,9 @@ function RepTopBar({ backTo }: { backTo?: string }) {
       <div className="ml-auto flex items-center gap-2 sm:gap-3">
         <NotificationBell count={unread} to="/notifications" />
         <HeaderPill>
-          <HeaderUser name={name} shortName={shortName} />
+          <Link to="/rep/settings" direction="root" aria-label="Your profile and settings" className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shell-focus">
+            <HeaderUser name={name} shortName={shortName} {...(header?.avatar ? { src: header.avatar } : {})} />
+          </Link>
           <HeaderPillDivider />
           <div ref={menu.ref} className="relative">
             <button
@@ -151,8 +156,13 @@ function RepTopBar({ backTo }: { backTo?: string }) {
                   <Link key={to} to={to} direction="root" role="menuitem" className={cn(dropdownItemClass(isActive(to)), i < REP_TABS && "md:hidden")}>
                     <Icon className="h-4 w-4" />
                     {label}
+                    {to === "/rep/requests" && pending > 0 && <CountBadge count={pending} />}
                   </Link>
                 ))}
+                <Link to="/rep/settings" direction="root" role="menuitem" className={dropdownItemClass(isActive("/rep/settings"))}>
+                  <Settings className="h-4 w-4" />
+                  Settings
+                </Link>
                 <Link to="/notifications" direction="root" role="menuitem" className={dropdownItemClass(isActive("/notifications"))}>
                   <Bell className="h-4 w-4" />
                   Notifications

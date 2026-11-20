@@ -9,6 +9,7 @@ import { PersonAvatar } from "@/components/avatar";
 import { Modal } from "@/components/listings";
 import { useAuth } from "@/auth/AuthContext";
 import { homePathFor, primaryRole } from "@/lib/roles";
+import { notifyRepHeaderChanged } from "@/lib/repSettingsApi";
 import {
   REASON_MAX, decideCoachRequest, fetchCoachRequest, fetchCoachRequests,
   type CoachRequest, type CoachRequestDetail, type CoachRequestList, type RequestFilters, type RequestStatus,
@@ -397,7 +398,7 @@ function RepRequests() {
         </Card>
       )}
 
-      <ReviewDialog coachId={reviewing} school={school} onClose={() => setReviewing(null)} onDecided={list.reload} />
+      <ReviewDialog coachId={reviewing} school={school} onClose={() => setReviewing(null)} onDecided={() => { list.reload(); notifyRepHeaderChanged(); }} />
     </div>
   );
 }

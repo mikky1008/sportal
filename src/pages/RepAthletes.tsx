@@ -5,6 +5,7 @@ import { Award, Search } from "lucide-react";
 import { Page } from "@/components/Page";
 import { Card, EmptyState, PageHeader, Pill, Select, btn } from "@/components/common";
 import { PersonAvatar } from "@/components/avatar";
+import { RepExportButton } from "@/components/RepExportButton";
 import { Modal } from "@/components/listings";
 import { useAuth } from "@/auth/AuthContext";
 import { homePathFor, primaryRole } from "@/lib/roles";
@@ -225,7 +226,7 @@ function RepAthletes() {
 
   return (
     <div>
-      <PageHeader title="My Athletes" subtitle={data ? `Student-athletes of ${data.school.name}` : "Student-athletes of your school"} />
+      <PageHeader title="My Athletes" subtitle={data ? `Student-athletes of ${data.school.name}` : "Student-athletes of your school"} action={<RepExportButton kind="athletes" noun="athletes" filters={{ q, sport, status }} />} />
 
       <Card className="mb-6">
         <div className="flex flex-col gap-3 md:flex-row md:items-center">

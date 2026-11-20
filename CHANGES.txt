@@ -1,7 +1,29 @@
 MERGED BUILD: administrator work + school representative work together
 
 SCHOOL REPRESENTATIVE (pages /rep/dashboard, /rep/coaches, /rep/requests, /rep/athletes, /rep/settings)
-LATEST ADDITIONS: new-request alerts + Settings
+LATEST ADDITIONS (round 3): scholarship edit/delete, CSV exports, Dashboard charts
+  - Scholarships (/scholarships, representative view): each scholarship you posted now has Edit and Delete.
+    Edit changes the name, sport, coverage, details, requirements and deadline (the school and open/closed state are not
+    changed); athletes who applied (and weren't turned down or didn't withdraw) are notified what changed. An expired
+    scholarship can still be edited as long as its deadline isn't moved to another past date.
+    Delete asks first and is refused once ANY athlete has applied (even if they withdrew): their records are kept, so
+    close it instead. Edit and delete are for the poster (or an admin) only, and are audited.
+  - "Export CSV" on My Coaches, My Athletes and Coach Requests: downloads every row matching the current search and
+    filters (not just the visible page), for your own school only. Athletes' emails, credential numbers and review
+    notes are never exported; cells that start with = + - @ are made safe for Excel; every download is audited.
+  - Dashboard charts: athletes by sport (verified / not yet verified), coaches by sport, coach requests per month for
+    the last six months. They use the same rules as the list pages, so the numbers always agree with them.
+  NEW  server/rep-exports.server.ts, server/rep-charts.server.ts, src/lib/repExportApi.ts,
+       src/components/RepExportButton.tsx, src/components/RepCharts.tsx
+  CHANGED  server/scholarships.server.ts (updateScholarship, deleteScholarship; apply now returns 404, not 500, if the
+           scholarship is deleted at that instant), server/handler.ts, server/rep-athletes.server.ts,
+           server/rep-coaches.server.ts, server/rep-coach-requests.server.ts (chart breakdown functions),
+           src/lib/scholarshipsApi.ts, src/components/listings.tsx (optional Edit/Delete on the card),
+           src/pages/Scholarships.tsx, src/lib/repDashboardApi.ts, src/pages/RepDashboard.tsx,
+           src/pages/RepCoaches.tsx, RepAthletes.tsx, RepRequests.tsx (Export button), api/index.mjs
+  No database migration.
+
+EARLIER ADDITIONS: new-request alerts + Settings
   - When a coach submits a verification request, the approved representative(s) of that school get a bell notification
     ("New coach request", links to /rep/requests). The "Coach Requests" tab shows a red count of requests waiting
     (top bar, menu and phone bar); it updates after every decision and refreshes every minute.

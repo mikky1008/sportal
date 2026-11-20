@@ -7,7 +7,7 @@ import { Page } from "@/components/Page";
 import { useAuth } from "@/auth/AuthContext";
 import { sports } from "@/data/mock";
 import {
-  applyToScholarship, createScholarship, listApplicants, listScholarships, setApplicationStatus, setScholarshipOpen, withdrawApplication,
+  applyToScholarship, createScholarship, deleteScholarship, listApplicants, listScholarships, setApplicationStatus, setScholarshipOpen, updateScholarship, withdrawApplication,
   type ApplicantView, type ApplicationStatus, type ScholarshipDraft, type ScholarshipView,
 } from "@/lib/scholarshipsApi";
 import { cn } from "@/lib/utils";
@@ -17,25 +17,42 @@ type State = { kind: "loading" } | { kind: "error"; message: string } | { kind: 
 const field = "w-full rounded-xl border bg-card px-3 py-2.5 text-sm outline-none focus:border-primary";
 const EMPTY: ScholarshipDraft = { name: "", sport: sports[0]?.name ?? "", coverage: "", details: "", eligibility: [], deadline: "" };
 
-/** The form a university representative uses to post a scholarship. The server adds their university. */
-function PostScholarshipModal({ open, onClose, onPosted }: { open: boolean; onClose: () => void; onPosted: () => void }) {
+/**
+ * The form a university representative uses to post a scholarship, or (with `editing`) to change one they posted.
+ * The server adds their university and keeps it; anyone who already applied is told what changed.
+ */
+function PostScholarshipModal({ open, onClose, onPosted, editing }: { open: boolean; onClose: () => void; onPosted: () => void; editing?: ScholarshipView | null }) {
   const [d, setD] = useState<ScholarshipDraft>(EMPTY);
   const [eligibilityText, setEligibilityText] = useState("");
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const today = new Date().toISOString().slice(0, 10);
 
+  // Opening the form for a scholarship fills it in; opening it to post starts blank.
+  useEffect(() => {
+    if (!open) return;
+    setErrors({});
+    if (editing) {
+      setD({ name: editing.name, sport: editing.sport, coverage: editing.coverage, details: editing.details, eligibility: editing.eligibility, deadline: editing.deadline });
+      setEligibilityText(editing.eligibility.join("\n"));
+    } else {
+      setD(EMPTY);
+      setEligibilityText("");
+    }
+  }, [open, editing]);
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
-    const r = await createScholarship({ ...d, eligibility: eligibilityText.split("\n").map((x) => x.trim()).filter(Boolean) });
+    const draft = { ...d, eligibility: eligibilityText.split("\n").map((x) => x.trim()).filter(Boolean) };
+    const r = editing ? await updateScholarship(editing.id, draft) : await createScholarship(draft);
     setBusy(false);
     if (!r.ok) {
       const fe = (r as { fieldErrors?: Record<string, string[]> }).fieldErrors;
       setErrors(fe ? Object.fromEntries(Object.entries(fe).map(([k, v]) => [k, v[0] ?? "Invalid"])) : { form: r.message });
       return;
     }
-    toast.success("Scholarship posted");
+    toast.success(editing ? "Scholarship updated" : "Scholarship posted");
     setD(EMPTY);
     setEligibilityText("");
     setErrors({});
@@ -45,7 +62,7 @@ function PostScholarshipModal({ open, onClose, onPosted }: { open: boolean; onCl
 
   const err = (k: string) => errors[k] && <span role="alert" className="text-xs text-destructive">{errors[k]}</span>;
   return (
-    <Modal open={open} onClose={() => !busy && onClose()} title="Post a scholarship">
+    <Modal open={open} onClose={() => !busy && onClose()} title={editing ? "Edit scholarship" : "Post a scholarship"}>
       <form onSubmit={submit} className="flex flex-col gap-3" noValidate>
         <label className="flex flex-col gap-1 text-sm font-medium">Name
           <input className={field} value={d.name} maxLength={120} onChange={(e) => setD({ ...d, name: e.target.value })} placeholder="Athletic Excellence Scholarship" />
@@ -59,7 +76,7 @@ function PostScholarshipModal({ open, onClose, onPosted }: { open: boolean; onCl
             {err("sport")}
           </label>
           <label className="flex flex-col gap-1 text-sm font-medium">Deadline
-            <input type="date" min={today} className={field} value={d.deadline} onChange={(e) => setD({ ...d, deadline: e.target.value })} />
+            <input type="date" min={editing && editing.deadline < today ? editing.deadline : today} className={field} value={d.deadline} onChange={(e) => setD({ ...d, deadline: e.target.value })} />
             {err("deadline")}
           </label>
         </div>
@@ -75,8 +92,9 @@ function PostScholarshipModal({ open, onClose, onPosted }: { open: boolean; onCl
           <textarea className={field} rows={3} value={eligibilityText} onChange={(e) => setEligibilityText(e.target.value)} />
           {err("eligibility")}
         </label>
+        {editing && <p className="rounded-xl bg-muted p-3 text-xs text-muted-foreground">Athletes who have already applied are notified of what you change.</p>}
         {err("form")}
-        <button type="submit" disabled={busy} className={btn.primary}>{busy ? "Posting…" : "Post scholarship"}</button>
+        <button type="submit" disabled={busy} className={btn.primary}>{editing ? (busy ? "Saving…" : "Save changes") : busy ? "Posting…" : "Post scholarship"}</button>
       </form>
     </Modal>
   );
@@ -154,6 +172,43 @@ function ApplicantsModal({ scholarship, onClose }: { scholarship: ScholarshipVie
   );
 }
 
+/** Asks before deleting. The server refuses once anyone has applied (their records are kept) and says to close it instead. */
+function DeleteScholarshipModal({ scholarship, onClose, onDeleted }: { scholarship: ScholarshipView | null; onClose: () => void; onDeleted: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => { setError(""); setBusy(false); }, [scholarship]);
+
+  const remove = async () => {
+    if (!scholarship) return;
+    setBusy(true); setError("");
+    const r = await deleteScholarship(scholarship.id);
+    setBusy(false);
+    if (!r.ok) { setError(r.message); return; }
+    toast.success("Scholarship deleted");
+    onDeleted();
+    onClose();
+  };
+
+  return (
+    <Modal open={!!scholarship} onClose={() => !busy && onClose()} title="Delete scholarship?">
+      {scholarship && (
+        <>
+          <p className="text-sm">Delete <strong>{scholarship.name}</strong>? This can't be undone. If you only want to stop new applications, close it instead.</p>
+          {error && <p role="alert" className="mt-3 rounded-xl bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
+          <div className="mt-5 flex flex-wrap justify-end gap-2">
+            <button type="button" className={btn.secondary} disabled={busy} onClick={onClose}>{error ? "Close" : "Cancel"}</button>
+            {!error && (
+              <button type="button" disabled={busy} onClick={() => void remove()} className={cn(btn.secondary, "border-destructive bg-destructive text-white hover:bg-destructive hover:brightness-110")}>
+                {busy ? "Deleting…" : "Delete"}
+              </button>
+            )}
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
 const parseScholarshipSearch = (search: Record<string, unknown>) => ({
   highlight: typeof search["highlight"] === "string" ? search["highlight"] : undefined,
 });
@@ -167,6 +222,8 @@ export default function ScholarshipsPage() {
   const [state, setState] = useState<State>({ kind: "loading" });
   const [sport, setSport] = useState("all");
   const [posting, setPosting] = useState(false);
+  const [editing, setEditing] = useState<ScholarshipView | null>(null);
+  const [deleting, setDeleting] = useState<ScholarshipView | null>(null);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     // Posters also see their own closed scholarships, so they can reopen them.
@@ -233,12 +290,13 @@ export default function ScholarshipsPage() {
       {state.kind === "ready" && shown.length > 0 && (
         <div className="grid gap-4 md:grid-cols-2">
           {shown.map((s) => (
-            <ScholarshipCard key={s.id} s={s} canApply={canApply} onApply={act(applyToScholarship)} onWithdraw={act(withdrawApplication)} onToggleOpen={act(setScholarshipOpen)} onApplicants={setViewing} highlighted={s.id === highlight} />
+            <ScholarshipCard key={s.id} s={s} canApply={canApply} onApply={act(applyToScholarship)} onWithdraw={act(withdrawApplication)} onToggleOpen={act(setScholarshipOpen)} onApplicants={setViewing} {...(canPost ? { onEdit: setEditing, onDelete: setDeleting } : {})} highlighted={s.id === highlight} />
           ))}
         </div>
       )}
       {canPost && <ApplicantsModal scholarship={viewing} onClose={() => setViewing(null)} />}
-      {canPost && <PostScholarshipModal open={posting} onClose={() => setPosting(false)} onPosted={() => void load()} />}
+      {canPost && <PostScholarshipModal open={posting || editing !== null} editing={editing} onClose={() => { setPosting(false); setEditing(null); }} onPosted={() => void load()} />}
+      {canPost && <DeleteScholarshipModal scholarship={deleting} onClose={() => setDeleting(null)} onDeleted={() => void load()} />}
     </Page>
   );
 }

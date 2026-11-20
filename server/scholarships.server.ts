@@ -92,13 +92,13 @@ const hasRole = (u: Pick<PublicUser, "roles">, role: string) => u.roles.includes
 const likeLiteral = (t: string) => t.replace(/[\\%_]/g, (c) => `\\${c}`);
 const todayIso = () => new Date().toISOString().slice(0, 10);
 
-function clean(input: ScholarshipInput): ScholarshipInput {
+function clean(input: ScholarshipInput, unchangedDeadline?: string): ScholarshipInput {
   const name = input.name.trim();
   if (name.length < 3 || name.length > 120) throw new ScholarshipError(400, "validation", "Name must be 3-120 characters.");
   if (!input.sport.trim()) throw new ScholarshipError(400, "validation", "Choose a sport.");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.deadline) || Number.isNaN(Date.parse(input.deadline)))
     throw new ScholarshipError(400, "validation", "Deadline must be a date (YYYY-MM-DD).");
-  if (input.deadline < todayIso()) throw new ScholarshipError(400, "validation", "Deadline cannot be in the past.");
+  if (input.deadline < todayIso() && input.deadline !== unchangedDeadline) throw new ScholarshipError(400, "validation", "Deadline cannot be in the past.");
   if (input.details.length > 2000) throw new ScholarshipError(400, "validation", "Details are too long.");
   const eligibility = input.eligibility.map((e) => e.trim()).filter(Boolean).slice(0, 10).map((e) => e.slice(0, 120));
   return { ...input, name, sport: input.sport.trim(), coverage: input.coverage.trim().slice(0, 120), eligibility };
@@ -186,12 +186,19 @@ export async function applyToScholarship(user: PublicUser, scholarshipId: string
   const id = randomUUID();
   const now = new Date();
   // One conditional statement, so two taps cannot create two applications. A withdrawn one can be re-opened.
-  const rows = await db<{ id: string; status: ApplicationStatus }[]>`
-    INSERT INTO scholarship_applications (id, scholarship_id, athlete_id, status, created_at, updated_at)
-    VALUES (${id}, ${scholarshipId}, ${user.id}, 'submitted', ${now}, ${now})
-    ON CONFLICT (scholarship_id, athlete_id) DO UPDATE SET status = 'submitted', updated_at = ${now}
-      WHERE scholarship_applications.status = 'withdrawn'
-    RETURNING id, status`;
+  let rows: { id: string; status: ApplicationStatus }[];
+  try {
+    rows = await db<{ id: string; status: ApplicationStatus }[]>`
+      INSERT INTO scholarship_applications (id, scholarship_id, athlete_id, status, created_at, updated_at)
+      VALUES (${id}, ${scholarshipId}, ${user.id}, 'submitted', ${now}, ${now})
+      ON CONFLICT (scholarship_id, athlete_id) DO UPDATE SET status = 'submitted', updated_at = ${now}
+        WHERE scholarship_applications.status = 'withdrawn'
+      RETURNING id, status`;
+  } catch (err) {
+    // The poster deleted the scholarship between the check above and this insert.
+    if ((err as { code?: string }).code === "23503") throw new ScholarshipError(404, "not_found", "Scholarship not found.");
+    throw err;
+  }
   const app = rows[0];
   if (!app) throw new ScholarshipError(409, "already_applied", "You have already applied to this scholarship.");
 
@@ -306,4 +313,65 @@ export async function setApplicationStatus(
   await audit("scholarship.application_status", { userId: user.id, ...meta, detail: { applicationId, status } }, db);
   await notify(a.athlete_id, { category: "scholarship", title: "Application update", message: `Your application to ${a.name} ${STATUS_PHRASE[status]}.`, link: "/scholarships" }, db);
   return status;
+}
+
+/* ------------------------------------------------------------------ edit and delete */
+
+const CHANGE_LABEL: Record<string, string> = {
+  name: "the name", sport: "the sport", coverage: "the coverage", details: "the details", eligibility: "the requirements", deadline: "the deadline",
+};
+
+/**
+ * Changes a scholarship's name, sport, coverage, details, requirements or deadline. Only the poster (or an
+ * admin) can; the university, who posted it and whether it is open are not changed here. Anyone who has
+ * applied (and wasn't turned down or didn't withdraw) is told what changed. Saving without any change does nothing.
+ */
+export async function updateScholarship(user: PublicUser, id: string, input: ScholarshipInput, meta: Partial<RequestMeta> = {}, dbArg?: Db): Promise<ScholarshipView> {
+  const db = dbArg ?? (await getDb());
+  await ownedScholarship(db, user, id);
+  const [cur] = await db<{ name: string; university: string; sport: string; coverage: string; details: string; eligibility: string[]; deadline: string }[]>`
+    SELECT name, university, sport, coverage, details, eligibility, to_char(deadline, 'YYYY-MM-DD') AS deadline FROM scholarships WHERE id = ${id}`;
+  if (!cur) throw new ScholarshipError(404, "not_found", "Scholarship not found.");
+  const c = clean(input, cur.deadline);
+
+  const before = { ...cur, eligibility: Array.isArray(cur.eligibility) ? cur.eligibility : [] };
+  const changed = (["name", "sport", "coverage", "details", "eligibility", "deadline"] as const).filter((k) =>
+    k === "eligibility" ? JSON.stringify(before.eligibility) !== JSON.stringify(c.eligibility) : before[k] !== c[k]);
+
+  if (changed.length > 0) {
+    await db`
+      UPDATE scholarships SET name = ${c.name}, sport = ${c.sport}, coverage = ${c.coverage}, details = ${c.details},
+             eligibility = ${db.json(c.eligibility)}, deadline = ${c.deadline}::date, updated_at = ${new Date()}
+      WHERE id = ${id}`;
+    await audit("scholarship.updated", { userId: user.id, ...meta, detail: { scholarshipId: id, changed } }, db);
+    const people = await db<{ athlete_id: string }[]>`
+      SELECT athlete_id FROM scholarship_applications WHERE scholarship_id = ${id} AND status IN ('submitted', 'under_review', 'accepted')`;
+    const what = changed.map((k) => CHANGE_LABEL[k]).join(", ");
+    for (const p of people)
+      await notify(p.athlete_id, { category: "scholarship", title: "Scholarship updated", message: `${cur.university} changed ${what} of ${c.name}. Check the scholarship for the latest details.`, link: "/scholarships" }, db);
+  }
+  const [row] = await db<Row[]>`${SELECT(db, user.id)} WHERE s.id = ${id}`;
+  return toView(row as Row);
+}
+
+/**
+ * Deletes a scholarship nobody has applied to. Once anyone has applied (even if they withdrew) it can't be
+ * deleted, because that would erase the athletes' application records; close it instead. Only the poster (or an admin).
+ */
+export async function deleteScholarship(user: PublicUser, id: string, meta: Partial<RequestMeta> = {}, dbArg?: Db): Promise<{ deleted: true }> {
+  const db = dbArg ?? (await getDb());
+  const s = await ownedScholarship(db, user, id);
+  await db.begin(async (txRaw) => {
+    const tx = txRaw as unknown as Db;
+    // Lock the scholarship first: an athlete applying at the same moment either lands before this check (and blocks the delete) or is refused.
+    const [locked] = await tx`SELECT id FROM scholarships WHERE id = ${id} FOR UPDATE`;
+    if (!locked) throw new ScholarshipError(404, "not_found", "Scholarship not found.");
+    const [c] = await tx<{ n: number }[]>`SELECT count(*)::int AS n FROM scholarship_applications WHERE scholarship_id = ${id}`;
+    const n = c?.n ?? 0;
+    if (n > 0)
+      throw new ScholarshipError(409, "has_applications", `${n} athlete${n === 1 ? " has" : "s have"} applied to this scholarship, so it can't be deleted. Close it instead to stop new applications and keep their records.`);
+    await tx`DELETE FROM scholarships WHERE id = ${id}`;
+    await audit("scholarship.deleted", { userId: user.id, ...meta, detail: { scholarshipId: id, name: s.name } }, tx);
+  });
+  return { deleted: true };
 }

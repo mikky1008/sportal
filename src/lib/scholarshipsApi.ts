@@ -66,6 +66,14 @@ export interface ScholarshipDraft {
 export const createScholarship = (d: ScholarshipDraft) =>
   apiRequest<{ scholarship: ScholarshipView }>("/api/scholarships", { method: "POST", body: d });
 
+/** The poster (or an admin) changes a scholarship. Anyone who applied is told what changed. */
+export const updateScholarship = (id: string, d: ScholarshipDraft) =>
+  apiRequest<{ scholarship: ScholarshipView }>(`/api/scholarships/${encodeURIComponent(id)}`, { method: "PUT", body: d });
+
+/** Only works while nobody has applied (409 has_applications otherwise: close it instead). */
+export const deleteScholarship = (id: string) =>
+  apiRequest<{ deleted: true }>(`/api/scholarships/${encodeURIComponent(id)}`, { method: "DELETE" });
+
 export const setScholarshipOpen = (id: string, open: boolean) =>
   apiRequest<{ scholarship: ScholarshipView }>(`/api/scholarships/${encodeURIComponent(id)}/${open ? "open" : "close"}`, { method: "POST" });
 

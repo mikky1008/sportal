@@ -185,3 +185,13 @@ export async function getRepAthletePhoto(user: PublicUser, athleteId: string, db
   if (!m) throw new RepDashboardError(404, "photo_not_found", "This athlete has no profile photo.");
   return { mimeType: `image/${m[1]}`, data: Buffer.from(m[2]!, "base64") };
 }
+
+/** Athletes of the school per sport, split by verification. Uses the same rules as the list, so the numbers always agree with it. */
+export async function athleteSportBreakdown(db: Db, school: School): Promise<{ sport: string; verified: number; unverified: number }[]> {
+  return db<{ sport: string; verified: number; unverified: number }[]>`
+    SELECT COALESCE(NULLIF(btrim(ap.sport), ''), 'Not set') AS sport,
+           (count(*) FILTER (WHERE sc.athlete_id IS NOT NULL))::int AS verified,
+           (count(*) FILTER (WHERE sc.athlete_id IS NULL))::int AS unverified
+    ${SCOPE(db, school)}
+    GROUP BY 1 ORDER BY count(*) DESC, 1 LIMIT 12`;
+}

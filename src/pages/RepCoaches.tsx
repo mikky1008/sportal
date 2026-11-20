@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Page } from "@/components/Page";
 import { Card, EmptyState, PageHeader, Pill, Select, btn } from "@/components/common";
 import { PersonAvatar } from "@/components/avatar";
+import { RepExportButton } from "@/components/RepExportButton";
 import { Modal } from "@/components/listings";
 import { useAuth } from "@/auth/AuthContext";
 import { homePathFor, primaryRole } from "@/lib/roles";
@@ -237,7 +238,7 @@ function RepCoaches() {
 
   return (
     <div>
-      <PageHeader title="My Coaches" subtitle={data ? `Coaches affiliated with ${data.school.name}` : "Coaches affiliated with your school"} />
+      <PageHeader title="My Coaches" subtitle={data ? `Coaches affiliated with ${data.school.name}` : "Coaches affiliated with your school"} action={<RepExportButton kind="coaches" noun="coaches" filters={{ q, sport, status }} />} />
 
       <Card className="mb-6">
         <div className="flex flex-col gap-3 md:flex-row md:items-center">

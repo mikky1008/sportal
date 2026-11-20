@@ -1,5 +1,6 @@
 // Browser client for the School Representative Dashboard (server/rep-dashboard.server.ts).
 // Read-only. Route used:
+//   GET /api/rep/charts      athletes per sport, coaches per sport and requests per month (the Dashboard's charts)
 //   GET /api/rep/dashboard   the signed-in representative's own school, its numbers, its pending
 //                            coach requests and its recent activity (never another school's)
 
@@ -41,3 +42,12 @@ export interface RepDashboardData {
 
 export const fetchRepDashboard = (signal?: AbortSignal): Promise<ApiResult<RepDashboardData>> =>
   apiRequest<RepDashboardData>("/api/rep/dashboard", signal ? { signal } : {});
+
+export interface RepCharts {
+  athletesBySport: { sport: string; verified: number; unverified: number }[];
+  coachesBySport: { sport: string; count: number }[];
+  /** the last six months, oldest first, `month` as YYYY-MM */
+  requestsByMonth: { month: string; pending: number; approved: number; rejected: number }[];
+}
+
+export const fetchRepCharts = (): Promise<ApiResult<{ charts: RepCharts }>> => apiRequest<{ charts: RepCharts }>("/api/rep/charts");

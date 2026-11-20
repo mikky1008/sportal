@@ -57,7 +57,7 @@ const APPLICATION_LABEL: Record<ApplicationStatus, { text: string; tone: "succes
  * are not student-athletes, so they never see an Apply button that can only fail.
  */
 export function ScholarshipCard({
-  s, canApply, onApply, onWithdraw, onToggleOpen, onApplicants, highlighted,
+  s, canApply, onApply, onWithdraw, onToggleOpen, onApplicants, onEdit, onDelete, highlighted,
 }: {
   s: ScholarshipView;
   canApply: boolean;
@@ -67,6 +67,10 @@ export function ScholarshipCard({
   onToggleOpen?: (id: string, open: boolean) => Promise<string | null>;
   /** Only used when the signed-in user posted this scholarship: opens the list of applicants. */
   onApplicants?: (s: ScholarshipView) => void;
+  /** Only used when the signed-in user posted this scholarship: opens the edit form. */
+  onEdit?: (s: ScholarshipView) => void;
+  /** Only used when the signed-in user posted this scholarship: asks to delete it. */
+  onDelete?: (s: ScholarshipView) => void;
   /** the card a search result pointed at */
   highlighted?: boolean;
 }) {
@@ -130,6 +134,12 @@ export function ScholarshipCard({
           <button disabled={active} onClick={() => setOpen(true)} className={cn(btn.primary, "px-4 py-2")}>{active ? "Submitted" : status === "withdrawn" ? "Apply again" : "Apply"}</button>
         ))}
       </div>
+      {s.postedByMe && (onEdit || onDelete) && (
+        <div className="mt-3 flex justify-end gap-2 border-t pt-3">
+          {onEdit && <button type="button" onClick={() => onEdit(s)} aria-label={`Edit ${s.name}`} className={cn(btn.secondary, "px-3 py-1.5 text-xs")}>Edit</button>}
+          {onDelete && <button type="button" onClick={() => onDelete(s)} aria-label={`Delete ${s.name}`} className={cn(btn.secondary, "border-destructive/40 px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10")}>Delete</button>}
+        </div>
+      )}
       <Modal open={open} onClose={() => !busy && setOpen(false)} title={`Apply: ${s.name}`}>
         <form onSubmit={submit} className="flex flex-col gap-4">
           <p className="text-sm text-muted-foreground">Your Sportal showcase profile and AI-assessed results will be attached.</p>

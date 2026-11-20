@@ -9,6 +9,7 @@ import {
 import { Page } from "@/components/Page";
 import { Card, EmptyState, Pill, StatTile, btn } from "@/components/common";
 import { PersonAvatar } from "@/components/avatar";
+import { RepCharts } from "@/components/RepCharts";
 import { Modal } from "@/components/listings";
 import { useAuth } from "@/auth/AuthContext";
 import { homePathFor, primaryRole } from "@/lib/roles";
@@ -314,6 +315,7 @@ function RepDashboard() {
         <RecentActivities items={data.activities} />
         <PendingRequests data={data} />
       </div>
+      <RepCharts />
     </div>
   );
 }

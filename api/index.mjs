@@ -4071,19 +4071,19 @@ function parseDocuments(raw) {
   let total = 0;
   for (const item of raw) {
     if (!DOC_KINDS.includes(item.kind)) return { ok: false, message: "Choose what each document is." };
-    const fileName = cleanFileName(item.fileName);
-    if (!fileName) return { ok: false, message: "Each document needs a file name." };
+    const fileName2 = cleanFileName(item.fileName);
+    if (!fileName2) return { ok: false, message: "Each document needs a file name." };
     if (item.data.length > Math.ceil(DOC_MAX_BYTES * 4 / 3) + 8)
-      return { ok: false, message: `"${fileName}" is larger than 2 MB.` };
-    if (!BASE64.test(item.data) || item.data.length % 4 !== 0) return { ok: false, message: `"${fileName}" couldn't be read. Try uploading it again.` };
+      return { ok: false, message: `"${fileName2}" is larger than 2 MB.` };
+    if (!BASE64.test(item.data) || item.data.length % 4 !== 0) return { ok: false, message: `"${fileName2}" couldn't be read. Try uploading it again.` };
     const data = Buffer.from(item.data, "base64");
-    if (data.length < 1) return { ok: false, message: `"${fileName}" is empty.` };
-    if (data.length > DOC_MAX_BYTES) return { ok: false, message: `"${fileName}" is larger than 2 MB.` };
+    if (data.length < 1) return { ok: false, message: `"${fileName2}" is empty.` };
+    if (data.length > DOC_MAX_BYTES) return { ok: false, message: `"${fileName2}" is larger than 2 MB.` };
     const mimeType = sniffMime(data);
-    if (!mimeType) return { ok: false, message: `"${fileName}" must be a PDF, PNG or JPEG file.` };
+    if (!mimeType) return { ok: false, message: `"${fileName2}" must be a PDF, PNG or JPEG file.` };
     total += data.length;
     if (total > DOC_TOTAL_MAX_BYTES) return { ok: false, message: "Your documents are too large together. Keep them under 3 MB in total." };
-    out.push({ kind: item.kind, fileName, mimeType, data });
+    out.push({ kind: item.kind, fileName: fileName2, mimeType, data });
   }
   return { ok: true, documents: out };
 }
@@ -12009,13 +12009,13 @@ var toView4 = (r) => ({
 var hasRole2 = (u, role) => u.roles.includes(role);
 var likeLiteral2 = (t) => t.replace(/[\\%_]/g, (c2) => `\\${c2}`);
 var todayIso = () => (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-function clean2(input) {
+function clean2(input, unchangedDeadline) {
   const name2 = input.name.trim();
   if (name2.length < 3 || name2.length > 120) throw new ScholarshipError(400, "validation", "Name must be 3-120 characters.");
   if (!input.sport.trim()) throw new ScholarshipError(400, "validation", "Choose a sport.");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.deadline) || Number.isNaN(Date.parse(input.deadline)))
     throw new ScholarshipError(400, "validation", "Deadline must be a date (YYYY-MM-DD).");
-  if (input.deadline < todayIso()) throw new ScholarshipError(400, "validation", "Deadline cannot be in the past.");
+  if (input.deadline < todayIso() && input.deadline !== unchangedDeadline) throw new ScholarshipError(400, "validation", "Deadline cannot be in the past.");
   if (input.details.length > 2e3) throw new ScholarshipError(400, "validation", "Details are too long.");
   const eligibility = input.eligibility.map((e) => e.trim()).filter(Boolean).slice(0, 10).map((e) => e.slice(0, 120));
   return { ...input, name: name2, sport: input.sport.trim(), coverage: input.coverage.trim().slice(0, 120), eligibility };
@@ -12081,12 +12081,18 @@ async function applyToScholarship(user, scholarshipId, meta = {}, dbArg) {
   if (!s.open) throw new ScholarshipError(409, "closed", "This scholarship is no longer accepting applications.");
   const id = randomUUID9();
   const now6 = /* @__PURE__ */ new Date();
-  const rows = await db`
-    INSERT INTO scholarship_applications (id, scholarship_id, athlete_id, status, created_at, updated_at)
-    VALUES (${id}, ${scholarshipId}, ${user.id}, 'submitted', ${now6}, ${now6})
-    ON CONFLICT (scholarship_id, athlete_id) DO UPDATE SET status = 'submitted', updated_at = ${now6}
-      WHERE scholarship_applications.status = 'withdrawn'
-    RETURNING id, status`;
+  let rows;
+  try {
+    rows = await db`
+      INSERT INTO scholarship_applications (id, scholarship_id, athlete_id, status, created_at, updated_at)
+      VALUES (${id}, ${scholarshipId}, ${user.id}, 'submitted', ${now6}, ${now6})
+      ON CONFLICT (scholarship_id, athlete_id) DO UPDATE SET status = 'submitted', updated_at = ${now6}
+        WHERE scholarship_applications.status = 'withdrawn'
+      RETURNING id, status`;
+  } catch (err) {
+    if (err.code === "23503") throw new ScholarshipError(404, "not_found", "Scholarship not found.");
+    throw err;
+  }
   const app = rows[0];
   if (!app) throw new ScholarshipError(409, "already_applied", "You have already applied to this scholarship.");
   await audit("scholarship.applied", { userId: user.id, ...meta, detail: { scholarshipId } }, db);
@@ -12173,6 +12179,54 @@ async function setApplicationStatus(user, applicationId, status, meta = {}, dbAr
   await audit("scholarship.application_status", { userId: user.id, ...meta, detail: { applicationId, status } }, db);
   await notify(a.athlete_id, { category: "scholarship", title: "Application update", message: `Your application to ${a.name} ${STATUS_PHRASE[status]}.`, link: "/scholarships" }, db);
   return status;
+}
+var CHANGE_LABEL = {
+  name: "the name",
+  sport: "the sport",
+  coverage: "the coverage",
+  details: "the details",
+  eligibility: "the requirements",
+  deadline: "the deadline"
+};
+async function updateScholarship(user, id, input, meta = {}, dbArg) {
+  const db = dbArg ?? await getDb();
+  await ownedScholarship(db, user, id);
+  const [cur] = await db`
+    SELECT name, university, sport, coverage, details, eligibility, to_char(deadline, 'YYYY-MM-DD') AS deadline FROM scholarships WHERE id = ${id}`;
+  if (!cur) throw new ScholarshipError(404, "not_found", "Scholarship not found.");
+  const c2 = clean2(input, cur.deadline);
+  const before = { ...cur, eligibility: Array.isArray(cur.eligibility) ? cur.eligibility : [] };
+  const changed = ["name", "sport", "coverage", "details", "eligibility", "deadline"].filter((k) => k === "eligibility" ? JSON.stringify(before.eligibility) !== JSON.stringify(c2.eligibility) : before[k] !== c2[k]);
+  if (changed.length > 0) {
+    await db`
+      UPDATE scholarships SET name = ${c2.name}, sport = ${c2.sport}, coverage = ${c2.coverage}, details = ${c2.details},
+             eligibility = ${db.json(c2.eligibility)}, deadline = ${c2.deadline}::date, updated_at = ${/* @__PURE__ */ new Date()}
+      WHERE id = ${id}`;
+    await audit("scholarship.updated", { userId: user.id, ...meta, detail: { scholarshipId: id, changed } }, db);
+    const people = await db`
+      SELECT athlete_id FROM scholarship_applications WHERE scholarship_id = ${id} AND status IN ('submitted', 'under_review', 'accepted')`;
+    const what = changed.map((k) => CHANGE_LABEL[k]).join(", ");
+    for (const p2 of people)
+      await notify(p2.athlete_id, { category: "scholarship", title: "Scholarship updated", message: `${cur.university} changed ${what} of ${c2.name}. Check the scholarship for the latest details.`, link: "/scholarships" }, db);
+  }
+  const [row] = await db`${SELECT2(db, user.id)} WHERE s.id = ${id}`;
+  return toView4(row);
+}
+async function deleteScholarship(user, id, meta = {}, dbArg) {
+  const db = dbArg ?? await getDb();
+  const s = await ownedScholarship(db, user, id);
+  await db.begin(async (txRaw) => {
+    const tx = txRaw;
+    const [locked] = await tx`SELECT id FROM scholarships WHERE id = ${id} FOR UPDATE`;
+    if (!locked) throw new ScholarshipError(404, "not_found", "Scholarship not found.");
+    const [c2] = await tx`SELECT count(*)::int AS n FROM scholarship_applications WHERE scholarship_id = ${id}`;
+    const n = c2?.n ?? 0;
+    if (n > 0)
+      throw new ScholarshipError(409, "has_applications", `${n} athlete${n === 1 ? " has" : "s have"} applied to this scholarship, so it can't be deleted. Close it instead to stop new applications and keep their records.`);
+    await tx`DELETE FROM scholarships WHERE id = ${id}`;
+    await audit("scholarship.deleted", { userId: user.id, ...meta, detail: { scholarshipId: id, name: s.name } }, tx);
+  });
+  return { deleted: true };
 }
 
 // server/search.server.ts
@@ -13111,7 +13165,7 @@ async function getAdminHeader(actor) {
   const db = await getDb();
   const prefs = await getAdminPreferences(actor);
   const profile = await getAdminProfile(actor);
-  const day = new Date(Date.now() - 24 * 60 * 60 * 1e3);
+  const day2 = new Date(Date.now() - 24 * 60 * 60 * 1e3);
   const week = new Date(Date.now() - 7 * 24 * 60 * 60 * 1e3);
   const count = async (q) => (await q)[0]?.n ?? 0;
   return {
@@ -13124,7 +13178,7 @@ async function getAdminHeader(actor) {
             SELECT COUNT(*)::int AS n FROM users u
             WHERE u.deleted_at IS NULL AND u.created_at > ${week}
               AND NOT EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id AND r.name = 'admin')`) : null,
-      securityAlerts: prefs.security ? await count(db`SELECT COUNT(*)::int AS n FROM audit_log WHERE event IN ('admin.login.failed', 'admin.login.blocked') AND created_at > ${day}`) : null
+      securityAlerts: prefs.security ? await count(db`SELECT COUNT(*)::int AS n FROM audit_log WHERE event IN ('admin.login.failed', 'admin.login.blocked') AND created_at > ${day2}`) : null
     }
   };
 }
@@ -13881,6 +13935,441 @@ async function getRepDashboard(user, dbArg) {
   };
 }
 
+// server/rep-athletes.server.ts
+var ATHLETES_PAGE_DEFAULT = 20;
+var ATHLETES_PAGE_MAX = 50;
+var SEARCH_MAX3 = 80;
+var VERIFICATION_STATUSES = ["verified", "unverified"];
+var likeLiteral5 = (t) => t.replace(/[\\%_]/g, (c2) => `\\${c2}`);
+var notFound4 = () => new RepDashboardError(404, "athlete_not_found", "That athlete could not be found at your school.");
+var VERIFIED_AND_ACTIVE3 = (db, alias) => db`
+  EXISTS (SELECT 1 FROM user_roles vr JOIN roles r ON r.id = vr.role_id WHERE vr.user_id = ${db(alias)}.id AND r.name = 'verified_coach')
+  AND EXISTS (SELECT 1 FROM coach_verifications cv WHERE cv.coach_id = ${db(alias)}.id AND cv.status = 'verified')
+  AND ${db(alias)}.is_active = TRUE AND ${db(alias)}.deleted_at IS NULL`;
+var SCOPE = (db, school) => db`
+  FROM users a
+  LEFT JOIN user_profiles up ON up.user_id = a.id
+  LEFT JOIN athlete_profiles ap ON ap.user_id = a.id
+  LEFT JOIN athlete_extras ex ON ex.user_id = a.id
+  LEFT JOIN (
+    SELECT c.athlete_id, min(COALESCE(c.responded_at, c.updated_at)) AS since
+    FROM coach_athlete_connections c
+    JOIN coach_profiles cp ON cp.user_id = c.coach_id AND cp.university_id = ${school.universityId ?? ""}
+    JOIN users cu ON cu.id = c.coach_id
+    WHERE c.status = 'accepted' AND ${VERIFIED_AND_ACTIVE3(db, "cu")}
+    GROUP BY c.athlete_id
+  ) sc ON sc.athlete_id = a.id
+  WHERE a.is_active = TRUE AND a.deleted_at IS NULL
+    AND EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = a.id AND r.name = ${ATHLETE_ROLE})
+    AND COALESCE(ap.showcase_visible, TRUE) = TRUE
+    AND (sc.athlete_id IS NOT NULL OR lower(btrim(COALESCE(ap.school, ''))) = ${school.key})`;
+var NAME = (db) => db`COALESCE(NULLIF(btrim(concat_ws(' ', up.first_name, up.last_name)), ''), a.display_name)`;
+var HAS_PHOTO = (db) => db`(ex.photo_data IS NOT NULL AND ex.photo_status = 'approved')`;
+async function coachNames(db, school, athleteIds) {
+  const out = /* @__PURE__ */ new Map();
+  if (athleteIds.length === 0 || !school.universityId) return out;
+  const rows = await db`
+    SELECT c.athlete_id, COALESCE(NULLIF(btrim(concat_ws(' ', cup.first_name, cup.last_name)), ''), cu.display_name) AS name
+    FROM coach_athlete_connections c
+    JOIN coach_profiles cp ON cp.user_id = c.coach_id AND cp.university_id = ${school.universityId}
+    JOIN users cu ON cu.id = c.coach_id
+    LEFT JOIN user_profiles cup ON cup.user_id = cu.id
+    WHERE c.status = 'accepted' AND c.athlete_id = ANY(${athleteIds}::text[]) AND ${VERIFIED_AND_ACTIVE3(db, "cu")}
+    ORDER BY COALESCE(c.responded_at, c.updated_at), cu.id`;
+  for (const r of rows) out.set(r.athlete_id, [...out.get(r.athlete_id) ?? [], r.name]);
+  return out;
+}
+var toAthlete = (r, coaches) => ({
+  id: r.id,
+  name: r.name,
+  hasPhoto: r.has_photo,
+  photoVersion: r.photo_v ? Number(r.photo_v) : 0,
+  sport: r.sport,
+  position: r.position,
+  yearLevel: r.year_level,
+  coaches,
+  verification: r.verified ? "verified" : "unverified"
+});
+var FIELDS = (db) => db`
+  a.id, ${NAME(db)} AS name, ${HAS_PHOTO(db)} AS has_photo, (extract(epoch FROM ex.updated_at) * 1000)::bigint::text AS photo_v,
+  COALESCE(ap.sport, '') AS sport, COALESCE(ap.playing_position, '') AS position, COALESCE(ap.year_level, '') AS year_level,
+  (sc.athlete_id IS NOT NULL) AS verified, sc.since`;
+async function listRepAthletes(user, opts, dbArg) {
+  const db = dbArg ?? await getDb();
+  const school = await resolveSchool(db, user);
+  const needle = opts.q?.trim().slice(0, SEARCH_MAX3);
+  const pattern = needle ? `%${likeLiteral5(needle)}%` : null;
+  const sport = opts.sport?.trim().slice(0, 80) || null;
+  const rows = await db`
+    SELECT ${FIELDS(db)}, count(*) OVER ()::int AS total
+    ${SCOPE(db, school)}
+      ${opts.status === "verified" ? db`AND sc.athlete_id IS NOT NULL` : opts.status === "unverified" ? db`AND sc.athlete_id IS NULL` : db``}
+      ${sport ? db`AND lower(ap.sport) = lower(${sport})` : db``}
+      ${pattern ? db`AND ${NAME(db)} ILIKE ${pattern}` : db``}
+    ORDER BY ${NAME(db)}, a.id
+    LIMIT ${opts.limit} OFFSET ${opts.offset}`;
+  const meta = await db`SELECT (sc.athlete_id IS NOT NULL) AS verified, COALESCE(ap.sport, '') AS sport ${SCOPE(db, school)}`;
+  const counts = { verified: 0, unverified: 0 };
+  for (const m of meta) counts[m.verified ? "verified" : "unverified"] += 1;
+  const sports2 = [...new Set(meta.map((m) => m.sport).filter(Boolean))].sort((x, y) => x.localeCompare(y));
+  const coaches = await coachNames(db, school, rows.map((r) => r.id));
+  return { school: { name: school.name }, items: rows.map((r) => toAthlete(r, coaches.get(r.id) ?? [])), total: rows[0]?.total ?? 0, sports: sports2, counts };
+}
+async function getRepAthlete(user, athleteId, dbArg) {
+  const db = dbArg ?? await getDb();
+  const school = await resolveSchool(db, user);
+  const [r] = await db`
+    SELECT ${FIELDS(db)}, COALESCE(ap.bio, '') AS bio, COALESCE(ap.team_status, '') AS team_status, COALESCE(ap.team_name, '') AS team_name
+    ${SCOPE(db, school)} AND a.id = ${athleteId}`;
+  if (!r) throw notFound4();
+  const [achievements, skills2, [sessions], coaches] = await Promise.all([
+    db`SELECT id, title, year FROM athlete_achievements WHERE athlete_id = ${athleteId} ORDER BY position`,
+    db`SELECT name FROM athlete_skills WHERE athlete_id = ${athleteId} ORDER BY position`,
+    db`SELECT count(*)::int AS n FROM practice_sessions WHERE athlete_id = ${athleteId} AND status = 'coach_verified'`,
+    coachNames(db, school, [athleteId])
+  ]);
+  return {
+    ...toAthlete(r, coaches.get(athleteId) ?? []),
+    bio: r.bio,
+    teamStatus: r.team_status,
+    teamName: r.team_name,
+    skills: skills2.map((s) => s.name),
+    achievements,
+    verifiedSessions: sessions?.n ?? 0,
+    affiliatedSince: r.since ? r.since.toISOString() : null
+  };
+}
+var PHOTO_OK2 = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/;
+async function getRepAthletePhoto(user, athleteId, dbArg) {
+  const db = dbArg ?? await getDb();
+  const school = await resolveSchool(db, user);
+  const [r] = await db`
+    SELECT CASE WHEN ex.photo_status = 'approved' AND length(ex.photo_data) <= 400000 THEN ex.photo_data END AS photo
+    ${SCOPE(db, school)} AND a.id = ${athleteId}`;
+  const m = r?.photo ? PHOTO_OK2.exec(r.photo) : null;
+  if (!m) throw new RepDashboardError(404, "photo_not_found", "This athlete has no profile photo.");
+  return { mimeType: `image/${m[1]}`, data: Buffer.from(m[2], "base64") };
+}
+async function athleteSportBreakdown(db, school) {
+  return db`
+    SELECT COALESCE(NULLIF(btrim(ap.sport), ''), 'Not set') AS sport,
+           (count(*) FILTER (WHERE sc.athlete_id IS NOT NULL))::int AS verified,
+           (count(*) FILTER (WHERE sc.athlete_id IS NULL))::int AS unverified
+    ${SCOPE(db, school)}
+    GROUP BY 1 ORDER BY count(*) DESC, 1 LIMIT 12`;
+}
+
+// server/rep-coaches.server.ts
+var COACHES_PAGE_DEFAULT = 20;
+var COACHES_PAGE_MAX = 50;
+var SEARCH_MAX4 = 80;
+var AFFILIATION_STATUSES = ["affiliated", "pending", "removed"];
+var likeLiteral6 = (t) => t.replace(/[\\%_]/g, (c2) => `\\${c2}`);
+var safePhoto3 = (url) => url && /^https?:\/\//i.test(url) && url.length <= 500 ? url : null;
+var notFound5 = () => new RepDashboardError(404, "coach_not_found", "That coach could not be found at your school.");
+var SCOPE2 = (db, school) => db`
+  FROM coach_profiles cp
+  JOIN users u ON u.id = cp.user_id AND u.deleted_at IS NULL
+  JOIN coach_verifications v ON v.coach_id = cp.user_id
+  LEFT JOIN user_profiles up ON up.user_id = cp.user_id
+  CROSS JOIN LATERAL (SELECT CASE
+      WHEN v.status = 'pending' AND u.is_active THEN 'pending'
+      WHEN v.status = 'verified' AND cp.university_id = ${school.universityId ?? ""} THEN 'affiliated'
+      WHEN v.status = 'verified' AND cp.university_id IS NULL THEN 'removed'
+    END AS status) s
+  WHERE s.status IS NOT NULL AND lower(btrim(v.organization)) = ${school.key}
+    AND cp.organization_type IN ('University', 'College')`;
+var NAME2 = (db) => db`COALESCE(NULLIF(btrim(concat_ws(' ', up.first_name, up.last_name)), ''), u.display_name)`;
+var toCoach = (r) => ({
+  id: r.id,
+  name: r.name,
+  email: r.email,
+  photo: safePhoto3(r.avatar_url),
+  sport: r.sport,
+  position: r.position,
+  status: r.status,
+  accountActive: r.is_active
+});
+async function listRepCoaches(user, opts, dbArg) {
+  const db = dbArg ?? await getDb();
+  const school = await resolveSchool(db, user);
+  const needle = opts.q?.trim().slice(0, SEARCH_MAX4);
+  const pattern = needle ? `%${likeLiteral6(needle)}%` : null;
+  const sport = opts.sport?.trim().slice(0, 80) || null;
+  const rows = await db`
+    SELECT u.id, ${NAME2(db)} AS name, u.email, up.avatar_url, COALESCE(cp.sport_specialization, '') AS sport,
+           COALESCE(cp.coaching_position, '') AS position, s.status, u.is_active, count(*) OVER ()::int AS total
+    ${SCOPE2(db, school)}
+      ${opts.status ? db`AND s.status = ${opts.status}` : db``}
+      ${sport ? db`AND lower(cp.sport_specialization) = lower(${sport})` : db``}
+      ${pattern ? db`AND (${NAME2(db)} ILIKE ${pattern} OR u.email ILIKE ${pattern})` : db``}
+    ORDER BY ${NAME2(db)}, u.id
+    LIMIT ${opts.limit} OFFSET ${opts.offset}`;
+  const meta = await db`
+    SELECT s.status, COALESCE(cp.sport_specialization, '') AS sport ${SCOPE2(db, school)}`;
+  const counts = { affiliated: 0, pending: 0, removed: 0 };
+  for (const m of meta) counts[m.status] += 1;
+  const sports2 = [...new Set(meta.map((m) => m.sport).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  return { school: { name: school.name }, items: rows.map(toCoach), total: rows[0]?.total ?? 0, sports: sports2, counts };
+}
+async function loadDetail(db, school, coachId) {
+  const [r] = await db`
+    SELECT u.id, ${NAME2(db)} AS name, u.email, up.avatar_url, COALESCE(cp.sport_specialization, '') AS sport,
+           COALESCE(cp.coaching_position, '') AS position, s.status, u.is_active,
+           cp.program_name, cp.competition_level, cp.years_experience, cp.background, cp.certifications,
+           v.credential_type, v.submitted_at, v.reviewed_at,
+           (SELECT count(*)::int FROM coach_athlete_connections c
+              JOIN users a ON a.id = c.athlete_id AND a.is_active = TRUE AND a.deleted_at IS NULL
+              WHERE c.coach_id = u.id AND c.status = 'accepted') AS athletes
+    ${SCOPE2(db, school)} AND u.id = ${coachId}`;
+  if (!r) throw notFound5();
+  return {
+    ...toCoach(r),
+    programName: r.program_name,
+    competitionLevel: r.competition_level,
+    yearsExperience: r.years_experience,
+    background: r.background,
+    certifications: r.certifications,
+    credentialType: r.credential_type,
+    athletesConnected: r.athletes,
+    appliedAt: r.submitted_at.toISOString(),
+    verifiedAt: r.status === "pending" || !r.reviewed_at ? null : r.reviewed_at.toISOString()
+  };
+}
+async function getRepCoach(user, coachId, dbArg) {
+  const db = dbArg ?? await getDb();
+  const school = await resolveSchool(db, user);
+  return loadDetail(db, school, coachId);
+}
+async function setCoachAffiliation(user, coachId, action, meta = {}, dbArg) {
+  const db = dbArg ?? await getDb();
+  const school = await resolveSchool(db, user);
+  if (!school.universityId) throw new RepDashboardError(409, "school_not_registered", "Your school isn't registered on Sportal yet.");
+  const uid = school.universityId;
+  await db.begin(async (tx) => {
+    await tx`SELECT 1 FROM coach_profiles WHERE user_id = ${coachId} FOR UPDATE`;
+    const [cur] = await tx`
+      SELECT s.status, u.is_active ${SCOPE2(tx, school)} AND u.id = ${coachId}`;
+    if (!cur) throw notFound5();
+    if (action === "remove") {
+      if (cur.status !== "affiliated") throw new RepDashboardError(409, "not_affiliated", "This coach isn't currently affiliated with your school.");
+      await tx`UPDATE coach_profiles SET university_id = NULL, updated_at = ${/* @__PURE__ */ new Date()} WHERE user_id = ${coachId} AND university_id = ${uid}`;
+    } else {
+      if (cur.status !== "removed") throw new RepDashboardError(409, "not_removed", "This coach's affiliation wasn't removed, so there is nothing to restore.");
+      if (!cur.is_active) throw new RepDashboardError(409, "account_suspended", "This coach's account is suspended, so the affiliation can't be restored.");
+      await tx`UPDATE coach_profiles SET university_id = ${uid}, updated_at = ${/* @__PURE__ */ new Date()} WHERE user_id = ${coachId} AND university_id IS NULL`;
+    }
+    await audit(
+      action === "remove" ? "rep.coach_affiliation_removed" : "rep.coach_affiliation_restored",
+      { userId: user.id, ...meta, detail: { coachId, school: school.name } },
+      tx
+    );
+  });
+  await notify(
+    coachId,
+    action === "remove" ? { category: "system", title: "Affiliation ended", message: `${school.name} ended your affiliation with the school. Your coach verification is unchanged.` } : { category: "system", title: "Affiliation restored", message: `${school.name} restored your affiliation with the school.` },
+    db
+  );
+  return loadDetail(db, school, coachId);
+}
+async function coachSportBreakdown(db, school) {
+  return db`
+    SELECT COALESCE(NULLIF(btrim(cp.sport_specialization), ''), 'Not set') AS sport, count(*)::int AS count
+    ${SCOPE2(db, school)} AND s.status = 'affiliated'
+    GROUP BY 1 ORDER BY count(*) DESC, 1 LIMIT 12`;
+}
+
+// server/rep-coach-requests.server.ts
+var REQUESTS_PAGE_DEFAULT = 20;
+var REQUESTS_PAGE_MAX = 50;
+var SEARCH_MAX5 = 80;
+var REQUEST_STATUSES = ["pending", "approved", "rejected"];
+var likeLiteral7 = (t) => t.replace(/[\\%_]/g, (c2) => `\\${c2}`);
+var safePhoto4 = (url) => url && /^https?:\/\//i.test(url) && url.length <= 500 ? url : null;
+var notFound6 = () => new RepDashboardError(404, "request_not_found", "That request could not be found at your school.");
+var LABEL3 = { pending: "pending", verified: "approved", rejected: "rejected" };
+var SCOPE3 = (db, school) => db`
+  FROM coach_verifications v
+  JOIN users u ON u.id = v.coach_id AND u.deleted_at IS NULL
+  JOIN coach_profiles cp ON cp.user_id = v.coach_id
+  LEFT JOIN user_profiles up ON up.user_id = v.coach_id
+  WHERE lower(btrim(v.organization)) = ${school.key} AND cp.organization_type IN ('University', 'College')
+    AND (v.status <> 'pending' OR u.is_active = TRUE)`;
+var NAME3 = (db) => db`COALESCE(NULLIF(btrim(concat_ws(' ', up.first_name, up.last_name)), ''), u.display_name)`;
+var toRequest = (r) => {
+  const status = LABEL3[r.status] ?? "pending";
+  return {
+    id: r.id,
+    name: r.name,
+    photo: safePhoto4(r.avatar_url),
+    email: r.email,
+    sport: r.sport,
+    position: r.position,
+    credentialType: r.credential_type,
+    status,
+    appliedAt: r.submitted_at.toISOString(),
+    decidedAt: r.reviewed_at ? r.reviewed_at.toISOString() : null,
+    reason: status === "rejected" ? r.review_note : ""
+  };
+};
+async function listCoachRequests(user, opts, dbArg) {
+  const db = dbArg ?? await getDb();
+  const school = await resolveSchool(db, user);
+  const needle = opts.q?.trim().slice(0, SEARCH_MAX5);
+  const pattern = needle ? `%${likeLiteral7(needle)}%` : null;
+  const dbStatus = opts.status === "approved" ? "verified" : opts.status;
+  const rows = await db`
+    SELECT u.id, ${NAME3(db)} AS name, u.email, up.avatar_url, COALESCE(cp.sport_specialization, '') AS sport,
+           COALESCE(cp.coaching_position, '') AS position, v.credential_type, v.status, v.submitted_at, v.reviewed_at,
+           v.review_note, count(*) OVER ()::int AS total
+    ${SCOPE3(db, school)}
+      ${dbStatus ? db`AND v.status = ${dbStatus}` : db``}
+      ${pattern ? db`AND (${NAME3(db)} ILIKE ${pattern} OR u.email ILIKE ${pattern})` : db``}
+    ORDER BY (v.status = 'pending') DESC, CASE WHEN v.status = 'pending' THEN v.submitted_at END ASC,
+             v.reviewed_at DESC NULLS LAST, u.id
+    LIMIT ${opts.limit} OFFSET ${opts.offset}`;
+  const tallies = await db`SELECT v.status, count(*)::int AS n ${SCOPE3(db, school)} GROUP BY v.status`;
+  const counts = { pending: 0, approved: 0, rejected: 0 };
+  for (const t of tallies) {
+    const s = LABEL3[t.status];
+    if (s) counts[s] += t.n;
+  }
+  return { school: { name: school.name }, items: rows.map(toRequest), total: rows[0]?.total ?? 0, counts };
+}
+async function loadDetail2(db, school, coachId) {
+  const [r] = await db`
+    SELECT u.id, ${NAME3(db)} AS name, u.email, up.avatar_url, COALESCE(cp.sport_specialization, '') AS sport,
+           COALESCE(cp.coaching_position, '') AS position, v.credential_type, v.status, v.submitted_at, v.reviewed_at, v.review_note,
+           v.organization, cp.program_name, cp.competition_level, cp.years_experience, cp.background, cp.certifications,
+           v.credential_reference, v.official_email
+    ${SCOPE3(db, school)} AND u.id = ${coachId}`;
+  if (!r) throw notFound6();
+  return {
+    ...toRequest(r),
+    organization: r.organization.trim(),
+    programName: r.program_name,
+    competitionLevel: r.competition_level,
+    yearsExperience: r.years_experience,
+    background: r.background,
+    supportingDocuments: [
+      { label: "Credential type", value: r.credential_type },
+      { label: "Credential reference (ID / license no.)", value: r.credential_reference },
+      { label: "Official school email", value: r.official_email },
+      { label: "Certifications", value: r.certifications }
+    ]
+  };
+}
+async function getCoachRequest(user, coachId, dbArg) {
+  const db = dbArg ?? await getDb();
+  return loadDetail2(db, await resolveSchool(db, user), coachId);
+}
+var withBegin = (tx) => new Proxy(tx, { get: (t, p2, r) => p2 === "begin" ? (fn) => fn(t) : Reflect.get(t, p2, r) });
+async function decideCoachRequest(user, coachId, decision, rawReason, meta = {}, dbArg) {
+  const db = dbArg ?? await getDb();
+  const school = await resolveSchool(db, user);
+  if (rawReason !== void 0 && rawReason !== null && typeof rawReason !== "string")
+    throw new ConnectionError(400, "validation", "The reason must be text.", { fieldErrors: { note: "Must be text." } });
+  const reason = typeof rawReason === "string" ? rawReason.trim() : "";
+  if (decision === "reject" && (reason.length < 1 || reason.length > NOTE_MAX))
+    throw new ConnectionError(400, "validation", "Rejecting a request needs a reason the coach can read.", {
+      fieldErrors: { note: `Give a reason, up to ${NOTE_MAX} characters.` }
+    });
+  const current = await loadDetail2(db, school, coachId);
+  if (current.status !== "pending")
+    throw new RepDashboardError(409, "not_pending", current.status === "approved" ? "This request was already approved." : "This request was already rejected.");
+  await db.begin(async (tx) => {
+    const [row] = await tx`SELECT status FROM coach_verifications WHERE coach_id = ${coachId} FOR UPDATE`;
+    if (!row || row.status !== "pending")
+      throw new RepDashboardError(409, "not_pending", row?.status === "verified" ? "This request was already approved." : "This request was already decided.");
+    const inTx = withBegin(tx);
+    await applyReview(inTx, { coachId, decision, note: decision === "reject" ? reason : "", reviewerId: user.id, meta });
+    await audit(
+      decision === "approve" ? "rep.coach_request_approved" : "rep.coach_request_rejected",
+      { userId: user.id, ...meta, detail: { coachId, school: school.name } },
+      inTx
+    );
+  });
+  return loadDetail2(db, school, coachId);
+}
+async function requestMonthBreakdown(db, school) {
+  const rows = await db`
+    SELECT to_char(date_trunc('month', v.submitted_at AT TIME ZONE 'UTC'), 'YYYY-MM') AS month,
+           (count(*) FILTER (WHERE v.status = 'pending'))::int AS pending,
+           (count(*) FILTER (WHERE v.status = 'verified'))::int AS approved,
+           (count(*) FILTER (WHERE v.status = 'rejected'))::int AS rejected
+    ${SCOPE3(db, school)} AND v.submitted_at >= (date_trunc('month', now() AT TIME ZONE 'UTC') - interval '5 months') AT TIME ZONE 'UTC'
+    GROUP BY 1`;
+  const byMonth = new Map(rows.map((r) => [r.month, r]));
+  const out = [];
+  const now6 = /* @__PURE__ */ new Date();
+  for (let i = 5; i >= 0; i--) {
+    const d2 = new Date(Date.UTC(now6.getUTCFullYear(), now6.getUTCMonth() - i, 1));
+    const key2 = `${d2.getUTCFullYear()}-${String(d2.getUTCMonth() + 1).padStart(2, "0")}`;
+    out.push(byMonth.get(key2) ?? { month: key2, pending: 0, approved: 0, rejected: 0 });
+  }
+  return out;
+}
+
+// server/rep-charts.server.ts
+async function getRepCharts(user, dbArg) {
+  const db = dbArg ?? await getDb();
+  const school = await resolveSchool(db, user);
+  const [athletesBySport, coachesBySport, requestsByMonth] = await Promise.all([
+    athleteSportBreakdown(db, school),
+    coachSportBreakdown(db, school),
+    requestMonthBreakdown(db, school)
+  ]);
+  return { athletesBySport, coachesBySport, requestsByMonth };
+}
+
+// server/rep-exports.server.ts
+var EXPORT_MAX = 1e4;
+var EXPORT_KINDS = ["coaches", "athletes", "coach-requests"];
+function csvCell(value2) {
+  let s = value2 === null || value2 === void 0 ? "" : String(value2);
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+function toCsv(header, rows) {
+  return "\uFEFF" + [header, ...rows].map((r) => r.map(csvCell).join(",")).join("\r\n") + "\r\n";
+}
+var day = (iso) => iso ? iso.slice(0, 10) : "";
+var slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "school";
+var fileName = (kind, school) => `sportal-${kind}-${slug(school)}-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.csv`;
+var COACH_STATUS = { affiliated: "Affiliated", pending: "Pending", removed: "Removed" };
+var REQUEST_STATUS = { pending: "Pending", approved: "Approved", rejected: "Rejected" };
+async function exportRepData(user, kind, f2, meta = {}, db) {
+  const allowed = kind === "coaches" ? AFFILIATION_STATUSES : kind === "athletes" ? VERIFICATION_STATUSES : REQUEST_STATUSES;
+  if (f2.status && !allowed.includes(f2.status)) throw new RepDashboardError(400, "validation", `status must be one of: ${allowed.join(", ")}.`);
+  const page = { limit: EXPORT_MAX, offset: 0 };
+  let school = "";
+  let out;
+  if (kind === "coaches") {
+    const r = await listRepCoaches(user, { q: f2.q, sport: f2.sport, status: f2.status || void 0, ...page }, db);
+    school = r.school.name;
+    out = {
+      header: ["Name", "Email", "Sport", "Position", "Affiliation", "Account"],
+      rows: r.items.map((c2) => [c2.name, c2.email, c2.sport, c2.position, COACH_STATUS[c2.status], c2.accountActive ? "Active" : "Suspended"])
+    };
+  } else if (kind === "athletes") {
+    const r = await listRepAthletes(user, { q: f2.q, sport: f2.sport, status: f2.status || void 0, ...page }, db);
+    school = r.school.name;
+    out = {
+      header: ["Name", "Sport", "Playing position", "Year level", "Assigned coach", "Verification"],
+      rows: r.items.map((a) => [a.name, a.sport, a.position, a.yearLevel, a.coaches.join("; "), a.verification === "verified" ? "Verified" : "Not yet verified"])
+    };
+  } else {
+    const r = await listCoachRequests(user, { q: f2.q, status: f2.status || void 0, ...page }, db);
+    school = r.school.name;
+    out = {
+      header: ["Applicant", "Email", "Sport", "Position", "Credential type", "Application date", "Status", "Decision date", "Reason given"],
+      rows: r.items.map((c2) => [c2.name, c2.email, c2.sport, c2.position, c2.credentialType, day(c2.appliedAt), REQUEST_STATUS[c2.status], day(c2.decidedAt), c2.reason])
+    };
+  }
+  await audit("rep.export_downloaded", { userId: user.id, ...meta, detail: { kind, rows: out.rows.length } }, db);
+  return { fileName: fileName(kind, school), csv: toCsv(out.header, out.rows), rows: out.rows.length };
+}
+
 // server/rep-settings.server.ts
 var NAME_MAX2 = 40;
 var DESIGNATION_MAX = 80;
@@ -14022,349 +14511,6 @@ async function getRepHeader(actor, dbArg) {
     if (!(err instanceof RepDashboardError)) throw err;
   }
   return { displayName: profile.displayName, avatar: profile.avatar, pendingCoachRequests: pending };
-}
-
-// server/rep-athletes.server.ts
-var ATHLETES_PAGE_DEFAULT = 20;
-var ATHLETES_PAGE_MAX = 50;
-var SEARCH_MAX3 = 80;
-var VERIFICATION_STATUSES = ["verified", "unverified"];
-var likeLiteral5 = (t) => t.replace(/[\\%_]/g, (c2) => `\\${c2}`);
-var notFound4 = () => new RepDashboardError(404, "athlete_not_found", "That athlete could not be found at your school.");
-var VERIFIED_AND_ACTIVE3 = (db, alias) => db`
-  EXISTS (SELECT 1 FROM user_roles vr JOIN roles r ON r.id = vr.role_id WHERE vr.user_id = ${db(alias)}.id AND r.name = 'verified_coach')
-  AND EXISTS (SELECT 1 FROM coach_verifications cv WHERE cv.coach_id = ${db(alias)}.id AND cv.status = 'verified')
-  AND ${db(alias)}.is_active = TRUE AND ${db(alias)}.deleted_at IS NULL`;
-var SCOPE = (db, school) => db`
-  FROM users a
-  LEFT JOIN user_profiles up ON up.user_id = a.id
-  LEFT JOIN athlete_profiles ap ON ap.user_id = a.id
-  LEFT JOIN athlete_extras ex ON ex.user_id = a.id
-  LEFT JOIN (
-    SELECT c.athlete_id, min(COALESCE(c.responded_at, c.updated_at)) AS since
-    FROM coach_athlete_connections c
-    JOIN coach_profiles cp ON cp.user_id = c.coach_id AND cp.university_id = ${school.universityId ?? ""}
-    JOIN users cu ON cu.id = c.coach_id
-    WHERE c.status = 'accepted' AND ${VERIFIED_AND_ACTIVE3(db, "cu")}
-    GROUP BY c.athlete_id
-  ) sc ON sc.athlete_id = a.id
-  WHERE a.is_active = TRUE AND a.deleted_at IS NULL
-    AND EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = a.id AND r.name = ${ATHLETE_ROLE})
-    AND COALESCE(ap.showcase_visible, TRUE) = TRUE
-    AND (sc.athlete_id IS NOT NULL OR lower(btrim(COALESCE(ap.school, ''))) = ${school.key})`;
-var NAME = (db) => db`COALESCE(NULLIF(btrim(concat_ws(' ', up.first_name, up.last_name)), ''), a.display_name)`;
-var HAS_PHOTO = (db) => db`(ex.photo_data IS NOT NULL AND ex.photo_status = 'approved')`;
-async function coachNames(db, school, athleteIds) {
-  const out = /* @__PURE__ */ new Map();
-  if (athleteIds.length === 0 || !school.universityId) return out;
-  const rows = await db`
-    SELECT c.athlete_id, COALESCE(NULLIF(btrim(concat_ws(' ', cup.first_name, cup.last_name)), ''), cu.display_name) AS name
-    FROM coach_athlete_connections c
-    JOIN coach_profiles cp ON cp.user_id = c.coach_id AND cp.university_id = ${school.universityId}
-    JOIN users cu ON cu.id = c.coach_id
-    LEFT JOIN user_profiles cup ON cup.user_id = cu.id
-    WHERE c.status = 'accepted' AND c.athlete_id = ANY(${athleteIds}::text[]) AND ${VERIFIED_AND_ACTIVE3(db, "cu")}
-    ORDER BY COALESCE(c.responded_at, c.updated_at), cu.id`;
-  for (const r of rows) out.set(r.athlete_id, [...out.get(r.athlete_id) ?? [], r.name]);
-  return out;
-}
-var toAthlete = (r, coaches) => ({
-  id: r.id,
-  name: r.name,
-  hasPhoto: r.has_photo,
-  photoVersion: r.photo_v ? Number(r.photo_v) : 0,
-  sport: r.sport,
-  position: r.position,
-  yearLevel: r.year_level,
-  coaches,
-  verification: r.verified ? "verified" : "unverified"
-});
-var FIELDS = (db) => db`
-  a.id, ${NAME(db)} AS name, ${HAS_PHOTO(db)} AS has_photo, (extract(epoch FROM ex.updated_at) * 1000)::bigint::text AS photo_v,
-  COALESCE(ap.sport, '') AS sport, COALESCE(ap.playing_position, '') AS position, COALESCE(ap.year_level, '') AS year_level,
-  (sc.athlete_id IS NOT NULL) AS verified, sc.since`;
-async function listRepAthletes(user, opts, dbArg) {
-  const db = dbArg ?? await getDb();
-  const school = await resolveSchool(db, user);
-  const needle = opts.q?.trim().slice(0, SEARCH_MAX3);
-  const pattern = needle ? `%${likeLiteral5(needle)}%` : null;
-  const sport = opts.sport?.trim().slice(0, 80) || null;
-  const rows = await db`
-    SELECT ${FIELDS(db)}, count(*) OVER ()::int AS total
-    ${SCOPE(db, school)}
-      ${opts.status === "verified" ? db`AND sc.athlete_id IS NOT NULL` : opts.status === "unverified" ? db`AND sc.athlete_id IS NULL` : db``}
-      ${sport ? db`AND lower(ap.sport) = lower(${sport})` : db``}
-      ${pattern ? db`AND ${NAME(db)} ILIKE ${pattern}` : db``}
-    ORDER BY ${NAME(db)}, a.id
-    LIMIT ${opts.limit} OFFSET ${opts.offset}`;
-  const meta = await db`SELECT (sc.athlete_id IS NOT NULL) AS verified, COALESCE(ap.sport, '') AS sport ${SCOPE(db, school)}`;
-  const counts = { verified: 0, unverified: 0 };
-  for (const m of meta) counts[m.verified ? "verified" : "unverified"] += 1;
-  const sports2 = [...new Set(meta.map((m) => m.sport).filter(Boolean))].sort((x, y) => x.localeCompare(y));
-  const coaches = await coachNames(db, school, rows.map((r) => r.id));
-  return { school: { name: school.name }, items: rows.map((r) => toAthlete(r, coaches.get(r.id) ?? [])), total: rows[0]?.total ?? 0, sports: sports2, counts };
-}
-async function getRepAthlete(user, athleteId, dbArg) {
-  const db = dbArg ?? await getDb();
-  const school = await resolveSchool(db, user);
-  const [r] = await db`
-    SELECT ${FIELDS(db)}, COALESCE(ap.bio, '') AS bio, COALESCE(ap.team_status, '') AS team_status, COALESCE(ap.team_name, '') AS team_name
-    ${SCOPE(db, school)} AND a.id = ${athleteId}`;
-  if (!r) throw notFound4();
-  const [achievements, skills2, [sessions], coaches] = await Promise.all([
-    db`SELECT id, title, year FROM athlete_achievements WHERE athlete_id = ${athleteId} ORDER BY position`,
-    db`SELECT name FROM athlete_skills WHERE athlete_id = ${athleteId} ORDER BY position`,
-    db`SELECT count(*)::int AS n FROM practice_sessions WHERE athlete_id = ${athleteId} AND status = 'coach_verified'`,
-    coachNames(db, school, [athleteId])
-  ]);
-  return {
-    ...toAthlete(r, coaches.get(athleteId) ?? []),
-    bio: r.bio,
-    teamStatus: r.team_status,
-    teamName: r.team_name,
-    skills: skills2.map((s) => s.name),
-    achievements,
-    verifiedSessions: sessions?.n ?? 0,
-    affiliatedSince: r.since ? r.since.toISOString() : null
-  };
-}
-var PHOTO_OK2 = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/;
-async function getRepAthletePhoto(user, athleteId, dbArg) {
-  const db = dbArg ?? await getDb();
-  const school = await resolveSchool(db, user);
-  const [r] = await db`
-    SELECT CASE WHEN ex.photo_status = 'approved' AND length(ex.photo_data) <= 400000 THEN ex.photo_data END AS photo
-    ${SCOPE(db, school)} AND a.id = ${athleteId}`;
-  const m = r?.photo ? PHOTO_OK2.exec(r.photo) : null;
-  if (!m) throw new RepDashboardError(404, "photo_not_found", "This athlete has no profile photo.");
-  return { mimeType: `image/${m[1]}`, data: Buffer.from(m[2], "base64") };
-}
-
-// server/rep-coach-requests.server.ts
-var REQUESTS_PAGE_DEFAULT = 20;
-var REQUESTS_PAGE_MAX = 50;
-var SEARCH_MAX4 = 80;
-var REQUEST_STATUSES = ["pending", "approved", "rejected"];
-var likeLiteral6 = (t) => t.replace(/[\\%_]/g, (c2) => `\\${c2}`);
-var safePhoto3 = (url) => url && /^https?:\/\//i.test(url) && url.length <= 500 ? url : null;
-var notFound5 = () => new RepDashboardError(404, "request_not_found", "That request could not be found at your school.");
-var LABEL3 = { pending: "pending", verified: "approved", rejected: "rejected" };
-var SCOPE2 = (db, school) => db`
-  FROM coach_verifications v
-  JOIN users u ON u.id = v.coach_id AND u.deleted_at IS NULL
-  JOIN coach_profiles cp ON cp.user_id = v.coach_id
-  LEFT JOIN user_profiles up ON up.user_id = v.coach_id
-  WHERE lower(btrim(v.organization)) = ${school.key} AND cp.organization_type IN ('University', 'College')
-    AND (v.status <> 'pending' OR u.is_active = TRUE)`;
-var NAME2 = (db) => db`COALESCE(NULLIF(btrim(concat_ws(' ', up.first_name, up.last_name)), ''), u.display_name)`;
-var toRequest = (r) => {
-  const status = LABEL3[r.status] ?? "pending";
-  return {
-    id: r.id,
-    name: r.name,
-    photo: safePhoto3(r.avatar_url),
-    email: r.email,
-    sport: r.sport,
-    position: r.position,
-    credentialType: r.credential_type,
-    status,
-    appliedAt: r.submitted_at.toISOString(),
-    decidedAt: r.reviewed_at ? r.reviewed_at.toISOString() : null,
-    reason: status === "rejected" ? r.review_note : ""
-  };
-};
-async function listCoachRequests(user, opts, dbArg) {
-  const db = dbArg ?? await getDb();
-  const school = await resolveSchool(db, user);
-  const needle = opts.q?.trim().slice(0, SEARCH_MAX4);
-  const pattern = needle ? `%${likeLiteral6(needle)}%` : null;
-  const dbStatus = opts.status === "approved" ? "verified" : opts.status;
-  const rows = await db`
-    SELECT u.id, ${NAME2(db)} AS name, u.email, up.avatar_url, COALESCE(cp.sport_specialization, '') AS sport,
-           COALESCE(cp.coaching_position, '') AS position, v.credential_type, v.status, v.submitted_at, v.reviewed_at,
-           v.review_note, count(*) OVER ()::int AS total
-    ${SCOPE2(db, school)}
-      ${dbStatus ? db`AND v.status = ${dbStatus}` : db``}
-      ${pattern ? db`AND (${NAME2(db)} ILIKE ${pattern} OR u.email ILIKE ${pattern})` : db``}
-    ORDER BY (v.status = 'pending') DESC, CASE WHEN v.status = 'pending' THEN v.submitted_at END ASC,
-             v.reviewed_at DESC NULLS LAST, u.id
-    LIMIT ${opts.limit} OFFSET ${opts.offset}`;
-  const tallies = await db`SELECT v.status, count(*)::int AS n ${SCOPE2(db, school)} GROUP BY v.status`;
-  const counts = { pending: 0, approved: 0, rejected: 0 };
-  for (const t of tallies) {
-    const s = LABEL3[t.status];
-    if (s) counts[s] += t.n;
-  }
-  return { school: { name: school.name }, items: rows.map(toRequest), total: rows[0]?.total ?? 0, counts };
-}
-async function loadDetail(db, school, coachId) {
-  const [r] = await db`
-    SELECT u.id, ${NAME2(db)} AS name, u.email, up.avatar_url, COALESCE(cp.sport_specialization, '') AS sport,
-           COALESCE(cp.coaching_position, '') AS position, v.credential_type, v.status, v.submitted_at, v.reviewed_at, v.review_note,
-           v.organization, cp.program_name, cp.competition_level, cp.years_experience, cp.background, cp.certifications,
-           v.credential_reference, v.official_email
-    ${SCOPE2(db, school)} AND u.id = ${coachId}`;
-  if (!r) throw notFound5();
-  return {
-    ...toRequest(r),
-    organization: r.organization.trim(),
-    programName: r.program_name,
-    competitionLevel: r.competition_level,
-    yearsExperience: r.years_experience,
-    background: r.background,
-    supportingDocuments: [
-      { label: "Credential type", value: r.credential_type },
-      { label: "Credential reference (ID / license no.)", value: r.credential_reference },
-      { label: "Official school email", value: r.official_email },
-      { label: "Certifications", value: r.certifications }
-    ]
-  };
-}
-async function getCoachRequest(user, coachId, dbArg) {
-  const db = dbArg ?? await getDb();
-  return loadDetail(db, await resolveSchool(db, user), coachId);
-}
-var withBegin = (tx) => new Proxy(tx, { get: (t, p2, r) => p2 === "begin" ? (fn) => fn(t) : Reflect.get(t, p2, r) });
-async function decideCoachRequest(user, coachId, decision, rawReason, meta = {}, dbArg) {
-  const db = dbArg ?? await getDb();
-  const school = await resolveSchool(db, user);
-  if (rawReason !== void 0 && rawReason !== null && typeof rawReason !== "string")
-    throw new ConnectionError(400, "validation", "The reason must be text.", { fieldErrors: { note: "Must be text." } });
-  const reason = typeof rawReason === "string" ? rawReason.trim() : "";
-  if (decision === "reject" && (reason.length < 1 || reason.length > NOTE_MAX))
-    throw new ConnectionError(400, "validation", "Rejecting a request needs a reason the coach can read.", {
-      fieldErrors: { note: `Give a reason, up to ${NOTE_MAX} characters.` }
-    });
-  const current = await loadDetail(db, school, coachId);
-  if (current.status !== "pending")
-    throw new RepDashboardError(409, "not_pending", current.status === "approved" ? "This request was already approved." : "This request was already rejected.");
-  await db.begin(async (tx) => {
-    const [row] = await tx`SELECT status FROM coach_verifications WHERE coach_id = ${coachId} FOR UPDATE`;
-    if (!row || row.status !== "pending")
-      throw new RepDashboardError(409, "not_pending", row?.status === "verified" ? "This request was already approved." : "This request was already decided.");
-    const inTx = withBegin(tx);
-    await applyReview(inTx, { coachId, decision, note: decision === "reject" ? reason : "", reviewerId: user.id, meta });
-    await audit(
-      decision === "approve" ? "rep.coach_request_approved" : "rep.coach_request_rejected",
-      { userId: user.id, ...meta, detail: { coachId, school: school.name } },
-      inTx
-    );
-  });
-  return loadDetail(db, school, coachId);
-}
-
-// server/rep-coaches.server.ts
-var COACHES_PAGE_DEFAULT = 20;
-var COACHES_PAGE_MAX = 50;
-var SEARCH_MAX5 = 80;
-var AFFILIATION_STATUSES = ["affiliated", "pending", "removed"];
-var likeLiteral7 = (t) => t.replace(/[\\%_]/g, (c2) => `\\${c2}`);
-var safePhoto4 = (url) => url && /^https?:\/\//i.test(url) && url.length <= 500 ? url : null;
-var notFound6 = () => new RepDashboardError(404, "coach_not_found", "That coach could not be found at your school.");
-var SCOPE3 = (db, school) => db`
-  FROM coach_profiles cp
-  JOIN users u ON u.id = cp.user_id AND u.deleted_at IS NULL
-  JOIN coach_verifications v ON v.coach_id = cp.user_id
-  LEFT JOIN user_profiles up ON up.user_id = cp.user_id
-  CROSS JOIN LATERAL (SELECT CASE
-      WHEN v.status = 'pending' AND u.is_active THEN 'pending'
-      WHEN v.status = 'verified' AND cp.university_id = ${school.universityId ?? ""} THEN 'affiliated'
-      WHEN v.status = 'verified' AND cp.university_id IS NULL THEN 'removed'
-    END AS status) s
-  WHERE s.status IS NOT NULL AND lower(btrim(v.organization)) = ${school.key}
-    AND cp.organization_type IN ('University', 'College')`;
-var NAME3 = (db) => db`COALESCE(NULLIF(btrim(concat_ws(' ', up.first_name, up.last_name)), ''), u.display_name)`;
-var toCoach = (r) => ({
-  id: r.id,
-  name: r.name,
-  email: r.email,
-  photo: safePhoto4(r.avatar_url),
-  sport: r.sport,
-  position: r.position,
-  status: r.status,
-  accountActive: r.is_active
-});
-async function listRepCoaches(user, opts, dbArg) {
-  const db = dbArg ?? await getDb();
-  const school = await resolveSchool(db, user);
-  const needle = opts.q?.trim().slice(0, SEARCH_MAX5);
-  const pattern = needle ? `%${likeLiteral7(needle)}%` : null;
-  const sport = opts.sport?.trim().slice(0, 80) || null;
-  const rows = await db`
-    SELECT u.id, ${NAME3(db)} AS name, u.email, up.avatar_url, COALESCE(cp.sport_specialization, '') AS sport,
-           COALESCE(cp.coaching_position, '') AS position, s.status, u.is_active, count(*) OVER ()::int AS total
-    ${SCOPE3(db, school)}
-      ${opts.status ? db`AND s.status = ${opts.status}` : db``}
-      ${sport ? db`AND lower(cp.sport_specialization) = lower(${sport})` : db``}
-      ${pattern ? db`AND (${NAME3(db)} ILIKE ${pattern} OR u.email ILIKE ${pattern})` : db``}
-    ORDER BY ${NAME3(db)}, u.id
-    LIMIT ${opts.limit} OFFSET ${opts.offset}`;
-  const meta = await db`
-    SELECT s.status, COALESCE(cp.sport_specialization, '') AS sport ${SCOPE3(db, school)}`;
-  const counts = { affiliated: 0, pending: 0, removed: 0 };
-  for (const m of meta) counts[m.status] += 1;
-  const sports2 = [...new Set(meta.map((m) => m.sport).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-  return { school: { name: school.name }, items: rows.map(toCoach), total: rows[0]?.total ?? 0, sports: sports2, counts };
-}
-async function loadDetail2(db, school, coachId) {
-  const [r] = await db`
-    SELECT u.id, ${NAME3(db)} AS name, u.email, up.avatar_url, COALESCE(cp.sport_specialization, '') AS sport,
-           COALESCE(cp.coaching_position, '') AS position, s.status, u.is_active,
-           cp.program_name, cp.competition_level, cp.years_experience, cp.background, cp.certifications,
-           v.credential_type, v.submitted_at, v.reviewed_at,
-           (SELECT count(*)::int FROM coach_athlete_connections c
-              JOIN users a ON a.id = c.athlete_id AND a.is_active = TRUE AND a.deleted_at IS NULL
-              WHERE c.coach_id = u.id AND c.status = 'accepted') AS athletes
-    ${SCOPE3(db, school)} AND u.id = ${coachId}`;
-  if (!r) throw notFound6();
-  return {
-    ...toCoach(r),
-    programName: r.program_name,
-    competitionLevel: r.competition_level,
-    yearsExperience: r.years_experience,
-    background: r.background,
-    certifications: r.certifications,
-    credentialType: r.credential_type,
-    athletesConnected: r.athletes,
-    appliedAt: r.submitted_at.toISOString(),
-    verifiedAt: r.status === "pending" || !r.reviewed_at ? null : r.reviewed_at.toISOString()
-  };
-}
-async function getRepCoach(user, coachId, dbArg) {
-  const db = dbArg ?? await getDb();
-  const school = await resolveSchool(db, user);
-  return loadDetail2(db, school, coachId);
-}
-async function setCoachAffiliation(user, coachId, action, meta = {}, dbArg) {
-  const db = dbArg ?? await getDb();
-  const school = await resolveSchool(db, user);
-  if (!school.universityId) throw new RepDashboardError(409, "school_not_registered", "Your school isn't registered on Sportal yet.");
-  const uid = school.universityId;
-  await db.begin(async (tx) => {
-    await tx`SELECT 1 FROM coach_profiles WHERE user_id = ${coachId} FOR UPDATE`;
-    const [cur] = await tx`
-      SELECT s.status, u.is_active ${SCOPE3(tx, school)} AND u.id = ${coachId}`;
-    if (!cur) throw notFound6();
-    if (action === "remove") {
-      if (cur.status !== "affiliated") throw new RepDashboardError(409, "not_affiliated", "This coach isn't currently affiliated with your school.");
-      await tx`UPDATE coach_profiles SET university_id = NULL, updated_at = ${/* @__PURE__ */ new Date()} WHERE user_id = ${coachId} AND university_id = ${uid}`;
-    } else {
-      if (cur.status !== "removed") throw new RepDashboardError(409, "not_removed", "This coach's affiliation wasn't removed, so there is nothing to restore.");
-      if (!cur.is_active) throw new RepDashboardError(409, "account_suspended", "This coach's account is suspended, so the affiliation can't be restored.");
-      await tx`UPDATE coach_profiles SET university_id = ${uid}, updated_at = ${/* @__PURE__ */ new Date()} WHERE user_id = ${coachId} AND university_id IS NULL`;
-    }
-    await audit(
-      action === "remove" ? "rep.coach_affiliation_removed" : "rep.coach_affiliation_restored",
-      { userId: user.id, ...meta, detail: { coachId, school: school.name } },
-      tx
-    );
-  });
-  await notify(
-    coachId,
-    action === "remove" ? { category: "system", title: "Affiliation ended", message: `${school.name} ended your affiliation with the school. Your coach verification is unchanged.` } : { category: "system", title: "Affiliation restored", message: `${school.name} restored your affiliation with the school.` },
-    db
-  );
-  return loadDetail2(db, school, coachId);
 }
 
 // server/coach-applications.server.ts
@@ -15220,10 +15366,13 @@ async function handleScholarships(req, path) {
   const isUnis = path === "/api/scholarships/universities";
   const applicants = /^\/api\/scholarships\/([^/]+)\/applications$/.exec(path);
   const setStatus = /^\/api\/scholarships\/applications\/([^/]+)\/status$/.exec(path);
-  if (!isList && !action && !isMine && !isUnis && !applicants && !setStatus) return null;
+  const one2 = /^\/api\/scholarships\/([^/]+)$/.exec(path);
+  if (!isList && !action && !isMine && !isUnis && !applicants && !setStatus && !one2) return null;
   const get = req.method === "GET";
   const post = req.method === "POST";
-  if (!(isList && (get || post) || action && post || (isMine || isUnis || applicants) && get || setStatus && post)) return null;
+  const put = req.method === "PUT";
+  const del = req.method === "DELETE";
+  if (!(isList && (get || post) || action && post || (isMine || isUnis || applicants) && get || setStatus && post || one2 && !isUnis && (put || del))) return null;
   const user = await getUserBySessionToken(bearer(req));
   if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
   const meta = requestMeta(req);
@@ -15250,6 +15399,14 @@ async function handleScholarships(req, path) {
     if (isMine) {
       const { limit: limit3, offset } = pageFrom(req, SCHOLARSHIP_PAGE_DEFAULT, SCHOLARSHIP_PAGE_MAX);
       return send(req, 200, { ok: true, ...await listMyApplications(user, limit3, offset) });
+    }
+    if (one2 && !isUnis && (put || del)) {
+      const id2 = decodeURIComponent(one2[1] ?? "").slice(0, 100);
+      if (del) return send(req, 200, { ok: true, ...await deleteScholarship(user, id2, meta) });
+      const parsed = scholarshipSchema.safeParse(await readJson(req));
+      if (!parsed.success)
+        return send(req, 400, { ok: false, code: "validation", message: "Please fix the highlighted fields.", fieldErrors: parsed.error.flatten().fieldErrors });
+      return send(req, 200, { ok: true, scholarship: await updateScholarship(user, id2, parsed.data, meta) });
     }
     if (isList && post) {
       const parsed = scholarshipSchema.safeParse(await readJson(req));
@@ -15362,10 +15519,11 @@ async function handleUniversity(req, path) {
   }
 }
 async function handleRepDashboard(req, path) {
-  if (req.method !== "GET" || path !== "/api/rep/dashboard") return null;
+  if (req.method !== "GET" || path !== "/api/rep/dashboard" && path !== "/api/rep/charts") return null;
   const user = await getUserBySessionToken(bearer(req));
   if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
   try {
+    if (path === "/api/rep/charts") return send(req, 200, { ok: true, charts: await getRepCharts(user) });
     return send(req, 200, { ok: true, ...await getRepDashboard(user) });
   } catch (err) {
     if (err instanceof RepDashboardError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
@@ -15506,6 +15664,22 @@ async function handleRepSettings(req, path) {
   } catch (err) {
     if (err instanceof RepDashboardError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
     if (err instanceof ConnectionError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message, ...err.extra });
+    throw err;
+  }
+}
+async function handleRepExports(req, path) {
+  const m = /^\/api\/rep\/export\/([a-z-]+)$/.exec(path);
+  if (req.method !== "GET" || !m) return null;
+  const kind = m[1];
+  if (!EXPORT_KINDS.includes(kind)) return null;
+  const user = await getUserBySessionToken(bearer(req));
+  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
+  const params = new URL(req.url).searchParams;
+  try {
+    const file = await exportRepData(user, kind, { q: params.get("q") ?? void 0, sport: params.get("sport") ?? void 0, status: params.get("status") ?? void 0 }, requestMeta(req));
+    return sendFile(req, { fileName: file.fileName, mimeType: "text/csv; charset=utf-8", data: Buffer.from(file.csv, "utf8") });
+  } catch (err) {
+    if (err instanceof RepDashboardError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
     throw err;
   }
 }
@@ -15799,6 +15973,8 @@ async function handle(req) {
     if (repAthletes) return repAthletes;
     const repSettings = await handleRepSettings(req, path);
     if (repSettings) return repSettings;
+    const repExports = await handleRepExports(req, path);
+    if (repExports) return repExports;
     return send(req, 404, { error: "not_found" });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";

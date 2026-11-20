@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Page } from "@/components/Page";
 import { Card, EmptyState, PageHeader, Pill, btn } from "@/components/common";
 import { PersonAvatar } from "@/components/avatar";
+import { RepExportButton } from "@/components/RepExportButton";
 import { Modal } from "@/components/listings";
 import { useAuth } from "@/auth/AuthContext";
 import { homePathFor, primaryRole } from "@/lib/roles";
@@ -287,7 +288,7 @@ function RepRequests() {
 
   return (
     <div>
-      <PageHeader title="Coach Requests" subtitle={data ? `Affiliation requests sent to ${data.school.name}` : "Affiliation requests sent to your school"} />
+      <PageHeader title="Coach Requests" subtitle={data ? `Affiliation requests sent to ${data.school.name}` : "Affiliation requests sent to your school"} action={<RepExportButton kind="coach-requests" noun="requests" filters={{ q, status }} />} />
 
       <Card className="mb-6">
         <label className="relative block">

@@ -106,6 +106,8 @@
 //   POST /api/scholarships/applications/:appId/status   the poster (or an admin) { status: "under_review" | "accepted" | "rejected" } -> { ok, status }   409 withdrawn; the athlete is notified
 //   GET  /api/scholarships/universities            -> { ok, items: string[] }   universities with an open scholarship
 //   POST /api/scholarships/:id/open | /close        poster or admin -> { ok, scholarship }
+//   PUT  /api/scholarships/:id                      the poster (or an admin) { name, sport, coverage, details, eligibility[], deadline } -> { ok, scholarship }   applicants are told what changed
+//   DELETE /api/scholarships/:id                    the poster (or an admin) -> { ok, deleted }   409 has_applications once anyone has applied (close it instead)
 //   POST /api/scholarships/:id/apply                student-athlete -> 201 { ok, application }   (409 already_applied | closed)
 //   POST /api/scholarships/:id/withdraw             student-athlete -> { ok, application }
 //   GET  /api/athletes/me/applications              student-athlete ?limit&offset -> { ok, items, total }
@@ -132,6 +134,7 @@
 //   GET  /api/coach/university/athletes             coach ?q&limit&offset -> { ok, affiliated, items, total }   athletes with an accepted connection to a verified coach of it
 // School Representative Dashboard (read-only; the school is always the signed-in representative's own approved school):
 //   GET  /api/rep/dashboard                         university representative -> { ok, rep, school, stats, pendingRequests, activities, generatedAt }
+//   GET  /api/rep/charts                            university representative -> { ok, charts: { athletesBySport, coachesBySport, requestsByMonth } }
 // School Representative "My Coaches" (only coaches of the representative's own approved school):
 //   GET  /api/rep/coaches                           university representative ?q&sport&status=affiliated|pending|removed&limit&offset -> { ok, school, items, total, sports, counts }
 //   GET  /api/rep/coaches/:id                       university representative -> { ok, coach }
@@ -149,6 +152,8 @@
 //   GET|PUT /api/rep/settings/profile               university representative { firstName, lastName, designation } -> { ok, profile }   (school, email, username are read-only)
 //   PUT|DELETE /api/rep/settings/avatar             university representative { dataUrl } -> { ok, profile }
 //   POST /api/rep/settings/password                 university representative { currentPassword, newPassword, confirmPassword? } -> { ok, otherSessionsSignedOut }
+// School Representative CSV exports (own school only; same search and filters as the page; every download is audited):
+//   GET  /api/rep/export/coaches | /athletes | /coach-requests   university representative ?q&sport&status -> a .csv file
 //
 // Athlete applications to a coach's program ("show interest"):
 //   POST /api/coach-applications                    student-athlete { coachId } -> 201 { ok, application }   409 already_applied | already_connected, 429 rate_limited
@@ -213,6 +218,8 @@ import {
 import {
   applyToScholarship,
   createScholarship,
+  deleteScholarship,
+  updateScholarship,
   listApplicants,
   listMyApplications,
   listScholarships,
@@ -258,6 +265,8 @@ import {
   UniversityError,
 } from "./university.server.ts";
 import { getRepDashboard, RepDashboardError } from "./rep-dashboard.server.ts";
+import { getRepCharts } from "./rep-charts.server.ts";
+import { EXPORT_KINDS, exportRepData, type ExportKind } from "./rep-exports.server.ts";
 import {
   AVATAR_MAX_CHARS as REP_AVATAR_MAX_CHARS, changeRepPassword, getRepHeader, getRepProfile, setRepAvatar, updateRepProfile,
 } from "./rep-settings.server.ts";
@@ -837,10 +846,13 @@ async function handleScholarships(req: Request, path: string): Promise<Response 
   const isUnis = path === "/api/scholarships/universities";
   const applicants = /^\/api\/scholarships\/([^/]+)\/applications$/.exec(path);
   const setStatus = /^\/api\/scholarships\/applications\/([^/]+)\/status$/.exec(path);
-  if (!isList && !action && !isMine && !isUnis && !applicants && !setStatus) return null;
+  const one = /^\/api\/scholarships\/([^/]+)$/.exec(path);
+  if (!isList && !action && !isMine && !isUnis && !applicants && !setStatus && !one) return null;
   const get = req.method === "GET";
   const post = req.method === "POST";
-  if (!((isList && (get || post)) || (action && post) || ((isMine || isUnis || applicants) && get) || (setStatus && post))) return null;
+  const put = req.method === "PUT";
+  const del = req.method === "DELETE";
+  if (!((isList && (get || post)) || (action && post) || ((isMine || isUnis || applicants) && get) || (setStatus && post) || (one && !isUnis && (put || del)))) return null;
 
   const user = await getUserBySessionToken(bearer(req));
   if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
@@ -868,6 +880,14 @@ async function handleScholarships(req: Request, path: string): Promise<Response 
     if (isMine) {
       const { limit, offset } = pageFrom(req, SCHOLARSHIP_PAGE_DEFAULT, SCHOLARSHIP_PAGE_MAX);
       return send(req, 200, { ok: true, ...(await listMyApplications(user, limit, offset)) });
+    }
+    if (one && !isUnis && (put || del)) {
+      const id = decodeURIComponent(one[1] ?? "").slice(0, 100);
+      if (del) return send(req, 200, { ok: true, ...(await deleteScholarship(user, id, meta)) });
+      const parsed = scholarshipSchema.safeParse(await readJson(req));
+      if (!parsed.success)
+        return send(req, 400, { ok: false, code: "validation", message: "Please fix the highlighted fields.", fieldErrors: parsed.error.flatten().fieldErrors });
+      return send(req, 200, { ok: true, scholarship: await updateScholarship(user, id, parsed.data, meta) });
     }
     if (isList && post) {
       const parsed = scholarshipSchema.safeParse(await readJson(req));
@@ -992,10 +1012,11 @@ async function handleUniversity(req: Request, path: string): Promise<Response | 
 
 /** School Representative Dashboard. Read-only. Returns null for any other path. */
 async function handleRepDashboard(req: Request, path: string): Promise<Response | null> {
-  if (req.method !== "GET" || path !== "/api/rep/dashboard") return null;
+  if (req.method !== "GET" || (path !== "/api/rep/dashboard" && path !== "/api/rep/charts")) return null;
   const user = await getUserBySessionToken(bearer(req));
   if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
   try {
+    if (path === "/api/rep/charts") return send(req, 200, { ok: true, charts: await getRepCharts(user) });
     return send(req, 200, { ok: true, ...(await getRepDashboard(user)) });
   } catch (err) {
     if (err instanceof RepDashboardError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
@@ -1148,6 +1169,24 @@ async function handleRepSettings(req: Request, path: string): Promise<Response |
   } catch (err) {
     if (err instanceof RepDashboardError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
     if (err instanceof ConnectionError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message, ...err.extra });
+    throw err;
+  }
+}
+
+/** School Representative CSV exports. Returns null for any other path. */
+async function handleRepExports(req: Request, path: string): Promise<Response | null> {
+  const m = /^\/api\/rep\/export\/([a-z-]+)$/.exec(path);
+  if (req.method !== "GET" || !m) return null;
+  const kind = m[1] as ExportKind;
+  if (!(EXPORT_KINDS as readonly string[]).includes(kind)) return null;
+  const user = await getUserBySessionToken(bearer(req));
+  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
+  const params = new URL(req.url).searchParams;
+  try {
+    const file = await exportRepData(user, kind, { q: params.get("q") ?? undefined, sport: params.get("sport") ?? undefined, status: params.get("status") ?? undefined }, requestMeta(req));
+    return sendFile(req, { fileName: file.fileName, mimeType: "text/csv; charset=utf-8", data: Buffer.from(file.csv, "utf8") });
+  } catch (err) {
+    if (err instanceof RepDashboardError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
     throw err;
   }
 }
@@ -1474,6 +1513,8 @@ export async function handle(req: Request): Promise<Response> {
     if (repAthletes) return repAthletes;
     const repSettings = await handleRepSettings(req, path);
     if (repSettings) return repSettings;
+    const repExports = await handleRepExports(req, path);
+    if (repExports) return repExports;
     return send(req, 404, { error: "not_found" });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";

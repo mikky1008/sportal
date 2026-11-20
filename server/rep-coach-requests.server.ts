@@ -199,3 +199,23 @@ export async function decideCoachRequest(
   });
   return loadDetail(db, school, coachId);
 }
+
+/** Requests received per month for the last six months (this month included), split by outcome. Same rules as the list. */
+export async function requestMonthBreakdown(db: Db, school: School): Promise<{ month: string; pending: number; approved: number; rejected: number }[]> {
+  const rows = await db<{ month: string; pending: number; approved: number; rejected: number }[]>`
+    SELECT to_char(date_trunc('month', v.submitted_at AT TIME ZONE 'UTC'), 'YYYY-MM') AS month,
+           (count(*) FILTER (WHERE v.status = 'pending'))::int AS pending,
+           (count(*) FILTER (WHERE v.status = 'verified'))::int AS approved,
+           (count(*) FILTER (WHERE v.status = 'rejected'))::int AS rejected
+    ${SCOPE(db, school)} AND v.submitted_at >= (date_trunc('month', now() AT TIME ZONE 'UTC') - interval '5 months') AT TIME ZONE 'UTC'
+    GROUP BY 1`;
+  const byMonth = new Map(rows.map((r) => [r.month, r]));
+  const out: { month: string; pending: number; approved: number; rejected: number }[] = [];
+  const now = new Date();
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+    const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+    out.push(byMonth.get(key) ?? { month: key, pending: 0, approved: 0, rejected: 0 });
+  }
+  return out;
+}

@@ -194,3 +194,11 @@ export async function setCoachAffiliation(
   );
   return loadDetail(db, school, coachId);
 }
+
+/** Coaches affiliated with the school (not pending or removed) per sport. Same rules as the list. */
+export async function coachSportBreakdown(db: Db, school: School): Promise<{ sport: string; count: number }[]> {
+  return db<{ sport: string; count: number }[]>`
+    SELECT COALESCE(NULLIF(btrim(cp.sport_specialization), ''), 'Not set') AS sport, count(*)::int AS count
+    ${SCOPE(db, school)} AND s.status = 'affiliated'
+    GROUP BY 1 ORDER BY count(*) DESC, 1 LIMIT 12`;
+}

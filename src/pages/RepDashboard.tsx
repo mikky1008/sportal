@@ -10,6 +10,7 @@ import { Page } from "@/components/Page";
 import { Card, EmptyState, Pill, StatTile, btn } from "@/components/common";
 import { PersonAvatar } from "@/components/avatar";
 import { RepCharts } from "@/components/RepCharts";
+import { RepReportButton } from "@/components/RepExportButton";
 import { Modal } from "@/components/listings";
 import { useAuth } from "@/auth/AuthContext";
 import { homePathFor, primaryRole } from "@/lib/roles";
@@ -86,9 +87,10 @@ function Welcome({ data }: { data: RepDashboardData }) {
           </div>
         </div>
       </div>
-      <p className="mt-5 border-t border-white/10 pt-4 text-sm text-navy-muted">
-        You're viewing coaches, athletes and requests for {school.name} only.
-      </p>
+      <div className="mt-5 flex flex-col gap-3 border-t border-white/10 pt-4 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-sm text-navy-muted">You're viewing coaches, athletes and requests for {school.name} only.</p>
+        <RepReportButton className="self-start sm:self-auto" />
+      </div>
     </section>
   );
 }

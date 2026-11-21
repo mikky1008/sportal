@@ -1,6 +1,18 @@
 MERGED BUILD: administrator work + school representative work together
 
 SCHOOL REPRESENTATIVE (pages /rep/dashboard, /rep/coaches, /rep/requests, /rep/athletes, /rep/settings)
+LATEST ADDITION (round 4): PDF report
+  - Dashboard banner > "Download PDF report": a PDF of your school (A4): overview numbers, athletes by sport, coaches by
+    sport, coach requests per month (as tables with bars), pending coach requests, the affiliated coaches and every
+    athlete (up to 500 rows per list, and it says so if it is cut). No emails, credential numbers or review notes.
+    Made on the server with pdf-lib (new dependency, pinned to 1.17.1; no native code), for your own school only,
+    and every download is audited. Letters outside the standard Latin set show as "?".
+  NEW  server/rep-report.server.ts
+  CHANGED  server/handler.ts (GET /api/rep/report.pdf), src/lib/repExportApi.ts (one shared saver for CSV and PDF),
+           src/components/RepExportButton.tsx (RepReportButton), src/pages/RepDashboard.tsx, package.json and
+           package-lock.json (pdf-lib), api/index.mjs
+  No database migration. Run "npm install" after copying (Vercel does this by itself).
+
 LATEST ADDITIONS (round 3): scholarship edit/delete, CSV exports, Dashboard charts
   - Scholarships (/scholarships, representative view): each scholarship you posted now has Edit and Delete.
     Edit changes the name, sport, coverage, details, requirements and deadline (the school and open/closed state are not

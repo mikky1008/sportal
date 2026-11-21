@@ -154,6 +154,7 @@
 //   POST /api/rep/settings/password                 university representative { currentPassword, newPassword, confirmPassword? } -> { ok, otherSessionsSignedOut }
 // School Representative CSV exports (own school only; same search and filters as the page; every download is audited):
 //   GET  /api/rep/export/coaches | /athletes | /coach-requests   university representative ?q&sport&status -> a .csv file
+//   GET  /api/rep/report.pdf                        university representative -> a PDF report of the school (numbers, charts as tables, coach and athlete lists; no emails)
 //
 // Athlete applications to a coach's program ("show interest"):
 //   POST /api/coach-applications                    student-athlete { coachId } -> 201 { ok, application }   409 already_applied | already_connected, 429 rate_limited
@@ -267,6 +268,7 @@ import {
 import { getRepDashboard, RepDashboardError } from "./rep-dashboard.server.ts";
 import { getRepCharts } from "./rep-charts.server.ts";
 import { EXPORT_KINDS, exportRepData, type ExportKind } from "./rep-exports.server.ts";
+import { buildRepReport } from "./rep-report.server.ts";
 import {
   AVATAR_MAX_CHARS as REP_AVATAR_MAX_CHARS, changeRepPassword, getRepHeader, getRepProfile, setRepAvatar, updateRepProfile,
 } from "./rep-settings.server.ts";
@@ -1175,6 +1177,17 @@ async function handleRepSettings(req: Request, path: string): Promise<Response |
 
 /** School Representative CSV exports. Returns null for any other path. */
 async function handleRepExports(req: Request, path: string): Promise<Response | null> {
+  if (req.method === "GET" && path === "/api/rep/report.pdf") {
+    const user = await getUserBySessionToken(bearer(req));
+    if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
+    try {
+      const file = await buildRepReport(user, requestMeta(req));
+      return sendFile(req, { fileName: file.fileName, mimeType: "application/pdf", data: Buffer.from(file.bytes) });
+    } catch (err) {
+      if (err instanceof RepDashboardError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
+      throw err;
+    }
+  }
   const m = /^\/api\/rep\/export\/([a-z-]+)$/.exec(path);
   if (req.method !== "GET" || !m) return null;
   const kind = m[1] as ExportKind;

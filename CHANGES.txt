@@ -1,6 +1,22 @@
 MERGED BUILD: administrator work + school representative work together
 
 SCHOOL REPRESENTATIVE (pages /rep/dashboard, /rep/coaches, /rep/requests, /rep/athletes, /rep/settings)
+LATEST ADDITION (round 5): Messages and announcements  (page /rep/messages)
+  - A school representative can send a one-way message or announcement to the coaches and athletes of their own
+    school: all coaches, all athletes, verified athletes only, coaches and athletes, or one person; each can be
+    narrowed to one sport. The page shows "This will notify N people" before sending and asks to confirm. An
+    empty audience is refused.
+  - Who can be reached is exactly who the rep can already see: affiliated coaches with an active account, and the
+    athletes on My Athletes (not hidden, not suspended). Pending applicants, removed coaches and other schools are
+    never reached. Up to 2,000 people per message (narrow by sport beyond that); 20 messages an hour, 100 a day.
+  - Recipients get a bell notification that names the sender, their position and the school, then the message
+    (line breaks kept). It is one-way: they cannot reply. The rep keeps a "Sent messages" history (own messages only).
+  - NEW  server/rep-messages.server.ts, src/lib/repMessagesApi.ts, src/pages/RepMessages.tsx
+         DATABASE MIGRATION 15: table rep_messages (the sent history). It runs by itself on the next API start.
+  - CHANGED  server/db.server.ts (migration 15 only), server/handler.ts, src/App.tsx, src/layouts/Nav.tsx
+             ("Messages" is in the menu; the phone tab bar keeps its five pages), src/components/listings.tsx
+             (a notification keeps its line breaks), api/index.mjs
+
 LATEST ADDITION (round 4): PDF report
   - Dashboard banner > "Download PDF report": a PDF of your school (A4): overview numbers, athletes by sport, coaches by
     sport, coach requests per month (as tables with bars), pending coach requests, the affiliated coaches and every

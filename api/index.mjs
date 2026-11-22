@@ -31273,6 +31273,33 @@ var MIGRATIONS = [
         updated_at           TIMESTAMPTZ NOT NULL
       );
     `
+  },
+  {
+    version: 15,
+    name: "rep_messages",
+    sql: `
+      -- What a school representative has sent to the coaches and athletes of their school (the sent history).
+      -- The delivery itself is one notification per recipient; this row remembers who it went to, in words
+      -- ("All Basketball athletes", or the person's name), and how many people got it.
+      CREATE TABLE rep_messages (
+        id              TEXT PRIMARY KEY,
+        sender_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        school_key      TEXT NOT NULL,
+        audience        TEXT NOT NULL,
+        sport           TEXT NOT NULL DEFAULT '',
+        recipient_id    TEXT REFERENCES users(id) ON DELETE SET NULL,
+        recipient_name  TEXT NOT NULL DEFAULT '',
+        subject         TEXT NOT NULL,
+        body            TEXT NOT NULL,
+        recipient_count INTEGER NOT NULL,
+        created_at      TIMESTAMPTZ NOT NULL,
+        CONSTRAINT rep_messages_audience_check CHECK (audience IN ('coaches', 'athletes', 'verified_athletes', 'everyone', 'person')),
+        CONSTRAINT rep_messages_subject_check CHECK (length(btrim(subject)) BETWEEN 3 AND 100),
+        CONSTRAINT rep_messages_body_check CHECK (length(btrim(body)) BETWEEN 1 AND 1000),
+        CONSTRAINT rep_messages_count_check CHECK (recipient_count >= 1)
+      );
+      CREATE INDEX idx_rep_messages_sender ON rep_messages (sender_id, created_at DESC);
+    `
   }
 ];
 var MIGRATION_LOCK_ID = 727274001;
@@ -32858,12 +32885,12 @@ async function getMyProfile(actor, dbArg) {
 function readDraft(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw fail({}, "Send the profile as an object.");
   const r = raw;
-  const bad4 = {};
+  const bad5 = {};
   const text3 = (k) => {
     const v = r[k];
     if (v === void 0 || v === null) return "";
     if (typeof v !== "string") {
-      bad4[k] = "Must be text.";
+      bad5[k] = "Must be text.";
       return "";
     }
     return v;
@@ -32876,7 +32903,7 @@ function readDraft(raw) {
   const ach = r["achievements"];
   let achievements = [];
   if (ach !== void 0) {
-    if (!Array.isArray(ach)) bad4["achievements"] = "Must be a list.";
+    if (!Array.isArray(ach)) bad5["achievements"] = "Must be a list.";
     else
       achievements = ach.slice(0, LIMITS.achievements + 1).map((x) => {
         const o = x && typeof x === "object" ? x : {};
@@ -32899,7 +32926,7 @@ function readDraft(raw) {
     bio: text3("bio"),
     achievements
   };
-  if (Object.keys(bad4).length > 0) throw fail(bad4);
+  if (Object.keys(bad5).length > 0) throw fail(bad5);
   return draft;
 }
 function flatten(errors) {
@@ -33812,14 +33839,14 @@ function readBody(raw, accountEmail) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw fail3({}, "Send the profile as an object.");
   const r = raw;
   const out = { ...EMPTY_COACH };
-  const bad4 = {};
+  const bad5 = {};
   for (const k of COACH_PROFILE_KEYS) {
     const v = r[k];
     if (v === void 0) continue;
-    if (typeof v !== "string") bad4[k] = "Must be text.";
+    if (typeof v !== "string") bad5[k] = "Must be text.";
     else out[k] = v.trim();
   }
-  if (Object.keys(bad4).length > 0) throw fail3(bad4);
+  if (Object.keys(bad5).length > 0) throw fail3(bad5);
   out.email = accountEmail;
   return out;
 }
@@ -34466,7 +34493,7 @@ async function getAdminOverview(actor) {
   const [reports] = await db`SELECT COUNT(*)::int AS n FROM content_reports WHERE status = 'pending'`;
   const [ok] = await db`
     SELECT COUNT(*)::int AS n FROM audit_log WHERE event IN ('login.success', 'admin.login.success') AND created_at > ${since}`;
-  const [bad4] = await db`
+  const [bad5] = await db`
     SELECT COUNT(*)::int AS n FROM audit_log WHERE event IN ('login.failed', 'admin.login.failed') AND created_at > ${since}`;
   const recent = await db`
     SELECT event, identifier, detail, created_at FROM audit_log WHERE event IN ${db(ACTIVITY_EVENTS)}
@@ -34514,7 +34541,7 @@ async function getAdminOverview(actor) {
     },
     pendingVerifications: pending?.n ?? 0,
     pendingReports: reports?.n ?? 0,
-    signIns24h: { succeeded: ok?.n ?? 0, failed: bad4?.n ?? 0 },
+    signIns24h: { succeeded: ok?.n ?? 0, failed: bad5?.n ?? 0 },
     recentActivity: recent.map((r) => ({ event: r.event, identifier: r.identifier, roles: rolesFromDetail(r.detail), at: r.created_at.toISOString() }))
   };
 }
@@ -36649,11 +36676,136 @@ async function buildRepReport(user, meta = {}, dbArg, opts = {}) {
   return { fileName: `sportal-report-${slug2(school)}-${now6.toISOString().slice(0, 10)}.pdf`, bytes, pages: pages.length };
 }
 
+// server/rep-messages.server.ts
+import { randomUUID as randomUUID13 } from "node:crypto";
+var AUDIENCES = ["coaches", "athletes", "verified_athletes", "everyone", "person"];
+var SUBJECT_MIN = 3;
+var SUBJECT_MAX = 100;
+var BODY_MAX = 1e3;
+var MAX_RECIPIENTS = 2e3;
+var HOURLY_LIMIT = 20;
+var DAILY_LIMIT2 = 100;
+var HISTORY_PAGE_DEFAULT = 20;
+var HISTORY_PAGE_MAX = 50;
+var bad3 = (message, fieldErrors) => new ConnectionError(400, "validation", message, fieldErrors ? { fieldErrors } : void 0);
+function audienceLabel(audience, sport, personName2) {
+  if (audience === "person") return personName2;
+  const s = sport ? `${sport} ` : "";
+  switch (audience) {
+    case "coaches":
+      return `All ${s}coaches`;
+    case "athletes":
+      return `All ${s}athletes`;
+    case "verified_athletes":
+      return `Verified ${s}athletes`;
+    default:
+      return sport ? `All coaches and athletes (${sport})` : "All coaches and athletes";
+  }
+}
+async function resolveAudience(user, input, db) {
+  const audience = input.audience;
+  if (typeof audience !== "string" || !AUDIENCES.includes(audience)) throw bad3("Choose who to send this to.", { audience: "Choose who to send this to." });
+  const a = audience;
+  const sport = typeof input.sport === "string" ? input.sport.trim().slice(0, 80) : "";
+  if (a === "person") {
+    const id = typeof input.recipientId === "string" ? input.recipientId.trim().slice(0, 100) : "";
+    if (!id) throw bad3("Choose the person to message.", { recipientId: "Choose the person to message." });
+    try {
+      const c2 = await getRepCoach(user, id, db);
+      if (c2.status !== "affiliated") throw bad3("Only affiliated coaches can be messaged.", { recipientId: "That coach isn't affiliated with your school yet." });
+      if (!c2.accountActive) throw bad3("That coach's account is suspended.", { recipientId: "That coach's account is suspended." });
+      return { ids: [c2.id], coaches: 1, athletes: 0, label: c2.name, audience: a, sport: "", recipientId: c2.id, recipientName: c2.name };
+    } catch (err) {
+      if (!(err instanceof RepDashboardError && err.httpStatus === 404)) throw err;
+    }
+    try {
+      const t = await getRepAthlete(user, id, db);
+      return { ids: [t.id], coaches: 0, athletes: 1, label: t.name, audience: a, sport: "", recipientId: t.id, recipientName: t.name };
+    } catch (err) {
+      if (err instanceof RepDashboardError && err.httpStatus === 404) throw new RepDashboardError(404, "recipient_not_found", "That person isn't a coach or athlete of your school.");
+      throw err;
+    }
+  }
+  const page = { limit: MAX_RECIPIENTS + 1, offset: 0, ...sport ? { sport } : {} };
+  const ids2 = /* @__PURE__ */ new Set();
+  let coaches = 0, athletes = 0;
+  if (a === "coaches" || a === "everyone") {
+    const r = await listRepCoaches(user, { ...page, status: "affiliated" }, db);
+    for (const c2 of r.items) if (c2.accountActive && !ids2.has(c2.id)) {
+      ids2.add(c2.id);
+      coaches++;
+    }
+  }
+  if (a === "athletes" || a === "verified_athletes" || a === "everyone") {
+    const r = await listRepAthletes(user, { ...page, ...a === "verified_athletes" ? { status: "verified" } : {} }, db);
+    for (const t of r.items) if (!ids2.has(t.id)) {
+      ids2.add(t.id);
+      athletes++;
+    }
+  }
+  if (ids2.size > MAX_RECIPIENTS) throw bad3(`That is more than ${MAX_RECIPIENTS} people. Narrow it by sport.`, { audience: "Too many people. Narrow it by sport." });
+  return { ids: [...ids2], coaches, athletes, label: audienceLabel(a, sport, ""), audience: a, sport, recipientId: null, recipientName: "" };
+}
+async function previewRepMessage(user, input, dbArg) {
+  const db = dbArg ?? await getDb();
+  await resolveSchool(db, user);
+  const r = await resolveAudience(user, input, db);
+  return { count: r.ids.length, coaches: r.coaches, athletes: r.athletes, label: r.label };
+}
+var oneLine = (s) => s.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+var multiLine = (s) => s.replace(/\r\n?/g, "\n").replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, "").replace(/\n{3,}/g, "\n\n").trim();
+async function sendRepMessage(user, input, meta = {}, dbArg) {
+  const db = dbArg ?? await getDb();
+  const school = await resolveSchool(db, user);
+  const subject = typeof input.subject === "string" ? oneLine(input.subject) : "";
+  const body = typeof input.body === "string" ? multiLine(input.body) : "";
+  const errors = {};
+  if (subject.length < SUBJECT_MIN || subject.length > SUBJECT_MAX) errors["subject"] = `Give it a subject (${SUBJECT_MIN} to ${SUBJECT_MAX} characters).`;
+  if (body.length < 1 || body.length > BODY_MAX) errors["body"] = `Write a message (up to ${BODY_MAX} characters).`;
+  if (Object.keys(errors).length > 0) throw bad3("Please fix the highlighted fields.", errors);
+  const [sent] = await db`
+    SELECT (count(*) FILTER (WHERE created_at > now() - interval '1 hour'))::int AS hour,
+           (count(*) FILTER (WHERE created_at > now() - interval '1 day'))::int AS day
+    FROM rep_messages WHERE sender_id = ${user.id}`;
+  if ((sent?.hour ?? 0) >= HOURLY_LIMIT) throw new ConnectionError(429, "rate_limited", `You can send ${HOURLY_LIMIT} messages an hour. Try again later.`);
+  if ((sent?.day ?? 0) >= DAILY_LIMIT2) throw new ConnectionError(429, "rate_limited", `You can send ${DAILY_LIMIT2} messages a day. Try again tomorrow.`);
+  const r = await resolveAudience(user, input, db);
+  if (r.ids.length === 0) throw bad3("No one matches that choice, so nothing was sent.", { audience: "No one matches that choice." });
+  const id = randomUUID13();
+  const ts = /* @__PURE__ */ new Date();
+  const from = `From ${oneLine(user.displayName)}${school.designation ? `, ${oneLine(school.designation)}` : ""}, ${oneLine(school.name)}`;
+  const message = `${from}
+
+${body}`;
+  await db.begin(async (txRaw) => {
+    const tx = txRaw;
+    await tx`
+      INSERT INTO rep_messages (id, sender_id, school_key, audience, sport, recipient_id, recipient_name, subject, body, recipient_count, created_at)
+      VALUES (${id}, ${user.id}, ${school.key}, ${r.audience}, ${r.sport}, ${r.recipientId}, ${r.recipientName}, ${subject}, ${body}, ${r.ids.length}, ${ts})`;
+    const rows = r.ids.map((uid) => ({ id: randomUUID13(), user_id: uid, category: "system", title: subject, message, link: null, created_at: ts }));
+    await tx`INSERT INTO notifications ${tx(rows, "id", "user_id", "category", "title", "message", "link", "created_at")}`;
+    await audit("rep.message_sent", { userId: user.id, ...meta, detail: { audience: r.audience, sport: r.sport, recipients: r.ids.length } }, tx);
+  });
+  return { id, audience: r.audience, label: r.label, subject, body, recipientCount: r.ids.length, createdAt: ts.toISOString(), coaches: r.coaches, athletes: r.athletes };
+}
+async function listRepMessages(user, opts, dbArg) {
+  const db = dbArg ?? await getDb();
+  await resolveSchool(db, user);
+  const rows = await db`
+    SELECT id, audience, sport, recipient_name, subject, body, recipient_count, created_at, count(*) OVER ()::int AS total
+    FROM rep_messages WHERE sender_id = ${user.id}
+    ORDER BY created_at DESC, id LIMIT ${opts.limit} OFFSET ${opts.offset}`;
+  return {
+    total: rows[0]?.total ?? 0,
+    items: rows.map((m) => ({ id: m.id, audience: m.audience, label: audienceLabel(m.audience, m.sport, m.recipient_name), subject: m.subject, body: m.body, recipientCount: m.recipient_count, createdAt: m.created_at.toISOString() }))
+  };
+}
+
 // server/rep-settings.server.ts
 var NAME_MAX2 = 40;
 var DESIGNATION_MAX = 80;
 var AVATAR_MAX_CHARS2 = 3e5;
-var bad3 = (message, fieldErrors) => new ConnectionError(400, "validation", message, fieldErrors ? { fieldErrors } : void 0);
+var bad4 = (message, fieldErrors) => new ConnectionError(400, "validation", message, fieldErrors ? { fieldErrors } : void 0);
 function requireRep(actor) {
   if (!actor.roles.includes(REP_ROLE)) throw new RepDashboardError(403, "role_not_allowed", "Only school representatives can use this.");
 }
@@ -36693,7 +36845,7 @@ async function updateRepProfile(actor, raw, meta = {}, dbArg) {
   if (firstName.length < 1 || firstName.length > NAME_MAX2) errors["firstName"] = `Enter your first name (up to ${NAME_MAX2} characters).`;
   if (lastName.length < 1 || lastName.length > NAME_MAX2) errors["lastName"] = `Enter your last name (up to ${NAME_MAX2} characters).`;
   if (designation.length < 1 || designation.length > DESIGNATION_MAX) errors["designation"] = `Enter your position or designation (up to ${DESIGNATION_MAX} characters).`;
-  if (Object.keys(errors).length > 0) throw bad3("Please fix the highlighted fields.", errors);
+  if (Object.keys(errors).length > 0) throw bad4("Please fix the highlighted fields.", errors);
   const db = dbArg ?? await getDb();
   const before = await getRepProfile(actor, db);
   const displayName2 = `${firstName} ${lastName}`.slice(0, 80);
@@ -36718,10 +36870,10 @@ async function setRepAvatar(actor, dataUrl, meta = {}, dbArg) {
   const db = dbArg ?? await getDb();
   let value2 = null;
   if (dataUrl !== null) {
-    if (typeof dataUrl !== "string") throw bad3("Choose an image.");
+    if (typeof dataUrl !== "string") throw bad4("Choose an image.");
     const problem = validatePhotoDataUrl(dataUrl);
-    if (problem) throw bad3(problem, { avatar: problem });
-    if (dataUrl.length > AVATAR_MAX_CHARS2) throw bad3("That image is too large. Try a smaller one.", { avatar: "That image is too large." });
+    if (problem) throw bad4(problem, { avatar: problem });
+    if (dataUrl.length > AVATAR_MAX_CHARS2) throw bad4("That image is too large. Try a smaller one.", { avatar: "That image is too large." });
     value2 = dataUrl;
   }
   const ts = /* @__PURE__ */ new Date();
@@ -36736,13 +36888,13 @@ async function changeRepPassword(actor, raw, currentToken, meta = {}, dbArg) {
   const body = raw && typeof raw === "object" ? raw : {};
   const current = typeof body["currentPassword"] === "string" ? body["currentPassword"] : "";
   const next = typeof body["newPassword"] === "string" ? body["newPassword"] : "";
-  if (!current) throw bad3("Enter your current password.", { currentPassword: "Enter your current password." });
-  if (current.length > 128 || next.length > 128) throw bad3("That password is too long.");
+  if (!current) throw bad4("Enter your current password.", { currentPassword: "Enter your current password." });
+  if (current.length > 128 || next.length > 128) throw bad4("That password is too long.");
   if (typeof body["confirmPassword"] === "string" && body["confirmPassword"] !== next)
-    throw bad3("The passwords don't match.", { confirmPassword: "The passwords don't match." });
+    throw bad4("The passwords don't match.", { confirmPassword: "The passwords don't match." });
   const weak = checkPasswordStrength(next);
-  if (weak) throw bad3(weak, { newPassword: weak });
-  if (next === current) throw bad3("Choose a password you haven't used here.", { newPassword: "The new password must be different." });
+  if (weak) throw bad4(weak, { newPassword: weak });
+  if (next === current) throw bad4("Choose a password you haven't used here.", { newPassword: "The new password must be different." });
   const db = dbArg ?? await getDb();
   const bucket = `rep-pw:${actor.id}`;
   const wait = await checkRateLimit(db, bucket, meta.ip ?? null);
@@ -36755,7 +36907,7 @@ async function changeRepPassword(actor, raw, currentToken, meta = {}, dbArg) {
   if (!await verifyPassword(current, row.password_hash)) {
     await recordAttempt(db, bucket, meta.ip ?? null, false);
     await audit("rep.password_change_failed", { userId: actor.id, ...meta }, db);
-    throw bad3("That isn't your current password.", { currentPassword: "That isn't your current password." });
+    throw bad4("That isn't your current password.", { currentPassword: "That isn't your current password." });
   }
   const hash = await hashPassword(next);
   const keep = currentToken ? hashSessionToken(currentToken) : "";
@@ -36793,7 +36945,7 @@ async function getRepHeader(actor, dbArg) {
 }
 
 // server/coach-applications.server.ts
-import { randomUUID as randomUUID13 } from "node:crypto";
+import { randomUUID as randomUUID14 } from "node:crypto";
 var APPLICATIONS_PER_DAY = 10;
 var CoachApplicationError = class extends Error {
   httpStatus;
@@ -36816,7 +36968,7 @@ async function applyToCoach(user, coachId, meta = {}, dbArg) {
   if (!coach || !user.id || coachId === user.id || !await isVerifiedCoach(db, coachId)) throw notFound7();
   const [connected] = await db`SELECT 1 FROM coach_athlete_connections WHERE coach_id = ${coachId} AND athlete_id = ${user.id} AND status = 'accepted'`;
   if (connected) throw new CoachApplicationError(409, "already_connected", "You are already connected to this coach.");
-  const id = randomUUID13();
+  const id = randomUUID14();
   const now6 = /* @__PURE__ */ new Date();
   const [today] = await db`
     SELECT count(*)::int AS n FROM athlete_applications WHERE athlete_id = ${user.id} AND created_at > ${new Date(now6.getTime() - 24 * 60 * 60 * 1e3)}`;
@@ -36878,7 +37030,7 @@ async function setApplicationStatus2(user, applicationId, status, dbArg) {
 }
 
 // server/recruiting.server.ts
-import { randomUUID as randomUUID14 } from "node:crypto";
+import { randomUUID as randomUUID15 } from "node:crypto";
 var DIRECTORY_LIMIT_DEFAULT = 60;
 var DIRECTORY_LIMIT_MAX = 100;
 var INQUIRIES_PER_DAY = 25;
@@ -37088,7 +37240,7 @@ async function sendInquiry(user, input, meta = {}, dbArg) {
     WHERE u.id = ${input.athleteId} AND r.name = ${ATHLETE_ROLE} AND u.is_active = TRUE AND u.deleted_at IS NULL`;
   if (!athlete) throw notFound8();
   if (!athlete.visible) throw new RecruitingError(409, "showcase_hidden", "This athlete has hidden their showcase, so new inquiries are closed.");
-  const id = randomUUID14();
+  const id = randomUUID15();
   const now6 = /* @__PURE__ */ new Date();
   await db.begin(async (tx) => {
     await tx`SELECT pg_advisory_xact_lock(hashtext(${`inq:${user.id}:${input.athleteId}`}))`;
@@ -37161,7 +37313,7 @@ async function sendMessage(user, inquiryId, rawBody, dbArg) {
   if (body.length > MESSAGE_MAX2) throw new RecruitingError(400, "validation", `Messages are limited to ${MESSAGE_MAX2} characters.`);
   if (inq.status !== "accepted" && inq.status !== "replied")
     throw new RecruitingError(409, "not_accepted", "Messaging unlocks only after the athlete accepts the inquiry.");
-  const id = randomUUID14();
+  const id = randomUUID15();
   const now6 = /* @__PURE__ */ new Date();
   await db.begin(async (tx) => {
     await tx`
@@ -37973,6 +38125,36 @@ async function handleRepExports(req, path) {
     throw err;
   }
 }
+async function handleRepMessages(req, path) {
+  const isPreview = req.method === "POST" && path === "/api/rep/messages/preview";
+  const isSend = req.method === "POST" && path === "/api/rep/messages";
+  const isList = req.method === "GET" && path === "/api/rep/messages";
+  if (!isPreview && !isSend && !isList) return null;
+  const user = await getUserBySessionToken(bearer(req));
+  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
+  try {
+    if (isList) {
+      const params = new URL(req.url).searchParams;
+      const limit3 = Number(params.get("limit") ?? HISTORY_PAGE_DEFAULT);
+      const offset = Number(params.get("offset") ?? 0);
+      return send(req, 200, {
+        ok: true,
+        ...await listRepMessages(user, {
+          limit: Number.isInteger(limit3) && limit3 >= 1 ? Math.min(limit3, HISTORY_PAGE_MAX) : HISTORY_PAGE_DEFAULT,
+          offset: Number.isInteger(offset) && offset >= 0 ? offset : 0
+        })
+      });
+    }
+    const body = await readJson(req);
+    const input = body && typeof body === "object" ? body : {};
+    if (isPreview) return send(req, 200, { ok: true, preview: await previewRepMessage(user, input) });
+    return send(req, 201, { ok: true, message: await sendRepMessage(user, input, requestMeta(req)) });
+  } catch (err) {
+    if (err instanceof RepDashboardError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
+    if (err instanceof ConnectionError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message, ...err.extra });
+    throw err;
+  }
+}
 async function handleCoachApplications(req, path) {
   const statusRoute = /^\/api\/coach-applications\/([^/]+)\/status$/.exec(path);
   const isRoot = path === "/api/coach-applications";
@@ -38007,7 +38189,7 @@ async function handleRecruiting(req, path) {
   if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
   const meta = requestMeta(req);
   const params = new URL(req.url).searchParams;
-  const bad4 = (message) => send(req, 400, { ok: false, code: "validation", message });
+  const bad5 = (message) => send(req, 400, { ok: false, code: "validation", message });
   try {
     if (m === "GET" && path === "/api/recruiting/athletes") {
       const limit3 = Number(params.get("limit") ?? DIRECTORY_LIMIT_DEFAULT);
@@ -38032,23 +38214,23 @@ async function handleRecruiting(req, path) {
     if (m === "GET" && path === "/api/recruiting/watchlist") return send(req, 200, { ok: true, ...await listWatchlist(user) });
     if (noteRoute) {
       const parsed2 = external_exports.object({ note: external_exports.string() }).safeParse(await readJson(req));
-      if (!parsed2.success) return bad4("Send { note: text }.");
+      if (!parsed2.success) return bad5("Send { note: text }.");
       return send(req, 200, { ok: true, ...await setNote(user, noteRoute[1] ?? "", parsed2.data.note) });
     }
     if (m === "GET" && path === "/api/recruiting/inquiries") return send(req, 200, { ok: true, ...await listInquiries(user) });
     if (m === "POST" && path === "/api/recruiting/inquiries") {
       const parsed2 = external_exports.object({ athleteId: external_exports.string(), organization: external_exports.string(), message: external_exports.string() }).safeParse(await readJson(req));
-      if (!parsed2.success) return bad4("Send { athleteId, organization, message }.");
+      if (!parsed2.success) return bad5("Send { athleteId, organization, message }.");
       return send(req, 201, { ok: true, inquiry: await sendInquiry(user, parsed2.data, meta) });
     }
     if (respondRoute) {
       const parsed2 = external_exports.object({ decision: external_exports.enum(["accepted", "declined"]) }).safeParse(await readJson(req));
-      if (!parsed2.success) return bad4('Send { decision: "accepted" | "declined" }.');
+      if (!parsed2.success) return bad5('Send { decision: "accepted" | "declined" }.');
       return send(req, 200, { ok: true, inquiry: await respondToInquiry(user, respondRoute[1] ?? "", parsed2.data.decision, meta) });
     }
     if (m === "GET") return send(req, 200, { ok: true, ...await listMessages(user, messagesRoute[1] ?? "") });
     const parsed = external_exports.object({ body: external_exports.string() }).safeParse(await readJson(req));
-    if (!parsed.success) return bad4("Send { body: text }.");
+    if (!parsed.success) return bad5("Send { body: text }.");
     return send(req, 201, { ok: true, message: await sendMessage(user, messagesRoute[1] ?? "", parsed.data.body) });
   } catch (err) {
     if (err instanceof RecruitingError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
@@ -38265,6 +38447,8 @@ async function handle(req) {
     if (repSettings) return repSettings;
     const repExports = await handleRepExports(req, path);
     if (repExports) return repExports;
+    const repMessages = await handleRepMessages(req, path);
+    if (repMessages) return repMessages;
     return send(req, 404, { error: "not_found" });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";

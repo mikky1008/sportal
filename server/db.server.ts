@@ -765,6 +765,33 @@ export const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    version: 15,
+    name: "rep_messages",
+    sql: `
+      -- What a school representative has sent to the coaches and athletes of their school (the sent history).
+      -- The delivery itself is one notification per recipient; this row remembers who it went to, in words
+      -- ("All Basketball athletes", or the person's name), and how many people got it.
+      CREATE TABLE rep_messages (
+        id              TEXT PRIMARY KEY,
+        sender_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        school_key      TEXT NOT NULL,
+        audience        TEXT NOT NULL,
+        sport           TEXT NOT NULL DEFAULT '',
+        recipient_id    TEXT REFERENCES users(id) ON DELETE SET NULL,
+        recipient_name  TEXT NOT NULL DEFAULT '',
+        subject         TEXT NOT NULL,
+        body            TEXT NOT NULL,
+        recipient_count INTEGER NOT NULL,
+        created_at      TIMESTAMPTZ NOT NULL,
+        CONSTRAINT rep_messages_audience_check CHECK (audience IN ('coaches', 'athletes', 'verified_athletes', 'everyone', 'person')),
+        CONSTRAINT rep_messages_subject_check CHECK (length(btrim(subject)) BETWEEN 3 AND 100),
+        CONSTRAINT rep_messages_body_check CHECK (length(btrim(body)) BETWEEN 1 AND 1000),
+        CONSTRAINT rep_messages_count_check CHECK (recipient_count >= 1)
+      );
+      CREATE INDEX idx_rep_messages_sender ON rep_messages (sender_id, created_at DESC);
+    `,
+  },
 ];
 
 const MIGRATION_LOCK_ID = 727_274_001;

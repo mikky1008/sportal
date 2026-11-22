@@ -172,7 +172,7 @@ export function NotificationItem({ n, onRead }: { n: Notification; onRead: () =>
         <span className={cn("grid h-10 w-10 shrink-0 place-items-center rounded-lg", m.tone)}><Icon className="h-5 w-5" /></span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2"><p className="font-semibold">{n.title}</p>{!n.read && <span className="h-2 w-2 rounded-full bg-primary" aria-label="Unread" />}</div>
-          <p className="text-sm text-muted-foreground">{n.message}</p>
+          <p className="whitespace-pre-line break-words text-sm text-muted-foreground">{n.message}</p>
           <p className="mt-1 text-xs text-muted-foreground">{m.label} · {n.time}</p>
         </div>
       </button>

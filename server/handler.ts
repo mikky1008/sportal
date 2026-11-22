@@ -155,6 +155,10 @@
 // School Representative CSV exports (own school only; same search and filters as the page; every download is audited):
 //   GET  /api/rep/export/coaches | /athletes | /coach-requests   university representative ?q&sport&status -> a .csv file
 //   GET  /api/rep/report.pdf                        university representative -> a PDF report of the school (numbers, charts as tables, coach and athlete lists; no emails)
+// School Representative messages (one-way, to coaches and athletes of the representative's OWN school only):
+//   POST /api/rep/messages/preview                  university representative { audience, sport?, recipientId? } -> { ok, preview: { count, coaches, athletes, label } }
+//   POST /api/rep/messages                          university representative { audience, sport?, recipientId?, subject, body } -> 201 { ok, message }   (20 an hour, 100 a day)
+//   GET  /api/rep/messages                          university representative ?limit&offset -> { ok, items, total }   what this representative has sent
 //
 // Athlete applications to a coach's program ("show interest"):
 //   POST /api/coach-applications                    student-athlete { coachId } -> 201 { ok, application }   409 already_applied | already_connected, 429 rate_limited
@@ -269,6 +273,7 @@ import { getRepDashboard, RepDashboardError } from "./rep-dashboard.server.ts";
 import { getRepCharts } from "./rep-charts.server.ts";
 import { EXPORT_KINDS, exportRepData, type ExportKind } from "./rep-exports.server.ts";
 import { buildRepReport } from "./rep-report.server.ts";
+import { HISTORY_PAGE_DEFAULT, HISTORY_PAGE_MAX, listRepMessages, previewRepMessage, sendRepMessage } from "./rep-messages.server.ts";
 import {
   AVATAR_MAX_CHARS as REP_AVATAR_MAX_CHARS, changeRepPassword, getRepHeader, getRepProfile, setRepAvatar, updateRepProfile,
 } from "./rep-settings.server.ts";
@@ -1204,6 +1209,38 @@ async function handleRepExports(req: Request, path: string): Promise<Response | 
   }
 }
 
+/** School Representative messages. Returns null for any other path. */
+async function handleRepMessages(req: Request, path: string): Promise<Response | null> {
+  const isPreview = req.method === "POST" && path === "/api/rep/messages/preview";
+  const isSend = req.method === "POST" && path === "/api/rep/messages";
+  const isList = req.method === "GET" && path === "/api/rep/messages";
+  if (!isPreview && !isSend && !isList) return null;
+  const user = await getUserBySessionToken(bearer(req));
+  if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
+  try {
+    if (isList) {
+      const params = new URL(req.url).searchParams;
+      const limit = Number(params.get("limit") ?? HISTORY_PAGE_DEFAULT);
+      const offset = Number(params.get("offset") ?? 0);
+      return send(req, 200, {
+        ok: true,
+        ...(await listRepMessages(user, {
+          limit: Number.isInteger(limit) && limit >= 1 ? Math.min(limit, HISTORY_PAGE_MAX) : HISTORY_PAGE_DEFAULT,
+          offset: Number.isInteger(offset) && offset >= 0 ? offset : 0,
+        })),
+      });
+    }
+    const body = await readJson(req);
+    const input = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
+    if (isPreview) return send(req, 200, { ok: true, preview: await previewRepMessage(user, input) });
+    return send(req, 201, { ok: true, message: await sendRepMessage(user, input, requestMeta(req)) });
+  } catch (err) {
+    if (err instanceof RepDashboardError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message });
+    if (err instanceof ConnectionError) return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message, ...err.extra });
+    throw err;
+  }
+}
+
 /** Returns null when the path is not a coach-applications route, so the caller can keep matching. */
 async function handleCoachApplications(req: Request, path: string): Promise<Response | null> {
   const statusRoute = /^\/api\/coach-applications\/([^/]+)\/status$/.exec(path);
@@ -1528,6 +1565,8 @@ export async function handle(req: Request): Promise<Response> {
     if (repSettings) return repSettings;
     const repExports = await handleRepExports(req, path);
     if (repExports) return repExports;
+    const repMessages = await handleRepMessages(req, path);
+    if (repMessages) return repMessages;
     return send(req, 404, { error: "not_found" });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";

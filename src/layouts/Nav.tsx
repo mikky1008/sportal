@@ -1,6 +1,6 @@
 import { useLocation } from "react-router-dom";
 import {
-  LayoutDashboard, User, Activity, Trophy, GraduationCap, UserSearch, Bell, Settings, Plus, ClipboardList, Users, UserCheck,
+  LayoutDashboard, User, Activity, Trophy, GraduationCap, UserSearch, Bell, Settings, Plus, ClipboardList, Users, UserCheck, Megaphone,
 } from "lucide-react";
 import { Link } from "@/router-compat";
 import { useAuth } from "@/auth/AuthContext";
@@ -30,6 +30,7 @@ export const repNav = [
   { to: "/rep/requests", label: "Coach Requests", icon: UserCheck },
   { to: "/rep/athletes", label: "My Athletes", icon: Trophy },
   { to: "/scholarships", label: "Scholarships", icon: GraduationCap },
+  { to: "/rep/messages", label: "Messages", icon: Megaphone },
 ] as const;
 
 
@@ -52,7 +53,8 @@ function RepBottomNav() {
   const isActive = useIsActive();
   const { user } = useAuth();
   const header = useRepHeader(user?.id);
-  const items = repNav;
+  // Messages lives in the menu: six tabs would not fit on a phone.
+  const items = repNav.filter((i) => i.to !== "/rep/messages");
   return (
     <nav aria-label="Mobile" className="border-t bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur">
       <div className="grid grid-cols-5 items-end">

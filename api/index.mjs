@@ -31591,12 +31591,12 @@ async function checkRateLimit(db, identifier, ip) {
   const byIp = ip ? (await db`
           SELECT COUNT(*)::int AS n, MIN(created_at) AS oldest FROM login_attempts
           WHERE ip = ${ip} AND success = FALSE AND created_at > ${since}`)[0] : void 0;
-  const hits = [
+  const hits2 = [
     byId && byId.n >= RATE_LIMIT.maxFailuresPerIdentifier ? byId.oldest : null,
     byIp && byIp.n >= RATE_LIMIT.maxFailuresPerIp ? byIp.oldest : null
   ].filter((x) => x !== null);
-  if (hits.length === 0) return null;
-  const unlockAt = Math.max(...hits.map((o) => o.getTime() + RATE_LIMIT.windowMs));
+  if (hits2.length === 0) return null;
+  const unlockAt = Math.max(...hits2.map((o) => o.getTime() + RATE_LIMIT.windowMs));
   return Math.max(1, Math.ceil((unlockAt - Date.now()) / 1e3));
 }
 async function recordAttempt(db, identifier, ip, success) {
@@ -36676,6 +36676,50 @@ async function buildRepReport(user, meta = {}, dbArg, opts = {}) {
   return { fileName: `sportal-report-${slug2(school)}-${now6.toISOString().slice(0, 10)}.pdf`, bytes, pages: pages.length };
 }
 
+// server/university-search.server.ts
+var SEARCH_LIMIT = 8;
+var SEARCH_QUERY_MAX = 60;
+var SEARCH_PER_MINUTE = 60;
+var likeLiteral8 = (t) => t.replace(/[\\%_]/g, (c2) => `\\${c2}`);
+async function searchUniversities(rawQuery, dbArg) {
+  const db = dbArg ?? await getDb();
+  const q = rawQuery.replace(/\s+/g, " ").trim().slice(0, SEARCH_QUERY_MAX);
+  const words = q ? q.split(" ").map((w) => `%${likeLiteral8(w)}%`) : [];
+  const prefix = `${likeLiteral8(q)}%`;
+  const rows = await db`
+    WITH names AS (
+      SELECT u.name AS name, u.name_key AS key, COALESCE(u.location, '') AS location, 0 AS pri FROM universities u
+      UNION ALL
+      SELECT btrim(rp.university_name), lower(btrim(rp.university_name)), '', 1
+      FROM university_representative_profiles rp
+      JOIN users us ON us.id = rp.user_id AND us.is_active = TRUE AND us.deleted_at IS NULL
+      LEFT JOIN rep_applications ra ON ra.user_id = rp.user_id
+      WHERE (ra.status IS NULL OR ra.status = 'approved') AND length(btrim(rp.university_name)) >= 2
+    ), best AS (
+      SELECT DISTINCT ON (key) name, key, location FROM names ORDER BY key, pri, name
+    )
+    SELECT name, location FROM best
+    WHERE NOT EXISTS (SELECT 1 FROM unnest(${words}::text[]) w WHERE best.name NOT ILIKE w)
+    ORDER BY (best.name ILIKE ${prefix}) DESC, best.name
+    LIMIT ${SEARCH_LIMIT}`;
+  return rows.map((r) => ({ name: r.name, location: r.location }));
+}
+var hits = /* @__PURE__ */ new Map();
+function allowUniversitySearch(ip, now6 = Date.now()) {
+  const key2 = ip ?? "unknown";
+  const recent = (hits.get(key2) ?? []).filter((t) => now6 - t < 6e4);
+  if (recent.length >= SEARCH_PER_MINUTE) {
+    hits.set(key2, recent);
+    return false;
+  }
+  recent.push(now6);
+  hits.set(key2, recent);
+  if (hits.size > 5e3) {
+    for (const [k, v] of hits) if (v.every((t) => now6 - t >= 6e4)) hits.delete(k);
+  }
+  return true;
+}
+
 // server/rep-messages.server.ts
 import { randomUUID as randomUUID13 } from "node:crypto";
 var AUDIENCES = ["coaches", "athletes", "verified_athletes", "everyone", "person"];
@@ -38397,6 +38441,10 @@ async function handle(req) {
     const adminSettings = await handleAdminSettings(req, path);
     if (adminSettings) return adminSettings;
     if (req.method === "POST" && path === "/api/reports") return await handleFileReport(req);
+    if (req.method === "GET" && path === "/api/universities") {
+      if (!allowUniversitySearch(requestMeta(req).ip)) return send(req, 429, { ok: false, code: "rate_limited", message: "Too many searches. Wait a moment and try again." });
+      return send(req, 200, { ok: true, items: await searchUniversities(new URL(req.url).searchParams.get("q") ?? "") });
+    }
     if (req.method === "POST" && path === "/api/auth/login") return await handleLogin(req);
     if (req.method === "POST" && path === "/api/auth/register") return await handleRegister(req);
     if (req.method === "GET" && path === "/api/auth/me") {

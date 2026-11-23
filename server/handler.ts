@@ -27,6 +27,7 @@
 //   GET|PUT /api/admin/settings/notifications administrator { applications?, reports?, registrations?, security? } -> { ok, preferences }
 //   GET  /api/admin/settings/system administrator                -> { ok, system }   read-only platform information
 //   GET  /api/admin/overview  administrator                       -> { ok, overview }                 Admin Dashboard numbers
+//   GET  /api/universities?q=                                     -> { ok, items: [{ name, location }] }   no sign-in: schools that exist on Sportal, for the coach sign-up (8 at most; 60 searches a minute per address)
 //   GET  /api/auth/me         Authorization: Bearer <token>       -> { user }
 //   POST /api/auth/logout     Authorization: Bearer <token>       -> { ok }
 //   GET  /api/health
@@ -273,6 +274,7 @@ import { getRepDashboard, RepDashboardError } from "./rep-dashboard.server.ts";
 import { getRepCharts } from "./rep-charts.server.ts";
 import { EXPORT_KINDS, exportRepData, type ExportKind } from "./rep-exports.server.ts";
 import { buildRepReport } from "./rep-report.server.ts";
+import { allowUniversitySearch, searchUniversities } from "./university-search.server.ts";
 import { HISTORY_PAGE_DEFAULT, HISTORY_PAGE_MAX, listRepMessages, previewRepMessage, sendRepMessage } from "./rep-messages.server.ts";
 import {
   AVATAR_MAX_CHARS as REP_AVATAR_MAX_CHARS, changeRepPassword, getRepHeader, getRepProfile, setRepAvatar, updateRepProfile,
@@ -1515,6 +1517,10 @@ export async function handle(req: Request): Promise<Response> {
     const adminSettings = await handleAdminSettings(req, path);
     if (adminSettings) return adminSettings;
     if (req.method === "POST" && path === "/api/reports") return await handleFileReport(req);
+    if (req.method === "GET" && path === "/api/universities") {
+      if (!allowUniversitySearch(requestMeta(req).ip)) return send(req, 429, { ok: false, code: "rate_limited", message: "Too many searches. Wait a moment and try again." });
+      return send(req, 200, { ok: true, items: await searchUniversities(new URL(req.url).searchParams.get("q") ?? "") });
+    }
     if (req.method === "POST" && path === "/api/auth/login") return await handleLogin(req);
     if (req.method === "POST" && path === "/api/auth/register") return await handleRegister(req);
     if (req.method === "GET" && path === "/api/auth/me") {

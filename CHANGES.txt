@@ -1,6 +1,21 @@
 MERGED BUILD: administrator work + school representative work together
 
 SCHOOL REPRESENTATIVE (pages /rep/dashboard, /rep/coaches, /rep/requests, /rep/athletes, /rep/settings)
+LATEST ADDITION (round 6): university suggestions on the coach sign-up
+  - On the coach sign-up (page and landing-page drawer), "University / Organization" now suggests the schools that
+    already exist on Sportal as the coach types: it filters as they type (every word, any order, any capitals), shows
+    the city, works with the keyboard and screen readers, and ALWAYS accepts anything: if the school isn't listed
+    they just type it. Choosing a suggestion fills in its exact name, so the coach is linked to that school's
+    representative (their requests show up for the right school). Extra spaces are tidied.
+    Athletes and school representatives are unchanged.
+  - The suggestions are schools with an approved or operator-made representative, and every registered university.
+    Unapproved applications, suspended representatives and every person's data are never included. The search
+    needs no sign-in (the coach has no account yet), returns at most 8 names with their city, and is limited to
+    60 searches a minute per address.
+  NEW  server/university-search.server.ts, src/lib/universitySearchApi.ts, src/components/UniversityCombobox.tsx
+  CHANGED  server/handler.ts (GET /api/universities), src/pages/Signup.tsx (coach role only), api/index.mjs
+  No database migration.
+
 LATEST ADDITION (round 5): Messages and announcements  (page /rep/messages)
   - A school representative can send a one-way message or announcement to the coaches and athletes of their own
     school: all coaches, all athletes, verified athletes only, coaches and athletes, or one person; each can be

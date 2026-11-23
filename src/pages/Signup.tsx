@@ -7,6 +7,7 @@ import type { RegisterDocument } from "@/auth/types";
 import { AlertCircle, ArrowLeft, ArrowRight, Building2, CheckCircle2, Eye, EyeOff, FileText, Loader2, Paperclip, Trophy, UserSearch, X } from "lucide-react";
 import { toast } from "sonner";
 import { btn } from "@/components/common";
+import { UniversityCombobox } from "@/components/UniversityCombobox";
 import { registerLocalAccount } from "@/lib/accountScope";
 import { POST_SIGNUP_PATH } from "@/lib/roles";
 import { profileStore } from "@/lib/profileStore";
@@ -236,6 +237,11 @@ export function SignupForm({ role, tone = "light", onBack, onSwitchToLogin }: Si
     setValues((v) => ({ ...v, [k]: e.target.value }));
     if (errors[k]) setErrors((x) => ({ ...x, [k]: undefined }));
   };
+  // For fields that choose a value (not just type one), like the university suggestions.
+  const setField = (k: Field, v: string) => {
+    setValues((x) => ({ ...x, [k]: v }));
+    if (errors[k]) setErrors((x) => ({ ...x, [k]: undefined }));
+  };
   const bind = (k: Field) => ({
     id: k,
     name: k,
@@ -389,7 +395,19 @@ export function SignupForm({ role, tone = "light", onBack, onSwitchToLogin }: Si
 
                 {extra.includes("organization") && (
                   <TextField id="organization" label={role === "university" ? "University name" : "University / Organization"} error={errors.organization}>
-                    <input {...bind("organization")} type="text" autoComplete="organization" maxLength={100} />
+                    {role === "coach" ? (
+                      // Coaches pick their school from the ones already on Sportal as they type, or type their own.
+                      <>
+                        <UniversityCombobox
+                          id="organization" name="organization" value={values.organization} onValue={(v) => setField("organization", v)}
+                          className={bind("organization").className} disabled={loading || redirecting} invalid={!!errors.organization}
+                          describedBy={errors.organization ? "organization-error" : undefined} dark={dark} maxLength={100} placeholder="Start typing your university"
+                        />
+                        {!errors.organization && <p className={cn("mt-1.5 text-xs", dark ? "text-slate-400" : "text-muted-foreground")}>Choose your school from the list, or type it if it isn't there.</p>}
+                      </>
+                    ) : (
+                      <input {...bind("organization")} type="text" autoComplete="organization" maxLength={100} />
+                    )}
                   </TextField>
                 )}
                 {extra.includes("position") && (

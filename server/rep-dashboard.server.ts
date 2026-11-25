@@ -74,7 +74,7 @@ export interface RepDashboard {
     /** the school exists in the universities table (true once a rep or coach of it was approved) */
     registered: boolean;
   };
-  stats: { totalCoaches: number; totalAthletes: number; pendingCoachRequests: number; activeCoaches: number };
+  stats: { totalCoaches: number; totalAthletes: number; pendingCoachRequests: number; activeCoaches: number; notSubmittedCoaches: number };
   pendingRequests: { items: PendingCoachRequest[]; total: number };
   activities: RepActivity[];
   generatedAt: string;
@@ -137,7 +137,14 @@ async function loadStats(db: Db, school: School): Promise<RepDashboard["stats"]>
     WHERE v.status = 'pending' AND lower(btrim(v.organization)) = ${school.key}
       AND cp.organization_type IN ('University', 'College')`;
 
-  if (!uid) return { totalCoaches: 0, activeCoaches: 0, totalAthletes: 0, pendingCoachRequests: pending?.n ?? 0 };
+  // Coaches who signed up for this school and haven't sent an application yet (the same rule as Coach Requests > Not submitted).
+  const [notSubmitted] = await db<{ n: number }[]>`
+    SELECT count(*)::int AS n FROM coach_profiles cp
+    JOIN users u ON u.id = cp.user_id AND u.is_active = TRUE AND u.deleted_at IS NULL
+    WHERE lower(btrim(cp.organization)) = ${school.key} AND NOT EXISTS (SELECT 1 FROM coach_verifications v WHERE v.coach_id = cp.user_id)`;
+  const notSubmittedCoaches = notSubmitted?.n ?? 0;
+
+  if (!uid) return { totalCoaches: 0, activeCoaches: 0, totalAthletes: 0, pendingCoachRequests: pending?.n ?? 0, notSubmittedCoaches };
 
   const [coaches] = await db<{ total: number; active: number }[]>`
     SELECT count(*)::int AS total, (count(*) FILTER (WHERE u.is_active))::int AS active
@@ -162,6 +169,7 @@ async function loadStats(db: Db, school: School): Promise<RepDashboard["stats"]>
     activeCoaches: coaches?.active ?? 0,
     totalAthletes: athletes?.n ?? 0,
     pendingCoachRequests: pending?.n ?? 0,
+    notSubmittedCoaches,
   };
 }
 

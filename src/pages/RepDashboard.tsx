@@ -108,7 +108,16 @@ function Summary({ data }: { data: RepDashboardData }) {
         label="Pending Coach Requests"
         value={String(s.pendingCoachRequests)}
         icon={<Clock />}
-        hint={s.pendingCoachRequests > 0 ? <span className="font-semibold text-primary">Waiting for review</span> : muted("Nothing waiting")}
+        hint={
+          <>
+            {s.pendingCoachRequests > 0 ? <span className="font-semibold text-primary">Waiting for review</span> : muted("Nothing waiting")}
+            {s.notSubmittedCoaches > 0 && (
+              <Link to="/rep/requests" direction="forward" className="mt-0.5 block text-xs font-medium text-primary underline-offset-2 hover:underline">
+                {s.notSubmittedCoaches} signed up, not applied yet
+              </Link>
+            )}
+          </>
+        }
       />
       <StatTile label="Active Coaches" value={String(s.activeCoaches)} icon={<UserCheck />} hint={muted("Verified, account active")} />
     </section>

@@ -41,7 +41,8 @@ const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(
 const fileName = (kind: ExportKind, school: string) => `sportal-${kind}-${slug(school)}-${new Date().toISOString().slice(0, 10)}.csv`;
 
 const COACH_STATUS: Record<AffiliationStatus, string> = { affiliated: "Affiliated", pending: "Pending", removed: "Removed" };
-const REQUEST_STATUS: Record<RequestStatus, string> = { pending: "Pending", approved: "Approved", rejected: "Rejected" };
+/** A "Not submitted" row shows the date the coach signed up in the date column. */
+const REQUEST_STATUS: Record<RequestStatus, string> = { pending: "Pending", approved: "Approved", rejected: "Rejected", incomplete: "Not submitted" };
 
 export interface ExportFilters { q?: string | undefined; sport?: string | undefined; status?: string | undefined }
 

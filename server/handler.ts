@@ -144,6 +144,7 @@
 //   GET  /api/rep/coach-requests                    university representative ?q&status=pending|approved|rejected&limit&offset -> { ok, school, items, total, counts }
 //   GET  /api/rep/coach-requests/:id                university representative -> { ok, request }   (id = the coach's user id)
 //   POST /api/rep/coach-requests/:id/decision       university representative { decision: "approve" | "reject", reason? } -> { ok, request }   (reason required to reject)
+//   POST /api/rep/coach-requests/:id/remind         university representative -> { ok, remindedAt }   a coach who signed up for the school but hasn't applied (status "incomplete"); once a day per coach
 // School Representative "My Athletes" (read-only; only athletes of the representative's own approved school):
 //   GET  /api/rep/athletes                          university representative ?q&sport&status=verified|unverified&limit&offset -> { ok, school, items, total, sports, counts }
 //   GET  /api/rep/athletes/:id                      university representative -> { ok, athlete }   (profile + recorded achievements)
@@ -274,6 +275,8 @@ import { getRepDashboard, RepDashboardError } from "./rep-dashboard.server.ts";
 import { getRepCharts } from "./rep-charts.server.ts";
 import { EXPORT_KINDS, exportRepData, type ExportKind } from "./rep-exports.server.ts";
 import { buildRepReport } from "./rep-report.server.ts";
+import { notifyCoachNextStep, notifyRepsOfCoachSignup } from "./rep-notifications.server.ts";
+import { getDb } from "./db.server.ts";
 import { allowUniversitySearch, searchUniversities } from "./university-search.server.ts";
 import { HISTORY_PAGE_DEFAULT, HISTORY_PAGE_MAX, listRepMessages, previewRepMessage, sendRepMessage } from "./rep-messages.server.ts";
 import {
@@ -283,7 +286,7 @@ import {
   ATHLETES_PAGE_DEFAULT, ATHLETES_PAGE_MAX, VERIFICATION_STATUSES, getRepAthlete, getRepAthletePhoto, listRepAthletes, type AthleteVerification,
 } from "./rep-athletes.server.ts";
 import {
-  REQUEST_STATUSES, REQUESTS_PAGE_DEFAULT, REQUESTS_PAGE_MAX, decideCoachRequest, getCoachRequest, listCoachRequests, type RequestStatus,
+  REQUEST_STATUSES, REQUESTS_PAGE_DEFAULT, REQUESTS_PAGE_MAX, decideCoachRequest, getCoachRequest, listCoachRequests, remindCoach, type RequestStatus,
 } from "./rep-coach-requests.server.ts";
 import {
   AFFILIATION_STATUSES, COACHES_PAGE_DEFAULT, COACHES_PAGE_MAX, getRepCoach, listRepCoaches, setCoachAffiliation, type AffiliationStatus,
@@ -569,7 +572,7 @@ async function handleSchoolVerification(req: Request, path: string): Promise<Res
     if (isList) {
       const status = new URL(req.url).searchParams.get("status");
       if (status && !(APPLICATION_STATUSES as readonly string[]).includes(status))
-        return send(req, 400, { ok: false, code: "validation", message: "status must be pending, approved or rejected." });
+        return send(req, 400, { ok: false, code: "validation", message: "status must be pending, approved, rejected or incomplete." });
       const result = await listRepApplications(user, { ...(status ? { status: status as ApplicationStatus } : {}), ...pagingFrom(req) });
       return send(req, 200, { ok: true, ...result });
     }
@@ -693,11 +696,12 @@ async function handleRegister(req: Request): Promise<Response> {
   const meta = requestMeta(req);
 
   let username = "";
+  let createdUser: { id: string } | null = null;
   try {
     if (!(await signupAllowed(meta.ip)))
       return send(req, 200, { ok: false, code: "rate_limited", message: "Too many sign ups from this connection. Try again in an hour." });
     username = await deriveUsername(input.email);
-    await createUser({
+    createdUser = await createUser({
       email: input.email,
       username,
       password: input.password,
@@ -716,6 +720,17 @@ async function handleRegister(req: Request): Promise<Response> {
     }
     console.error("[api] sign up failed unexpectedly:", err instanceof Error ? err.message : "unknown error");
     return send(req, 200, { ok: false, code: "server_error", message: "Something went wrong. Please try again." });
+  }
+  // A coach who has signed up for a school: tell that school's representative(s), and tell the coach what to do
+  // next (finish the profile and request verification). Never allowed to fail the sign-up itself.
+  if (input.accountType === "coach" && createdUser) {
+    try {
+      const db = await getDb();
+      await notifyRepsOfCoachSignup(db, createdUser.id);
+      await notifyCoachNextStep(db, createdUser.id);
+    } catch (err) {
+      console.error("[api] sign-up notifications failed:", err instanceof Error ? err.message : "unknown error");
+    }
   }
   // A school representative has applied, not signed up: no session until an administrator approves.
   if (input.accountType === "university_representative")
@@ -1074,11 +1089,12 @@ async function handleRepCoaches(req: Request, path: string): Promise<Response | 
 
 /** School Representative "Coach Requests". Returns null for any other path. */
 async function handleRepCoachRequests(req: Request, path: string): Promise<Response | null> {
-  const one = /^\/api\/rep\/coach-requests\/([^/]+)(\/decision)?$/.exec(path);
+  const one = /^\/api\/rep\/coach-requests\/([^/]+)(\/decision|\/remind)?$/.exec(path);
   const isList = req.method === "GET" && path === "/api/rep/coach-requests";
   const isOne = req.method === "GET" && !!one && !one[2];
-  const isDecision = req.method === "POST" && !!one && !!one[2];
-  if (!isList && !isOne && !isDecision) return null;
+  const isDecision = req.method === "POST" && !!one && one[2] === "/decision";
+  const isRemind = req.method === "POST" && !!one && one[2] === "/remind";
+  if (!isList && !isOne && !isDecision && !isRemind) return null;
   const user = await getUserBySessionToken(bearer(req));
   if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
   try {
@@ -1101,6 +1117,7 @@ async function handleRepCoachRequests(req: Request, path: string): Promise<Respo
     }
     const id = decodeURIComponent((one as RegExpExecArray)[1] ?? "").slice(0, 100);
     if (isOne) return send(req, 200, { ok: true, request: await getCoachRequest(user, id) });
+    if (isRemind) return send(req, 200, { ok: true, ...(await remindCoach(user, id, requestMeta(req))) });
     const body = await readJson(req);
     const parsed = z.object({ decision: z.enum(["approve", "reject"]), reason: z.unknown().optional() }).safeParse(body);
     if (!parsed.success) return send(req, 400, { ok: false, code: "validation", message: 'Send { decision: "approve" | "reject", reason }.' });

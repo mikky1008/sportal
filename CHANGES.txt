@@ -1,6 +1,23 @@
 MERGED BUILD: administrator work + school representative work together
 
 SCHOOL REPRESENTATIVE (pages /rep/dashboard, /rep/coaches, /rep/requests, /rep/athletes, /rep/settings)
+LATEST FIX (round 7): coaches who signed up now show on the school representative's side
+  WHY: signing up only creates the coach's account. The request a school rep reviews is created later, when the coach
+  completes their profile (organization type, program, credentials, official email) and clicks "request verification".
+  So a coach who had only signed up was invisible to their school, and nothing told the coach to finish.
+  - Coach Requests has a new "Not submitted" tab: coaches who signed up choosing the school but haven't applied yet
+    (name, sport, position, email, signed-up date). They are NOT requests: there is nothing to approve or reject (the
+    page says so), "All" and the CSV/PDF defaults still mean submitted requests only, and signing up can never make
+    anyone verified. A "Send reminder" button (once a day per coach) tells the coach to finish their profile.
+    When the coach applies they move to Pending by themselves.
+  - Dashboard: under the Pending card, "N signed up, not applied yet" links to that tab.
+  - Alerts at sign-up: the school's approved representative(s) get a bell notification ("A coach signed up for your
+    school"), and the coach gets "Finish your coach application" with a link to their profile.
+  NEW  nothing new to install. CHANGED  server/rep-coach-requests.server.ts, server/rep-notifications.server.ts,
+       server/rep-dashboard.server.ts, server/rep-exports.server.ts, server/handler.ts (the register route sends the two
+       notifications; POST /api/rep/coach-requests/:id/remind), src/pages/RepRequests.tsx, src/pages/RepDashboard.tsx,
+       src/lib/repRequestsApi.ts, src/lib/repDashboardApi.ts, api/index.mjs. No database migration.
+
 LATEST ADDITION (round 6): university suggestions on the coach sign-up
   - On the coach sign-up (page and landing-page drawer), "University / Organization" now suggests the schools that
     already exist on Sportal as the coach types: it filters as they type (every word, any order, any capitals), shows

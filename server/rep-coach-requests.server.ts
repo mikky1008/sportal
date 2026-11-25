@@ -5,6 +5,12 @@
 // user_profiles); no migration. The school is ALWAYS the signed-in representative's own approved
 // school (resolveSchool), never taken from the request, and every query filters on it.
 //
+// "Not submitted": a coach who SIGNED UP choosing this school (coach_profiles.organization, matched the same
+// way) but has not sent a verification request yet has no coach_verifications row, so they are not a request
+// and cannot be approved or rejected (there is nothing to review). They are listed under the status
+// "incomplete" so the representative can see who is on the way, and can send them a reminder. Once the coach
+// submits, they move to "pending" by themselves. The "All" view and the CSV/PDF default stay submitted requests only.
+//
 // A "coach request" is a coach_verifications row whose organization is this school (matched without
 // case or edge spaces) and whose organization type is University or College. Status shown:
 //   pending / approved (verified) / rejected.   Pending requests from suspended accounts are left out.
@@ -25,6 +31,7 @@
 // are what is shown. Nothing is returned for anyone who is not a request of this school.
 
 import { getDb, type Db } from "./db.server.ts";
+import { randomUUID } from "node:crypto";
 import { audit, type PublicUser, type RequestMeta } from "./auth.server.ts";
 import { ConnectionError } from "./connections.server.ts";
 import { applyReview, NOTE_MAX } from "./coach-profile.server.ts";
@@ -34,8 +41,8 @@ export const REQUESTS_PAGE_DEFAULT = 20;
 export const REQUESTS_PAGE_MAX = 50;
 const SEARCH_MAX = 80;
 
-export type RequestStatus = "pending" | "approved" | "rejected";
-export const REQUEST_STATUSES: readonly RequestStatus[] = ["pending", "approved", "rejected"];
+export type RequestStatus = "pending" | "approved" | "rejected" | "incomplete";
+export const REQUEST_STATUSES: readonly RequestStatus[] = ["pending", "approved", "rejected", "incomplete"];
 
 export interface CoachRequest {
   /** the coach's user id (the request is one per coach) */
@@ -48,7 +55,7 @@ export interface CoachRequest {
   position: string;
   credentialType: string;
   status: RequestStatus;
-  /** when the coach sent the request */
+  /** when the coach sent the request (for "incomplete": when they signed up) */
   appliedAt: string;
   decidedAt: string | null;
   /** the reason given when it was rejected (empty otherwise) */
@@ -70,7 +77,7 @@ export interface CoachRequestDetail extends CoachRequest {
 const likeLiteral = (t: string) => t.replace(/[\\%_]/g, (c) => `\\${c}`);
 const safePhoto = (url: string | null): string | null => (url && /^https?:\/\//i.test(url) && url.length <= 500 ? url : null);
 const notFound = () => new RepDashboardError(404, "request_not_found", "That request could not be found at your school.");
-const LABEL: Record<string, RequestStatus> = { pending: "pending", verified: "approved", rejected: "rejected" };
+const LABEL: Record<string, RequestStatus> = { pending: "pending", verified: "approved", rejected: "rejected", incomplete: "incomplete" };
 
 const SCOPE = (db: Db, school: School) => db`
   FROM coach_verifications v
@@ -79,6 +86,14 @@ const SCOPE = (db: Db, school: School) => db`
   LEFT JOIN user_profiles up ON up.user_id = v.coach_id
   WHERE lower(btrim(v.organization)) = ${school.key} AND cp.organization_type IN ('University', 'College')
     AND (v.status <> 'pending' OR u.is_active = TRUE)`;
+
+/** Coaches who signed up for this school and have not sent a verification request (no coach_verifications row at all). */
+const INCOMPLETE = (db: Db, school: School) => db`
+  FROM coach_profiles cp
+  JOIN users u ON u.id = cp.user_id AND u.is_active = TRUE AND u.deleted_at IS NULL
+  LEFT JOIN user_profiles up ON up.user_id = cp.user_id
+  WHERE lower(btrim(cp.organization)) = ${school.key}
+    AND NOT EXISTS (SELECT 1 FROM coach_verifications v WHERE v.coach_id = cp.user_id)`;
 
 const NAME = (db: Db) => db`COALESCE(NULLIF(btrim(concat_ws(' ', up.first_name, up.last_name)), ''), u.display_name)`;
 
@@ -107,20 +122,31 @@ export async function listCoachRequests(
   const pattern = needle ? `%${likeLiteral(needle)}%` : null;
   const dbStatus = opts.status === "approved" ? "verified" : opts.status;
 
-  const rows = await db<(Row & { total: number })[]>`
-    SELECT u.id, ${NAME(db)} AS name, u.email, up.avatar_url, COALESCE(cp.sport_specialization, '') AS sport,
-           COALESCE(cp.coaching_position, '') AS position, v.credential_type, v.status, v.submitted_at, v.reviewed_at,
-           v.review_note, count(*) OVER ()::int AS total
-    ${SCOPE(db, school)}
-      ${dbStatus ? db`AND v.status = ${dbStatus}` : db``}
-      ${pattern ? db`AND (${NAME(db)} ILIKE ${pattern} OR u.email ILIKE ${pattern})` : db``}
-    ORDER BY (v.status = 'pending') DESC, CASE WHEN v.status = 'pending' THEN v.submitted_at END ASC,
-             v.reviewed_at DESC NULLS LAST, u.id
-    LIMIT ${opts.limit} OFFSET ${opts.offset}`;
+  const rows = opts.status === "incomplete"
+    ? await db<(Row & { total: number })[]>`
+        SELECT u.id, ${NAME(db)} AS name, u.email, up.avatar_url, COALESCE(cp.sport_specialization, '') AS sport,
+               COALESCE(cp.coaching_position, '') AS position, ''::text AS credential_type, 'incomplete'::text AS status,
+               u.created_at AS submitted_at, NULL::timestamptz AS reviewed_at, ''::text AS review_note, count(*) OVER ()::int AS total
+        ${INCOMPLETE(db, school)}
+          ${pattern ? db`AND (${NAME(db)} ILIKE ${pattern} OR u.email ILIKE ${pattern})` : db``}
+        ORDER BY u.created_at, u.id
+        LIMIT ${opts.limit} OFFSET ${opts.offset}`
+    : await db<(Row & { total: number })[]>`
+        SELECT u.id, ${NAME(db)} AS name, u.email, up.avatar_url, COALESCE(cp.sport_specialization, '') AS sport,
+               COALESCE(cp.coaching_position, '') AS position, v.credential_type, v.status, v.submitted_at, v.reviewed_at,
+               v.review_note, count(*) OVER ()::int AS total
+        ${SCOPE(db, school)}
+          ${dbStatus ? db`AND v.status = ${dbStatus}` : db``}
+          ${pattern ? db`AND (${NAME(db)} ILIKE ${pattern} OR u.email ILIKE ${pattern})` : db``}
+        ORDER BY (v.status = 'pending') DESC, CASE WHEN v.status = 'pending' THEN v.submitted_at END ASC,
+                 v.reviewed_at DESC NULLS LAST, u.id
+        LIMIT ${opts.limit} OFFSET ${opts.offset}`;
 
   const tallies = await db<{ status: string; n: number }[]>`SELECT v.status, count(*)::int AS n ${SCOPE(db, school)} GROUP BY v.status`;
-  const counts: Record<RequestStatus, number> = { pending: 0, approved: 0, rejected: 0 };
+  const counts: Record<RequestStatus, number> = { pending: 0, approved: 0, rejected: 0, incomplete: 0 };
   for (const t of tallies) { const s = LABEL[t.status]; if (s) counts[s] += t.n; }
+  const [inc] = await db<{ n: number }[]>`SELECT count(*)::int AS n ${INCOMPLETE(db, school)}`;
+  counts.incomplete = inc?.n ?? 0;
 
   return { school: { name: school.name }, items: rows.map(toRequest), total: rows[0]?.total ?? 0, counts };
 }
@@ -135,7 +161,23 @@ async function loadDetail(db: Db, school: School, coachId: string): Promise<Coac
            v.organization, cp.program_name, cp.competition_level, cp.years_experience, cp.background, cp.certifications,
            v.credential_reference, v.official_email
     ${SCOPE(db, school)} AND u.id = ${coachId}`;
-  if (!r) throw notFound();
+  if (!r) {
+    // Not an application: maybe a coach who signed up for this school and hasn't applied yet.
+    const [n] = await db<(Row & { organization: string; program_name: string; competition_level: string; years_experience: string; background: string })[]>`
+      SELECT u.id, ${NAME(db)} AS name, u.email, up.avatar_url, COALESCE(cp.sport_specialization, '') AS sport,
+             COALESCE(cp.coaching_position, '') AS position, ''::text AS credential_type, 'incomplete'::text AS status,
+             u.created_at AS submitted_at, NULL::timestamptz AS reviewed_at, ''::text AS review_note,
+             cp.organization, COALESCE(cp.program_name, '') AS program_name, COALESCE(cp.competition_level, '') AS competition_level,
+             COALESCE(cp.years_experience, '') AS years_experience, COALESCE(cp.background, '') AS background
+      ${INCOMPLETE(db, school)} AND u.id = ${coachId}`;
+    if (!n) throw notFound();
+    return {
+      ...toRequest(n),
+      organization: n.organization.trim(), programName: n.program_name, competitionLevel: n.competition_level,
+      yearsExperience: n.years_experience, background: n.background,
+      supportingDocuments: [],   // nothing submitted yet
+    };
+  }
   return {
     ...toRequest(r),
     organization: r.organization.trim(), programName: r.program_name, competitionLevel: r.competition_level,
@@ -180,7 +222,10 @@ export async function decideCoachRequest(
   // Scope check first: a request that is not this school's looks the same as one that doesn't exist.
   const current = await loadDetail(db, school, coachId);
   if (current.status !== "pending")
-    throw new RepDashboardError(409, "not_pending", current.status === "approved" ? "This request was already approved." : "This request was already rejected.");
+    throw new RepDashboardError(409, "not_pending",
+      current.status === "approved" ? "This request was already approved."
+      : current.status === "incomplete" ? "This coach hasn't sent an application yet, so there is nothing to approve or reject. You can send a reminder."
+      : "This request was already rejected.");
 
   // One transaction: lock the request, make sure it is STILL pending, then run the shared review step
   // inside it. If an administrator decides at the same moment, whoever locks first wins and the other
@@ -218,4 +263,37 @@ export async function requestMonthBreakdown(db: Db, school: School): Promise<{ m
     out.push(byMonth.get(key) ?? { month: key, pending: 0, approved: 0, rejected: 0 });
   }
   return out;
+}
+
+/** One reminder per coach per day, so a representative can't pester someone. */
+export const REMINDER_COOLDOWN_HOURS = 24;
+
+/**
+ * Nudges a coach who signed up for this school but hasn't applied: a notification (with a link to their
+ * profile, where they request verification). Only for a coach of THIS school who has not applied; one a day.
+ */
+export async function remindCoach(user: PublicUser, coachId: string, meta: Partial<RequestMeta> = {}, dbArg?: Db): Promise<{ remindedAt: string }> {
+  const db = dbArg ?? (await getDb());
+  const school = await resolveSchool(db, user);
+  const coach = await loadDetail(db, school, coachId);
+  if (coach.status !== "incomplete")
+    throw new RepDashboardError(409, "not_incomplete", "This coach has already sent an application, so a reminder isn't needed.");
+
+  const [recent] = await db<{ n: number }[]>`
+    SELECT count(*)::int AS n FROM audit_log
+    WHERE event = 'rep.coach_reminder_sent' AND detail LIKE ${`%"coachId":"${coachId}"%`}
+      AND created_at > now() - make_interval(hours => ${REMINDER_COOLDOWN_HOURS})`;
+  if ((recent?.n ?? 0) > 0)
+    throw new ConnectionError(429, "already_reminded", `${coach.name} was already reminded in the last ${REMINDER_COOLDOWN_HOURS} hours.`);
+
+  const ts = new Date();
+  await db.begin(async (txRaw) => {
+    const tx = txRaw as unknown as Db;
+    await tx`
+      INSERT INTO notifications (id, user_id, category, title, message, link, created_at)
+      VALUES (${randomUUID()}, ${coachId}, 'verification', 'Finish your coach application',
+              ${`${school.name} is waiting for you. Complete your coach profile and send your verification request so ${school.name} can review you.`}, '/profile', ${ts})`;
+    await audit("rep.coach_reminder_sent", { userId: user.id, ...meta, detail: { coachId, school: school.name } }, tx);
+  });
+  return { remindedAt: ts.toISOString() };
 }

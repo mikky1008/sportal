@@ -34,7 +34,7 @@ export interface RepActivity {
 export interface RepDashboardData {
   rep: { name: string; firstName: string; designation: string };
   school: { name: string; location: string; logoUrl: string; registered: boolean };
-  stats: { totalCoaches: number; totalAthletes: number; pendingCoachRequests: number; activeCoaches: number };
+  stats: { totalCoaches: number; totalAthletes: number; pendingCoachRequests: number; activeCoaches: number; notSubmittedCoaches: number };
   pendingRequests: { items: PendingCoachRequest[]; total: number };
   activities: RepActivity[];
   generatedAt: string;

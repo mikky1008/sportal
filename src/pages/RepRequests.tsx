@@ -12,7 +12,7 @@ import { useAuth } from "@/auth/AuthContext";
 import { homePathFor, primaryRole } from "@/lib/roles";
 import { notifyRepHeaderChanged } from "@/lib/repSettingsApi";
 import {
-  REASON_MAX, decideCoachRequest, fetchCoachRequest, fetchCoachRequests,
+  REASON_MAX, decideCoachRequest, fetchCoachRequest, fetchCoachRequests, remindCoach,
   type CoachRequest, type CoachRequestDetail, type CoachRequestList, type RequestFilters, type RequestStatus,
 } from "@/lib/repRequestsApi";
 import { cn } from "@/lib/utils";
@@ -30,18 +30,21 @@ const prettyDate = (iso: string) => {
   try { return format(parseISO(iso), "MMM d, yyyy"); } catch { return iso; }
 };
 
-const STATUS_LABEL: Record<RequestStatus, string> = { pending: "Pending", approved: "Approved", rejected: "Rejected" };
+const STATUS_LABEL: Record<RequestStatus, string> = { pending: "Pending", approved: "Approved", rejected: "Rejected", incomplete: "Not submitted" };
 
 const TABS: { value: RequestFilters["status"]; label: string }[] = [
   { value: "pending", label: "Pending" },
   { value: "approved", label: "Approved" },
   { value: "rejected", label: "Rejected" },
+  { value: "incomplete", label: "Not submitted" },
   { value: "", label: "All" },
 ];
 
 function StatusPill({ status }: { status: RequestStatus }) {
   if (status === "rejected")
     return <span className="inline-flex items-center rounded-full bg-destructive/10 px-2.5 py-0.5 text-xs font-semibold text-destructive">{STATUS_LABEL.rejected}</span>;
+  if (status === "incomplete")
+    return <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-xs font-semibold text-muted-foreground">{STATUS_LABEL.incomplete}</span>;
   return <Pill tone={status === "approved" ? "success" : "warning"}>{STATUS_LABEL[status]}</Pill>;
 }
 
@@ -103,9 +106,10 @@ function ReviewDialog({ coachId, school, onClose, onDecided }: { coachId: string
   const [reason, setReason] = useState("");
   const [reasonError, setReasonError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [reminded, setReminded] = useState(false);
 
   useEffect(() => {
-    setReq(null); setError(""); setStep("view"); setReason(""); setReasonError("");
+    setReq(null); setError(""); setStep("view"); setReason(""); setReasonError(""); setReminded(false);
     if (!coachId) return;
     let live = true;
     void fetchCoachRequest(coachId).then((r) => {
@@ -114,6 +118,16 @@ function ReviewDialog({ coachId, school, onClose, onDecided }: { coachId: string
     });
     return () => { live = false; };
   }, [coachId]);
+
+  const remind = async () => {
+    if (!req) return;
+    setBusy(true);
+    const r = await remindCoach(req.id);
+    setBusy(false);
+    if (!r.ok) { toast.error(r.message); if (r.status === 409) onDecided(); return; }
+    setReminded(true);
+    toast.success(`Reminder sent to ${req.name}`);
+  };
 
   const decide = async (decision: "approve" | "reject") => {
     if (!req) return;
@@ -152,10 +166,16 @@ function ReviewDialog({ coachId, school, onClose, onDecided }: { coachId: string
             <Detail label="Program" value={req.programName} />
             <Detail label="Competition level" value={req.competitionLevel} />
             <Detail label="Years of experience" value={req.yearsExperience} />
-            <Detail label="Application date" value={prettyDate(req.appliedAt)} />
+            <Detail label={req.status === "incomplete" ? "Signed up on" : "Application date"} value={prettyDate(req.appliedAt)} />
             <Detail label="About" value={req.background} />
           </dl>
 
+          {req.status === "incomplete" ? (
+            <section aria-label="Supporting documents" className="mt-4 rounded-2xl border p-4">
+              <h3 className="flex items-center gap-2 font-semibold"><FileText className="h-4 w-4" aria-hidden="true" /> Supporting documents</h3>
+              <p className="mt-1 text-sm text-muted-foreground">Nothing submitted yet. This coach signed up for {school} but hasn't completed their profile or sent a verification request, so there is nothing to review.</p>
+            </section>
+          ) : (
           <section aria-label="Supporting documents" className="mt-4 rounded-2xl border p-4">
             <h3 className="flex items-center gap-2 font-semibold"><FileText className="h-4 w-4" aria-hidden="true" /> Supporting documents</h3>
             <p className="mt-1 text-xs text-muted-foreground">What the coach submitted to prove who they are. Coaches enter these details; they don't upload files.</p>
@@ -163,11 +183,21 @@ function ReviewDialog({ coachId, school, onClose, onDecided }: { coachId: string
               {req.supportingDocuments.map((d) => <Detail key={d.label} label={d.label} value={d.value} />)}
             </dl>
           </section>
+          )}
 
           <section aria-label="Decision" className="mt-4 rounded-2xl border p-4">
-            <h3 className="font-semibold">Decision</h3>
+            <h3 className="font-semibold">{req.status === "incomplete" ? "Waiting for their application" : "Decision"}</h3>
 
-            {req.status !== "pending" && (
+            {req.status === "incomplete" && (
+              <div className="mt-2 text-sm">
+                <p className="text-muted-foreground">You can approve or reject a coach once they send their application. A reminder tells them to finish their profile and request verification. You can remind a coach once a day.</p>
+                <button type="button" className={cn(btn.primary, btn.sm, "mt-3")} disabled={busy || reminded} onClick={() => void remind()}>
+                  {busy ? "Sending…" : reminded ? "Reminder sent" : "Send reminder"}
+                </button>
+              </div>
+            )}
+
+            {req.status !== "pending" && req.status !== "incomplete" && (
               <div className="mt-2 text-sm">
                 <p>
                   {req.status === "approved" ? "Approved" : "Rejected"}{req.decidedAt ? ` on ${prettyDate(req.decidedAt)}` : ""}.
@@ -256,6 +286,7 @@ function useStableFilters(f: RequestFilters): RequestFilters {
 }
 
 function Documents({ r }: { r: CoachRequest }) {
+  if (r.status === "incomplete") return <span className="text-sm text-muted-foreground">Nothing submitted yet</span>;
   return (
     <span className="inline-flex items-center gap-1.5 text-sm">
       <FileText className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
@@ -324,7 +355,7 @@ function RepRequests() {
       {data && (
         <Card title={`Requests (${data.total})`}>
           {data.items.length === 0 ? (
-            <EmptyState message={filtered ? "No requests match your search." : status === "pending" ? "No coach requests are waiting for your school right now." : "Nothing to show here yet."} />
+            <EmptyState message={filtered ? "No requests match your search." : status === "pending" ? "No coach requests are waiting for your school right now." : status === "incomplete" ? "Every coach who signed up for your school has sent an application." : "Nothing to show here yet."} />
           ) : (
             <>
               {/* tablet and up: a table */}
@@ -336,7 +367,7 @@ function RepRequests() {
                       <th scope="col" className="pb-2.5 pr-3 font-medium">Email</th>
                       <th scope="col" className="pb-2.5 pr-3 font-medium">Sport</th>
                       <th scope="col" className="pb-2.5 pr-3 font-medium">Supporting documents</th>
-                      <th scope="col" className="pb-2.5 pr-3 font-medium">Application date</th>
+                      <th scope="col" className="pb-2.5 pr-3 font-medium">{status === "incomplete" ? "Signed up" : "Application date"}</th>
                       <th scope="col" className="pb-2.5 pr-3 font-medium">Status</th>
                       <th scope="col" className="pb-2.5 text-right font-medium">Action</th>
                     </tr>
@@ -379,7 +410,7 @@ function RepRequests() {
                     </div>
                     <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                       <div className="min-w-0 text-xs text-muted-foreground">
-                        <p>{r.sport || "Sport not set"} · Applied {prettyDate(r.appliedAt)}</p>
+                        <p>{r.sport || "Sport not set"} · {r.status === "incomplete" ? "Signed up" : "Applied"} {prettyDate(r.appliedAt)}</p>
                         <p className="mt-0.5"><Documents r={r} /></p>
                       </div>
                       {reviewBtn(r)}

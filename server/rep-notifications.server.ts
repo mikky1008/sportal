@@ -39,3 +39,53 @@ export async function notifyRepsOfCoachRequest(db: Db, coachId: string): Promise
   }
   return rows.length;
 }
+
+/**
+ * Tells a school's representative(s) that a coach SIGNED UP for their school, before any application exists.
+ * Signing up only creates the account; the coach still has to complete their profile and send a verification
+ * request, so this says so. Matched on the school name the coach chose at sign-up (without case or edge
+ * spaces); only approved (or operator-made), active representatives are told. Links to /rep/requests, where
+ * the coach appears under "Not submitted" until they apply.
+ */
+export async function notifyRepsOfCoachSignup(db: Db, coachId: string): Promise<number> {
+  const rows = await db<{ rep_id: string; school: string; coach_name: string; sport: string }[]>`
+    SELECT rp.user_id AS rep_id, rp.university_name AS school,
+           COALESCE(NULLIF(btrim(concat_ws(' ', cup.first_name, cup.last_name)), ''), cu.display_name) AS coach_name,
+           COALESCE(cp.sport_specialization, '') AS sport
+    FROM coach_profiles cp
+    JOIN users cu ON cu.id = cp.user_id
+    LEFT JOIN user_profiles cup ON cup.user_id = cu.id
+    JOIN university_representative_profiles rp ON lower(btrim(rp.university_name)) = lower(btrim(cp.organization))
+    JOIN users ru ON ru.id = rp.user_id AND ru.is_active = TRUE AND ru.deleted_at IS NULL
+    LEFT JOIN rep_applications ra ON ra.user_id = rp.user_id
+    WHERE cp.user_id = ${coachId} AND (ra.status IS NULL OR ra.status = 'approved')`;
+  for (const r of rows) {
+    await notify(
+      r.rep_id,
+      {
+        category: "verification",
+        title: "A coach signed up for your school",
+        message: `${r.coach_name}${r.sport ? ` (${r.sport})` : ""} signed up as a coach for ${r.school.trim()}. They haven't sent their application yet; you'll be asked to review it once they do.`,
+        link: "/rep/requests",
+      },
+      db,
+    );
+  }
+  return rows.length;
+}
+
+/** Tells a coach who just signed up what to do next (their profile page, where they request verification). */
+export async function notifyCoachNextStep(db: Db, coachId: string): Promise<void> {
+  const [c] = await db<{ school: string }[]>`SELECT organization AS school FROM coach_profiles WHERE user_id = ${coachId}`;
+  if (!c) return;
+  await notify(
+    coachId,
+    {
+      category: "verification",
+      title: "Finish your coach application",
+      message: `Welcome to Sportal! To be verified at ${c.school.trim()}, complete your coach profile and send your verification request. The school's representative can review it once you do.`,
+      link: "/profile",
+    },
+    db,
+  );
+}

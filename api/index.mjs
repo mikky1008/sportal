@@ -33690,6 +33690,46 @@ async function notifyRepsOfCoachRequest(db, coachId) {
   }
   return rows.length;
 }
+async function notifyRepsOfCoachSignup(db, coachId) {
+  const rows = await db`
+    SELECT rp.user_id AS rep_id, rp.university_name AS school,
+           COALESCE(NULLIF(btrim(concat_ws(' ', cup.first_name, cup.last_name)), ''), cu.display_name) AS coach_name,
+           COALESCE(cp.sport_specialization, '') AS sport
+    FROM coach_profiles cp
+    JOIN users cu ON cu.id = cp.user_id
+    LEFT JOIN user_profiles cup ON cup.user_id = cu.id
+    JOIN university_representative_profiles rp ON lower(btrim(rp.university_name)) = lower(btrim(cp.organization))
+    JOIN users ru ON ru.id = rp.user_id AND ru.is_active = TRUE AND ru.deleted_at IS NULL
+    LEFT JOIN rep_applications ra ON ra.user_id = rp.user_id
+    WHERE cp.user_id = ${coachId} AND (ra.status IS NULL OR ra.status = 'approved')`;
+  for (const r of rows) {
+    await notify(
+      r.rep_id,
+      {
+        category: "verification",
+        title: "A coach signed up for your school",
+        message: `${r.coach_name}${r.sport ? ` (${r.sport})` : ""} signed up as a coach for ${r.school.trim()}. They haven't sent their application yet; you'll be asked to review it once they do.`,
+        link: "/rep/requests"
+      },
+      db
+    );
+  }
+  return rows.length;
+}
+async function notifyCoachNextStep(db, coachId) {
+  const [c2] = await db`SELECT organization AS school FROM coach_profiles WHERE user_id = ${coachId}`;
+  if (!c2) return;
+  await notify(
+    coachId,
+    {
+      category: "verification",
+      title: "Finish your coach application",
+      message: `Welcome to Sportal! To be verified at ${c2.school.trim()}, complete your coach profile and send your verification request. The school's representative can review it once you do.`,
+      link: "/profile"
+    },
+    db
+  );
+}
 
 // src/lib/coachProfileRules.ts
 var ORGANIZATION_TYPES = ["University", "College", "High school", "Club / Academy", "Other"];
@@ -35832,7 +35872,12 @@ async function loadStats(db, school) {
     JOIN coach_profiles cp ON cp.user_id = v.coach_id
     WHERE v.status = 'pending' AND lower(btrim(v.organization)) = ${school.key}
       AND cp.organization_type IN ('University', 'College')`;
-  if (!uid) return { totalCoaches: 0, activeCoaches: 0, totalAthletes: 0, pendingCoachRequests: pending?.n ?? 0 };
+  const [notSubmitted] = await db`
+    SELECT count(*)::int AS n FROM coach_profiles cp
+    JOIN users u ON u.id = cp.user_id AND u.is_active = TRUE AND u.deleted_at IS NULL
+    WHERE lower(btrim(cp.organization)) = ${school.key} AND NOT EXISTS (SELECT 1 FROM coach_verifications v WHERE v.coach_id = cp.user_id)`;
+  const notSubmittedCoaches = notSubmitted?.n ?? 0;
+  if (!uid) return { totalCoaches: 0, activeCoaches: 0, totalAthletes: 0, pendingCoachRequests: pending?.n ?? 0, notSubmittedCoaches };
   const [coaches] = await db`
     SELECT count(*)::int AS total, (count(*) FILTER (WHERE u.is_active))::int AS active
     FROM coach_profiles cp
@@ -35853,7 +35898,8 @@ async function loadStats(db, school) {
     totalCoaches: coaches?.total ?? 0,
     activeCoaches: coaches?.active ?? 0,
     totalAthletes: athletes?.n ?? 0,
-    pendingCoachRequests: pending?.n ?? 0
+    pendingCoachRequests: pending?.n ?? 0,
+    notSubmittedCoaches
   };
 }
 async function loadPending(db, school) {
@@ -36226,14 +36272,15 @@ async function coachSportBreakdown(db, school) {
 }
 
 // server/rep-coach-requests.server.ts
+import { randomUUID as randomUUID13 } from "node:crypto";
 var REQUESTS_PAGE_DEFAULT = 20;
 var REQUESTS_PAGE_MAX = 50;
 var SEARCH_MAX5 = 80;
-var REQUEST_STATUSES = ["pending", "approved", "rejected"];
+var REQUEST_STATUSES = ["pending", "approved", "rejected", "incomplete"];
 var likeLiteral7 = (t) => t.replace(/[\\%_]/g, (c2) => `\\${c2}`);
 var safePhoto4 = (url) => url && /^https?:\/\//i.test(url) && url.length <= 500 ? url : null;
 var notFound6 = () => new RepDashboardError(404, "request_not_found", "That request could not be found at your school.");
-var LABEL3 = { pending: "pending", verified: "approved", rejected: "rejected" };
+var LABEL3 = { pending: "pending", verified: "approved", rejected: "rejected", incomplete: "incomplete" };
 var SCOPE3 = (db, school) => db`
   FROM coach_verifications v
   JOIN users u ON u.id = v.coach_id AND u.deleted_at IS NULL
@@ -36241,6 +36288,12 @@ var SCOPE3 = (db, school) => db`
   LEFT JOIN user_profiles up ON up.user_id = v.coach_id
   WHERE lower(btrim(v.organization)) = ${school.key} AND cp.organization_type IN ('University', 'College')
     AND (v.status <> 'pending' OR u.is_active = TRUE)`;
+var INCOMPLETE = (db, school) => db`
+  FROM coach_profiles cp
+  JOIN users u ON u.id = cp.user_id AND u.is_active = TRUE AND u.deleted_at IS NULL
+  LEFT JOIN user_profiles up ON up.user_id = cp.user_id
+  WHERE lower(btrim(cp.organization)) = ${school.key}
+    AND NOT EXISTS (SELECT 1 FROM coach_verifications v WHERE v.coach_id = cp.user_id)`;
 var NAME3 = (db) => db`COALESCE(NULLIF(btrim(concat_ws(' ', up.first_name, up.last_name)), ''), u.display_name)`;
 var toRequest = (r) => {
   const status = LABEL3[r.status] ?? "pending";
@@ -36264,22 +36317,31 @@ async function listCoachRequests(user, opts, dbArg) {
   const needle = opts.q?.trim().slice(0, SEARCH_MAX5);
   const pattern = needle ? `%${likeLiteral7(needle)}%` : null;
   const dbStatus = opts.status === "approved" ? "verified" : opts.status;
-  const rows = await db`
-    SELECT u.id, ${NAME3(db)} AS name, u.email, up.avatar_url, COALESCE(cp.sport_specialization, '') AS sport,
-           COALESCE(cp.coaching_position, '') AS position, v.credential_type, v.status, v.submitted_at, v.reviewed_at,
-           v.review_note, count(*) OVER ()::int AS total
-    ${SCOPE3(db, school)}
-      ${dbStatus ? db`AND v.status = ${dbStatus}` : db``}
-      ${pattern ? db`AND (${NAME3(db)} ILIKE ${pattern} OR u.email ILIKE ${pattern})` : db``}
-    ORDER BY (v.status = 'pending') DESC, CASE WHEN v.status = 'pending' THEN v.submitted_at END ASC,
-             v.reviewed_at DESC NULLS LAST, u.id
-    LIMIT ${opts.limit} OFFSET ${opts.offset}`;
+  const rows = opts.status === "incomplete" ? await db`
+        SELECT u.id, ${NAME3(db)} AS name, u.email, up.avatar_url, COALESCE(cp.sport_specialization, '') AS sport,
+               COALESCE(cp.coaching_position, '') AS position, ''::text AS credential_type, 'incomplete'::text AS status,
+               u.created_at AS submitted_at, NULL::timestamptz AS reviewed_at, ''::text AS review_note, count(*) OVER ()::int AS total
+        ${INCOMPLETE(db, school)}
+          ${pattern ? db`AND (${NAME3(db)} ILIKE ${pattern} OR u.email ILIKE ${pattern})` : db``}
+        ORDER BY u.created_at, u.id
+        LIMIT ${opts.limit} OFFSET ${opts.offset}` : await db`
+        SELECT u.id, ${NAME3(db)} AS name, u.email, up.avatar_url, COALESCE(cp.sport_specialization, '') AS sport,
+               COALESCE(cp.coaching_position, '') AS position, v.credential_type, v.status, v.submitted_at, v.reviewed_at,
+               v.review_note, count(*) OVER ()::int AS total
+        ${SCOPE3(db, school)}
+          ${dbStatus ? db`AND v.status = ${dbStatus}` : db``}
+          ${pattern ? db`AND (${NAME3(db)} ILIKE ${pattern} OR u.email ILIKE ${pattern})` : db``}
+        ORDER BY (v.status = 'pending') DESC, CASE WHEN v.status = 'pending' THEN v.submitted_at END ASC,
+                 v.reviewed_at DESC NULLS LAST, u.id
+        LIMIT ${opts.limit} OFFSET ${opts.offset}`;
   const tallies = await db`SELECT v.status, count(*)::int AS n ${SCOPE3(db, school)} GROUP BY v.status`;
-  const counts = { pending: 0, approved: 0, rejected: 0 };
+  const counts = { pending: 0, approved: 0, rejected: 0, incomplete: 0 };
   for (const t of tallies) {
     const s = LABEL3[t.status];
     if (s) counts[s] += t.n;
   }
+  const [inc] = await db`SELECT count(*)::int AS n ${INCOMPLETE(db, school)}`;
+  counts.incomplete = inc?.n ?? 0;
   return { school: { name: school.name }, items: rows.map(toRequest), total: rows[0]?.total ?? 0, counts };
 }
 async function loadDetail2(db, school, coachId) {
@@ -36289,7 +36351,26 @@ async function loadDetail2(db, school, coachId) {
            v.organization, cp.program_name, cp.competition_level, cp.years_experience, cp.background, cp.certifications,
            v.credential_reference, v.official_email
     ${SCOPE3(db, school)} AND u.id = ${coachId}`;
-  if (!r) throw notFound6();
+  if (!r) {
+    const [n] = await db`
+      SELECT u.id, ${NAME3(db)} AS name, u.email, up.avatar_url, COALESCE(cp.sport_specialization, '') AS sport,
+             COALESCE(cp.coaching_position, '') AS position, ''::text AS credential_type, 'incomplete'::text AS status,
+             u.created_at AS submitted_at, NULL::timestamptz AS reviewed_at, ''::text AS review_note,
+             cp.organization, COALESCE(cp.program_name, '') AS program_name, COALESCE(cp.competition_level, '') AS competition_level,
+             COALESCE(cp.years_experience, '') AS years_experience, COALESCE(cp.background, '') AS background
+      ${INCOMPLETE(db, school)} AND u.id = ${coachId}`;
+    if (!n) throw notFound6();
+    return {
+      ...toRequest(n),
+      organization: n.organization.trim(),
+      programName: n.program_name,
+      competitionLevel: n.competition_level,
+      yearsExperience: n.years_experience,
+      background: n.background,
+      supportingDocuments: []
+      // nothing submitted yet
+    };
+  }
   return {
     ...toRequest(r),
     organization: r.organization.trim(),
@@ -36322,7 +36403,11 @@ async function decideCoachRequest(user, coachId, decision, rawReason, meta = {},
     });
   const current = await loadDetail2(db, school, coachId);
   if (current.status !== "pending")
-    throw new RepDashboardError(409, "not_pending", current.status === "approved" ? "This request was already approved." : "This request was already rejected.");
+    throw new RepDashboardError(
+      409,
+      "not_pending",
+      current.status === "approved" ? "This request was already approved." : current.status === "incomplete" ? "This coach hasn't sent an application yet, so there is nothing to approve or reject. You can send a reminder." : "This request was already rejected."
+    );
   await db.begin(async (tx) => {
     const [row] = await tx`SELECT status FROM coach_verifications WHERE coach_id = ${coachId} FOR UPDATE`;
     if (!row || row.status !== "pending")
@@ -36355,6 +36440,30 @@ async function requestMonthBreakdown(db, school) {
   }
   return out;
 }
+var REMINDER_COOLDOWN_HOURS = 24;
+async function remindCoach(user, coachId, meta = {}, dbArg) {
+  const db = dbArg ?? await getDb();
+  const school = await resolveSchool(db, user);
+  const coach = await loadDetail2(db, school, coachId);
+  if (coach.status !== "incomplete")
+    throw new RepDashboardError(409, "not_incomplete", "This coach has already sent an application, so a reminder isn't needed.");
+  const [recent] = await db`
+    SELECT count(*)::int AS n FROM audit_log
+    WHERE event = 'rep.coach_reminder_sent' AND detail LIKE ${`%"coachId":"${coachId}"%`}
+      AND created_at > now() - make_interval(hours => ${REMINDER_COOLDOWN_HOURS})`;
+  if ((recent?.n ?? 0) > 0)
+    throw new ConnectionError(429, "already_reminded", `${coach.name} was already reminded in the last ${REMINDER_COOLDOWN_HOURS} hours.`);
+  const ts = /* @__PURE__ */ new Date();
+  await db.begin(async (txRaw) => {
+    const tx = txRaw;
+    await tx`
+      INSERT INTO notifications (id, user_id, category, title, message, link, created_at)
+      VALUES (${randomUUID13()}, ${coachId}, 'verification', 'Finish your coach application',
+              ${`${school.name} is waiting for you. Complete your coach profile and send your verification request so ${school.name} can review you.`}, '/profile', ${ts})`;
+    await audit("rep.coach_reminder_sent", { userId: user.id, ...meta, detail: { coachId, school: school.name } }, tx);
+  });
+  return { remindedAt: ts.toISOString() };
+}
 
 // server/rep-charts.server.ts
 async function getRepCharts(user, dbArg) {
@@ -36383,7 +36492,7 @@ var day = (iso) => iso ? iso.slice(0, 10) : "";
 var slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "school";
 var fileName = (kind, school) => `sportal-${kind}-${slug(school)}-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.csv`;
 var COACH_STATUS = { affiliated: "Affiliated", pending: "Pending", removed: "Removed" };
-var REQUEST_STATUS = { pending: "Pending", approved: "Approved", rejected: "Rejected" };
+var REQUEST_STATUS = { pending: "Pending", approved: "Approved", rejected: "Rejected", incomplete: "Not submitted" };
 async function exportRepData(user, kind, f2, meta = {}, db) {
   const allowed = kind === "coaches" ? AFFILIATION_STATUSES : kind === "athletes" ? VERIFICATION_STATUSES : REQUEST_STATUSES;
   if (f2.status && !allowed.includes(f2.status)) throw new RepDashboardError(400, "validation", `status must be one of: ${allowed.join(", ")}.`);
@@ -36721,7 +36830,7 @@ function allowUniversitySearch(ip, now6 = Date.now()) {
 }
 
 // server/rep-messages.server.ts
-import { randomUUID as randomUUID13 } from "node:crypto";
+import { randomUUID as randomUUID14 } from "node:crypto";
 var AUDIENCES = ["coaches", "athletes", "verified_athletes", "everyone", "person"];
 var SUBJECT_MIN = 3;
 var SUBJECT_MAX = 100;
@@ -36815,7 +36924,7 @@ async function sendRepMessage(user, input, meta = {}, dbArg) {
   if ((sent?.day ?? 0) >= DAILY_LIMIT2) throw new ConnectionError(429, "rate_limited", `You can send ${DAILY_LIMIT2} messages a day. Try again tomorrow.`);
   const r = await resolveAudience(user, input, db);
   if (r.ids.length === 0) throw bad3("No one matches that choice, so nothing was sent.", { audience: "No one matches that choice." });
-  const id = randomUUID13();
+  const id = randomUUID14();
   const ts = /* @__PURE__ */ new Date();
   const from = `From ${oneLine(user.displayName)}${school.designation ? `, ${oneLine(school.designation)}` : ""}, ${oneLine(school.name)}`;
   const message = `${from}
@@ -36826,7 +36935,7 @@ ${body}`;
     await tx`
       INSERT INTO rep_messages (id, sender_id, school_key, audience, sport, recipient_id, recipient_name, subject, body, recipient_count, created_at)
       VALUES (${id}, ${user.id}, ${school.key}, ${r.audience}, ${r.sport}, ${r.recipientId}, ${r.recipientName}, ${subject}, ${body}, ${r.ids.length}, ${ts})`;
-    const rows = r.ids.map((uid) => ({ id: randomUUID13(), user_id: uid, category: "system", title: subject, message, link: null, created_at: ts }));
+    const rows = r.ids.map((uid) => ({ id: randomUUID14(), user_id: uid, category: "system", title: subject, message, link: null, created_at: ts }));
     await tx`INSERT INTO notifications ${tx(rows, "id", "user_id", "category", "title", "message", "link", "created_at")}`;
     await audit("rep.message_sent", { userId: user.id, ...meta, detail: { audience: r.audience, sport: r.sport, recipients: r.ids.length } }, tx);
   });
@@ -36989,7 +37098,7 @@ async function getRepHeader(actor, dbArg) {
 }
 
 // server/coach-applications.server.ts
-import { randomUUID as randomUUID14 } from "node:crypto";
+import { randomUUID as randomUUID15 } from "node:crypto";
 var APPLICATIONS_PER_DAY = 10;
 var CoachApplicationError = class extends Error {
   httpStatus;
@@ -37012,7 +37121,7 @@ async function applyToCoach(user, coachId, meta = {}, dbArg) {
   if (!coach || !user.id || coachId === user.id || !await isVerifiedCoach(db, coachId)) throw notFound7();
   const [connected] = await db`SELECT 1 FROM coach_athlete_connections WHERE coach_id = ${coachId} AND athlete_id = ${user.id} AND status = 'accepted'`;
   if (connected) throw new CoachApplicationError(409, "already_connected", "You are already connected to this coach.");
-  const id = randomUUID14();
+  const id = randomUUID15();
   const now6 = /* @__PURE__ */ new Date();
   const [today] = await db`
     SELECT count(*)::int AS n FROM athlete_applications WHERE athlete_id = ${user.id} AND created_at > ${new Date(now6.getTime() - 24 * 60 * 60 * 1e3)}`;
@@ -37074,7 +37183,7 @@ async function setApplicationStatus2(user, applicationId, status, dbArg) {
 }
 
 // server/recruiting.server.ts
-import { randomUUID as randomUUID15 } from "node:crypto";
+import { randomUUID as randomUUID16 } from "node:crypto";
 var DIRECTORY_LIMIT_DEFAULT = 60;
 var DIRECTORY_LIMIT_MAX = 100;
 var INQUIRIES_PER_DAY = 25;
@@ -37284,7 +37393,7 @@ async function sendInquiry(user, input, meta = {}, dbArg) {
     WHERE u.id = ${input.athleteId} AND r.name = ${ATHLETE_ROLE} AND u.is_active = TRUE AND u.deleted_at IS NULL`;
   if (!athlete) throw notFound8();
   if (!athlete.visible) throw new RecruitingError(409, "showcase_hidden", "This athlete has hidden their showcase, so new inquiries are closed.");
-  const id = randomUUID15();
+  const id = randomUUID16();
   const now6 = /* @__PURE__ */ new Date();
   await db.begin(async (tx) => {
     await tx`SELECT pg_advisory_xact_lock(hashtext(${`inq:${user.id}:${input.athleteId}`}))`;
@@ -37357,7 +37466,7 @@ async function sendMessage(user, inquiryId, rawBody, dbArg) {
   if (body.length > MESSAGE_MAX2) throw new RecruitingError(400, "validation", `Messages are limited to ${MESSAGE_MAX2} characters.`);
   if (inq.status !== "accepted" && inq.status !== "replied")
     throw new RecruitingError(409, "not_accepted", "Messaging unlocks only after the athlete accepts the inquiry.");
-  const id = randomUUID15();
+  const id = randomUUID16();
   const now6 = /* @__PURE__ */ new Date();
   await db.begin(async (tx) => {
     await tx`
@@ -37594,7 +37703,7 @@ async function handleSchoolVerification(req, path) {
     if (isList) {
       const status = new URL(req.url).searchParams.get("status");
       if (status && !APPLICATION_STATUSES.includes(status))
-        return send(req, 400, { ok: false, code: "validation", message: "status must be pending, approved or rejected." });
+        return send(req, 400, { ok: false, code: "validation", message: "status must be pending, approved, rejected or incomplete." });
       const result = await listApplications(user, { ...status ? { status } : {}, ...pagingFrom(req) });
       return send(req, 200, { ok: true, ...result });
     }
@@ -37702,11 +37811,12 @@ async function handleRegister(req) {
   const input = parsed.data;
   const meta = requestMeta(req);
   let username = "";
+  let createdUser = null;
   try {
     if (!await signupAllowed(meta.ip))
       return send(req, 200, { ok: false, code: "rate_limited", message: "Too many sign ups from this connection. Try again in an hour." });
     username = await deriveUsername(input.email);
-    await createUser({
+    createdUser = await createUser({
       email: input.email,
       username,
       password: input.password,
@@ -37725,6 +37835,15 @@ async function handleRegister(req) {
     }
     console.error("[api] sign up failed unexpectedly:", err instanceof Error ? err.message : "unknown error");
     return send(req, 200, { ok: false, code: "server_error", message: "Something went wrong. Please try again." });
+  }
+  if (input.accountType === "coach" && createdUser) {
+    try {
+      const db = await getDb();
+      await notifyRepsOfCoachSignup(db, createdUser.id);
+      await notifyCoachNextStep(db, createdUser.id);
+    } catch (err) {
+      console.error("[api] sign-up notifications failed:", err instanceof Error ? err.message : "unknown error");
+    }
   }
   if (input.accountType === "university_representative")
     return send(req, 200, {
@@ -38043,11 +38162,12 @@ async function handleRepCoaches(req, path) {
   }
 }
 async function handleRepCoachRequests(req, path) {
-  const one2 = /^\/api\/rep\/coach-requests\/([^/]+)(\/decision)?$/.exec(path);
+  const one2 = /^\/api\/rep\/coach-requests\/([^/]+)(\/decision|\/remind)?$/.exec(path);
   const isList = req.method === "GET" && path === "/api/rep/coach-requests";
   const isOne = req.method === "GET" && !!one2 && !one2[2];
-  const isDecision = req.method === "POST" && !!one2 && !!one2[2];
-  if (!isList && !isOne && !isDecision) return null;
+  const isDecision = req.method === "POST" && !!one2 && one2[2] === "/decision";
+  const isRemind = req.method === "POST" && !!one2 && one2[2] === "/remind";
+  if (!isList && !isOne && !isDecision && !isRemind) return null;
   const user = await getUserBySessionToken(bearer(req));
   if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
   try {
@@ -38070,6 +38190,7 @@ async function handleRepCoachRequests(req, path) {
     }
     const id = decodeURIComponent(one2[1] ?? "").slice(0, 100);
     if (isOne) return send(req, 200, { ok: true, request: await getCoachRequest(user, id) });
+    if (isRemind) return send(req, 200, { ok: true, ...await remindCoach(user, id, requestMeta(req)) });
     const body = await readJson(req);
     const parsed = external_exports.object({ decision: external_exports.enum(["approve", "reject"]), reason: external_exports.unknown().optional() }).safeParse(body);
     if (!parsed.success) return send(req, 400, { ok: false, code: "validation", message: 'Send { decision: "approve" | "reject", reason }.' });

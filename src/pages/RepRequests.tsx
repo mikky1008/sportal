@@ -290,7 +290,7 @@ function Documents({ r }: { r: CoachRequest }) {
   return (
     <span className="inline-flex items-center gap-1.5 text-sm">
       <FileText className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-      <span className="truncate">{r.credentialType || "Credentials"}</span>
+      <span className="truncate">{r.credentialType || "Request sent"}</span>
     </span>
   );
 }

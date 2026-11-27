@@ -154,7 +154,6 @@ function CoachDialog({ coachId, school, onClose, onChanged }: { coachId: string 
             <Detail label="Program" value={coach.programName} />
             <Detail label="Competition level" value={coach.competitionLevel} />
             <Detail label="Years of experience" value={coach.yearsExperience} />
-            <Detail label="Credential type" value={coach.credentialType} />
             <Detail label="Connected athletes" value={String(coach.athletesConnected)} />
             <Detail label={coach.verifiedAt ? "Verified on" : "Applied on"} value={prettyDate(coach.verifiedAt ?? coach.appliedAt)} />
             <Detail label="About" value={coach.background} />

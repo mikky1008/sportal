@@ -71,8 +71,8 @@ export async function exportRepData(user: PublicUser, kind: ExportKind, f: Expor
     const r = await listCoachRequests(user, { q: f.q, status: (f.status || undefined) as RequestStatus | undefined, ...page }, db);
     school = r.school.name;
     out = {
-      header: ["Applicant", "Email", "Sport", "Position", "Credential type", "Application date", "Status", "Decision date", "Reason given"],
-      rows: r.items.map((c) => [c.name, c.email, c.sport, c.position, c.credentialType, day(c.appliedAt), REQUEST_STATUS[c.status], day(c.decidedAt), c.reason]),
+      header: ["Applicant", "Email", "Sport", "Position", "Application date", "Status", "Decision date", "Reason given"],
+      rows: r.items.map((c) => [c.name, c.email, c.sport, c.position, day(c.appliedAt), REQUEST_STATUS[c.status], day(c.decidedAt), c.reason]),
     };
   }
 

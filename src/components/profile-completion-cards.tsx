@@ -88,9 +88,9 @@ function VerificationStatus({ verification }: { verification: CoachVerification 
     setSending(true);
     try {
       await coachProfileStore.requestVerification();
-      toast.success("Verification request sent", { description: "Sportal's team will review your details." });
+      toast.success("Verification request sent", { description: "Your school's representative will review it." });
     } catch (err) {
-      if (err instanceof CoachValidationError) toast.error("Complete the Verification Information in your profile first.");
+      if (err instanceof CoachValidationError) toast.error("Enter your organization name in your profile first.");
       else toast.error(err instanceof Error ? err.message : "Couldn't send the request. Please try again.");
     } finally {
       setSending(false);
@@ -114,7 +114,7 @@ function VerificationStatus({ verification }: { verification: CoachVerification 
         <p role="note" className="rounded-xl bg-muted px-3 py-2 text-xs text-foreground">Reviewer's note: {verification.note}</p>
       )}
       <span className="text-xs text-muted-foreground">
-        Reviewed separately by Sportal using the Verification Information in your profile. It doesn't change your profile completion.
+        Reviewed by the representative of the school you picked at sign-up. It doesn't change your profile completion.
       </span>
     </div>
   );

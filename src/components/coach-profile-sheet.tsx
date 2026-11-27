@@ -4,7 +4,7 @@ import { Select, btn } from "@/components/common";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { sports } from "@/lib/sports";
 import {
-  COACH_LIMITS, COMPETITION_LEVELS, CREDENTIAL_TYPES, CoachValidationError, ORGANIZATION_TYPES, POSITION_TITLES,
+  COACH_LIMITS, COMPETITION_LEVELS, CoachValidationError, ORGANIZATION_TYPES, POSITION_TITLES,
   coachProfileStore, hasCoachErrors, useCoachProfile, validateCoach, type CoachErrors, type CoachProfile,
 } from "@/lib/coachProfileStore";
 import { computeCoachCompletion, type CoachSectionId } from "@/lib/profileCompletion";
@@ -108,11 +108,6 @@ function CoachForm({ onDone }: { onDone: () => void }) {
           </span>
         </label>
         {text("certifications", "Certifications (optional)", { placeholder: "e.g. FIBA Level 1" })}
-      </Group>
-      <Group id="verification" title="Verification Information" hint="Sportal's team uses this to review your organization. Reviewing is a separate step — filling this in completes your profile, it doesn't verify you.">
-        {text("officialEmail", "Official organization email", { type: "email", inputMode: "email", placeholder: "coach@organization.edu" })}
-        {pick("credentialType", "Credential type", CREDENTIAL_TYPES, "Choose a credential")}
-        {text("credentialReference", "Credential or ID reference", { placeholder: "License or ID number" })}
       </Group>
       <div className="flex flex-wrap items-center gap-3">
         <button type="submit" className={btn.primary} disabled={saving}>{saving ? "Saving…" : "Save changes"}</button>

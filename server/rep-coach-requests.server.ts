@@ -182,12 +182,13 @@ async function loadDetail(db: Db, school: School, coachId: string): Promise<Coac
     ...toRequest(r),
     organization: r.organization.trim(), programName: r.program_name, competitionLevel: r.competition_level,
     yearsExperience: r.years_experience, background: r.background,
+    // Coaches no longer submit credentials; requests sent before that change may still carry them.
     supportingDocuments: [
       { label: "Credential type", value: r.credential_type },
       { label: "Credential reference (ID / license no.)", value: r.credential_reference },
       { label: "Official school email", value: r.official_email },
       { label: "Certifications", value: r.certifications },
-    ],
+    ].filter((d) => d.label === "Certifications" || d.value.trim() !== ""),
   };
 }
 

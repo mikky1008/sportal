@@ -161,10 +161,10 @@ export function computeAthleteCompletion(
 
 // ---------- coach ----------
 
-export type CoachSectionId = "basic" | "organization" | "position" | "sport" | "background" | "verification";
+export type CoachSectionId = "basic" | "organization" | "position" | "sport" | "background";
 
 export const COACH_SECTION_IDS: readonly CoachSectionId[] = [
-  "basic", "organization", "position", "sport", "background", "verification",
+  "basic", "organization", "position", "sport", "background",
 ];
 
 /** Note: there is deliberately no verification-status parameter. See the top of this file. */
@@ -177,7 +177,7 @@ export function computeCoachCompletion(coach: CoachProfile): CompletionResult {
   });
   return build([
     {
-      id: "basic", label: "Basic Information", weight: 15,
+      id: "basic", label: "Basic Information", weight: 20,
       fields: [ok("firstName", "First name"), ok("lastName", "Last name"), ok("email", "Email")],
     },
     {
@@ -185,20 +185,16 @@ export function computeCoachCompletion(coach: CoachProfile): CompletionResult {
       fields: [ok("organizationName", "Organization name"), ok("organizationType", "Organization type"), ok("organizationLocation", "Location")],
     },
     {
-      id: "position", label: "Coaching Position", weight: 15,
+      id: "position", label: "Coaching Position", weight: 20,
       fields: [ok("positionTitle", "Position"), ok("programName", "Team or program")],
     },
     {
-      id: "sport", label: "Sport Specialization", weight: 15,
+      id: "sport", label: "Sport Specialization", weight: 20,
       fields: [ok("primarySport", "Primary sport"), ok("competitionLevel", "Competition level")],
     },
     {
-      id: "background", label: "Professional Background", weight: 15,
+      id: "background", label: "Professional Background", weight: 20,
       fields: [ok("yearsExperience", "Years of experience"), ok("background", "Background summary")],
-    },
-    {
-      id: "verification", label: "Verification Information", weight: 20,
-      fields: [ok("officialEmail", "Official organization email"), ok("credentialType", "Credential type"), ok("credentialReference", "Credential reference")],
     },
   ]);
 }

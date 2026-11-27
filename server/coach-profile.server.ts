@@ -96,17 +96,13 @@ interface ProfileRow {
   years_experience: string | null;
   background: string | null;
   certifications: string | null;
-  official_email: string | null;
-  credential_type: string | null;
-  credential_reference: string | null;
 }
 
 async function loadProfile(db: Db, coachId: string): Promise<CoachProfile> {
   const [r] = await db<ProfileRow[]>`
     SELECT up.first_name, up.last_name, u.email,
            cp.organization, cp.coaching_position, cp.sport_specialization, cp.organization_type, cp.organization_location,
-           cp.program_name, cp.competition_level, cp.years_experience, cp.background, cp.certifications,
-           cp.official_email, cp.credential_type, cp.credential_reference
+           cp.program_name, cp.competition_level, cp.years_experience, cp.background, cp.certifications
     FROM users u
     LEFT JOIN user_profiles up ON up.user_id = u.id
     LEFT JOIN coach_profiles cp ON cp.user_id = u.id
@@ -126,9 +122,6 @@ async function loadProfile(db: Db, coachId: string): Promise<CoachProfile> {
     yearsExperience: r.years_experience ?? "",
     background: r.background ?? "",
     certifications: r.certifications ?? "",
-    officialEmail: r.official_email ?? "",
-    credentialType: r.credential_type ?? "",
-    credentialReference: r.credential_reference ?? "",
   };
 }
 
@@ -184,20 +177,16 @@ export async function saveCoachProfile(
     await tx`
       INSERT INTO coach_profiles
         (user_id, organization, coaching_position, sport_specialization, organization_type, organization_location,
-         program_name, competition_level, years_experience, background, certifications,
-         official_email, credential_type, credential_reference, created_at, updated_at)
+         program_name, competition_level, years_experience, background, certifications, created_at, updated_at)
       VALUES
         (${actor.id}, ${p.organizationName}, ${p.positionTitle}, ${p.primarySport}, ${p.organizationType}, ${p.organizationLocation},
-         ${p.programName}, ${p.competitionLevel}, ${p.yearsExperience}, ${p.background}, ${p.certifications},
-         ${p.officialEmail}, ${p.credentialType}, ${p.credentialReference}, ${ts}, ${ts})
+         ${p.programName}, ${p.competitionLevel}, ${p.yearsExperience}, ${p.background}, ${p.certifications}, ${ts}, ${ts})
       ON CONFLICT (user_id) DO UPDATE SET
         organization = EXCLUDED.organization, coaching_position = EXCLUDED.coaching_position,
         sport_specialization = EXCLUDED.sport_specialization, organization_type = EXCLUDED.organization_type,
         organization_location = EXCLUDED.organization_location, program_name = EXCLUDED.program_name,
         competition_level = EXCLUDED.competition_level, years_experience = EXCLUDED.years_experience,
-        background = EXCLUDED.background, certifications = EXCLUDED.certifications,
-        official_email = EXCLUDED.official_email, credential_type = EXCLUDED.credential_type,
-        credential_reference = EXCLUDED.credential_reference, updated_at = EXCLUDED.updated_at`;
+        background = EXCLUDED.background, certifications = EXCLUDED.certifications, updated_at = EXCLUDED.updated_at`;
   });
   await audit("coach_profile.updated", { userId: actor.id, ...meta }, db);
   return getCoachProfile(actor, db);
@@ -213,13 +202,11 @@ export async function requestVerification(actor: PublicUser, meta: Partial<Reque
 
   const errors = validateCoach(profile);
   const missing: Record<string, string> = {};
+  // The school is the one thing the representative needs: it decides which representative gets the request.
   if (!profile.organizationName) missing["organizationName"] = "Enter your organization name.";
-  if (!profile.officialEmail) missing["officialEmail"] = "Enter your official organization email.";
-  if (!profile.credentialType) missing["credentialType"] = "Choose a credential type.";
-  if (!profile.credentialReference) missing["credentialReference"] = "Enter your credential or ID reference.";
   const fieldErrors: Record<string, string> = { ...(errors as Record<string, string>), ...missing };
-  if (Object.keys(missing).length > 0 || errors.officialEmail || errors.credentialReference || errors.credentialType)
-    throw fail(fieldErrors, "Complete the Verification Information before requesting verification.");
+  if (Object.keys(missing).length > 0 || errors.organizationName)
+    throw fail(fieldErrors, "Enter your organization name before requesting verification.");
 
   if (await isVerifiedCoach(db, actor.id))
     throw new ConnectionError(409, "already_verified", "Your account is already verified.");
@@ -230,11 +217,9 @@ export async function requestVerification(actor: PublicUser, meta: Partial<Reque
   const [row] = await db<{ coach_id: string }[]>`
     INSERT INTO coach_verifications
       (coach_id, status, organization, official_email, credential_type, credential_reference, submitted_at, updated_at)
-    VALUES (${actor.id}, 'pending', ${profile.organizationName}, ${profile.officialEmail}, ${profile.credentialType},
-            ${profile.credentialReference}, ${ts}, ${ts})
+    VALUES (${actor.id}, 'pending', ${profile.organizationName}, '', '', '', ${ts}, ${ts})
     ON CONFLICT (coach_id) DO UPDATE SET
-      status = 'pending', organization = EXCLUDED.organization, official_email = EXCLUDED.official_email,
-      credential_type = EXCLUDED.credential_type, credential_reference = EXCLUDED.credential_reference,
+      status = 'pending', organization = EXCLUDED.organization,
       submitted_at = EXCLUDED.submitted_at, reviewed_at = NULL, reviewed_by = NULL, review_note = '', updated_at = EXCLUDED.updated_at
     WHERE coach_verifications.status = 'rejected'
     RETURNING coach_id`;

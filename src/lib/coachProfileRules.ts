@@ -9,7 +9,6 @@ export const POSITION_TITLES = [
   "Head coach", "Assistant coach", "Athletic director", "Recruiter / Scout", "Trainer / Coordinator",
 ] as const;
 export const COMPETITION_LEVELS = ["Junior high school", "Senior high school", "Collegiate", "Club / Community", "Professional"] as const;
-export const CREDENTIAL_TYPES = ["Coaching license", "School / university ID", "Letter from organization"] as const;
 
 export const COACH_LIMITS = {
   name: 40,
@@ -18,7 +17,6 @@ export const COACH_LIMITS = {
   programName: 80,
   background: { min: 20, max: 500 },
   yearsExperience: { min: 0, max: 60 },
-  credentialReference: { min: 4, max: 50 },
 } as const;
 
 /** Everything the coach can edit, as text. Empty string means "not filled in yet". */
@@ -42,10 +40,8 @@ export interface CoachProfile {
   background: string;
   /** optional — never counted toward completion */
   certifications: string;
-  // Verification information (what the review team needs; NOT the verification outcome)
-  officialEmail: string;
-  credentialType: string;
-  credentialReference: string;
+  // There is no verification information to fill in: the coach picked their school at sign-up, and
+  // that school's representative decides the request (see server/rep-coach-requests.server.ts).
 }
 
 export type CoachVerificationStatus = "Pending" | "Verified" | "Rejected";
@@ -67,7 +63,6 @@ export const EMPTY_COACH: CoachProfile = {
   positionTitle: "", programName: "",
   primarySport: "", competitionLevel: "",
   yearsExperience: "", background: "", certifications: "",
-  officialEmail: "", credentialType: "", credentialReference: "",
 };
 
 export const COACH_PROFILE_KEYS = Object.keys(EMPTY_COACH) as (keyof CoachProfile)[];
@@ -92,14 +87,11 @@ export function validateCoach(c: CoachProfile): CoachErrors {
   text("organizationLocation", "Location", COACH_LIMITS.location);
   text("programName", "Team or program", COACH_LIMITS.programName);
   text("certifications", "Certifications", 200);
-  for (const k of ["email", "officialEmail"] as const) {
-    if (c[k].trim() !== "" && !EMAIL.test(c[k].trim())) e[k] = "Enter a valid email address.";
-  }
+  if (c.email.trim() !== "" && !EMAIL.test(c.email.trim())) e.email = "Enter a valid email address.";
   oneOf("organizationType", ORGANIZATION_TYPES, "an organization type");
   oneOf("positionTitle", POSITION_TITLES, "a position");
   oneOf("primarySport", sports.map((s) => s.name), "a sport");
   oneOf("competitionLevel", COMPETITION_LEVELS, "a level");
-  oneOf("credentialType", CREDENTIAL_TYPES, "a credential type");
 
   const years = c.yearsExperience.trim();
   if (years !== "") {
@@ -110,9 +102,6 @@ export function validateCoach(c: CoachProfile): CoachErrors {
   const bg = c.background.trim();
   if (bg !== "" && (bg.length < COACH_LIMITS.background.min || bg.length > COACH_LIMITS.background.max))
     e.background = `Describe your background in ${COACH_LIMITS.background.min}–${COACH_LIMITS.background.max} characters.`;
-  const ref = c.credentialReference.trim();
-  if (ref !== "" && (ref.length < COACH_LIMITS.credentialReference.min || ref.length > COACH_LIMITS.credentialReference.max))
-    e.credentialReference = `Enter ${COACH_LIMITS.credentialReference.min}–${COACH_LIMITS.credentialReference.max} characters.`;
   return e;
 }
 

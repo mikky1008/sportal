@@ -193,7 +193,6 @@ function ReviewModal({ request, school, onClose }: { request: PendingCoachReques
             <Detail label="Sport" value={request.sport} />
             <Detail label="Position" value={request.position} />
             <Detail label="Program" value={request.programName} />
-            <Detail label="Credential type" value={request.credentialType} />
             <Detail label="Application date" value={prettyDate(request.appliedAt)} />
           </dl>
           <p className="mt-4 rounded-xl bg-accent px-3 py-2.5 text-sm text-accent-foreground">

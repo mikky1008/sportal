@@ -200,7 +200,7 @@ export async function reviewApplication(
 
   if (decision === "approve") {
     // First thing they see after signing in.
-    await notify(id, { category: "verification", title: "Your account is approved", message: "A Sportal administrator approved your school representative account. Welcome aboard." }, db);
+    await notify(id, { category: "verification", title: "Your account is approved", message: "A Sportal administrator approved your school representative account. Welcome aboard.", link: "/rep/dashboard" }, db);
   }
   return getApplication(actor, id);
 }

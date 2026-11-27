@@ -368,8 +368,8 @@ export async function applyReview(
   await notify(
     input.coachId,
     input.decision === "approve"
-      ? { category: "verification", title: "You're verified", message: "Your coach account has been verified. You can now connect with athletes." }
-      : { category: "verification", title: "Verification not approved", message: `Reason: ${note}` },
+      ? { category: "verification", title: "You're verified", message: "Your coach account has been verified. You can now connect with athletes.", link: "/coach/dashboard" }
+      : { category: "verification", title: "Verification not approved", message: `Reason: ${note}`, link: "/profile" },
     db,
   );
 }

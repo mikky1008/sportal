@@ -205,7 +205,7 @@ export async function applyToScholarship(user: PublicUser, scholarshipId: string
   await audit("scholarship.applied", { userId: user.id, ...meta, detail: { scholarshipId } }, db);
   await notify(user.id, { category: "application", title: "Application received", message: `Your application to ${s.name} was submitted.`, link: "/scholarships" }, db);
   if (s.posted_by)
-    await notify(s.posted_by, { category: "application", title: "New applicant", message: `${user.displayName} applied to ${s.name}.` }, db);
+    await notify(s.posted_by, { category: "application", title: "New applicant", message: `${user.displayName} applied to ${s.name}.`, link: `/scholarships?highlight=${encodeURIComponent(scholarshipId)}` }, db);
   return app;
 }
 

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Bell, Calendar, Check, X, BarChart3, Trophy, Mail, GraduationCap, FileCheck, ShieldCheck, Users } from "lucide-react";
+import { Bell, Calendar, Check, X, BarChart3, Trophy, Mail, GraduationCap, FileCheck, ShieldCheck, Users, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import type { Notification, Ranking } from "@/types";
 import { formatDeadline, type ApplicationStatus, type ScholarshipView } from "@/lib/scholarshipsApi";
@@ -163,18 +163,20 @@ const catMeta: Record<Notification["category"], { icon: typeof Mail; label: stri
 };
 export const notificationCategories = catMeta;
 
-export function NotificationItem({ n, onRead }: { n: Notification; onRead: () => void }) {
+/** One notification row. Tapping it calls `onOpen`; the page marks it read and follows `n.link`. */
+export function NotificationItem({ n, onOpen }: { n: Notification; onOpen: () => void }) {
   const m = catMeta[n.category];
   const Icon = m.icon;
   return (
     <li>
-      <button onClick={onRead} className={cn("flex w-full items-start gap-4 rounded-xl border bg-card p-4 text-left transition hover:bg-muted", !n.read && "border-primary/40")}>
+      <button onClick={onOpen} className={cn("flex w-full items-start gap-4 rounded-xl border bg-card p-4 text-left transition hover:bg-muted", !n.read && "border-primary/40")}>
         <span className={cn("grid h-10 w-10 shrink-0 place-items-center rounded-lg", m.tone)}><Icon className="h-5 w-5" /></span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2"><p className="font-semibold">{n.title}</p>{!n.read && <span className="h-2 w-2 rounded-full bg-primary" aria-label="Unread" />}</div>
           <p className="whitespace-pre-line break-words text-sm text-muted-foreground">{n.message}</p>
           <p className="mt-1 text-xs text-muted-foreground">{m.label} · {n.time}</p>
         </div>
+        {n.link && <ChevronRight className="mt-2 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />}
       </button>
     </li>
   );

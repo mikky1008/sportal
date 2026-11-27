@@ -45,6 +45,15 @@ export const markAllNotificationsRead = async (): Promise<ApiResult<{ updated: n
   return r;
 };
 
+/**
+ * The in-app path a notification should open, or null. Only same-app paths ("/recruiting?tab=inbox")
+ * are accepted, so a bad link can never send the user to another site.
+ */
+export function safeInternalPath(link: string | null | undefined): string | null {
+  if (!link || !link.startsWith("/") || link.startsWith("//") || link.includes("\\")) return null;
+  return link;
+}
+
 /** "2h ago", "3d ago", or a date for anything older than a month. */
 export function timeAgo(iso: string, now = Date.now()): string {
   const secs = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000));

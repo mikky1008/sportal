@@ -454,7 +454,7 @@ export async function respondToInquiry(
     hit.coach_id,
     decision === "accepted"
       ? { category: "recruitment", title: "Inquiry accepted", message: `${user.displayName} accepted your inquiry. You can message each other now.`, link: `/recruiting?tab=messages&thread=${inquiryId}` }
-      : { category: "recruitment", title: "Inquiry declined", message: `${user.displayName} declined your inquiry.` },
+      : { category: "recruitment", title: "Inquiry declined", message: `${user.displayName} declined your inquiry.`, link: "/recruiting?tab=inbox" },
     db,
   );
   const [row] = await db<InquiryRow[]>`${SELECT_INQUIRY(db, user.id)} WHERE i.id = ${inquiryId}`;

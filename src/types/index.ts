@@ -127,6 +127,8 @@ export interface Notification {
   message: string;
   time: string;
   read: boolean;
+  /** In-app path to open when the notification is tapped (already checked by `safeInternalPath`). */
+  link?: string | null;
 }
 
 /** What the AI actually measured from one video. Nothing here depends on past sessions. */

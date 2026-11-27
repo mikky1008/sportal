@@ -7,7 +7,7 @@ import {
   type LucideIcon, ClipboardCheck, UserPlus } from "lucide-react";
 import { Link } from "@/router-compat";
 import { useAuth } from "@/auth/AuthContext";
-import { listNotifications, useUnreadCount, type NotificationView } from "@/lib/notificationsApi";
+import { listNotifications, markNotificationRead, safeInternalPath, useUnreadCount, type NotificationView } from "@/lib/notificationsApi";
 import { useCoachProfile } from "@/lib/coachProfileStore";
 import {
   AppHeader, DropdownDivider, DropdownLabel, DropdownPanel, HeaderBrand, HeaderNavItem, HeaderPill, HeaderPillDivider,
@@ -71,12 +71,21 @@ function NotificationsMenu() {
           <DropdownLabel>Notifications</DropdownLabel>
           {items === null && <div className="px-3 py-2.5 text-sm text-muted-foreground">Loading…</div>}
           {items?.length === 0 && <div className="px-3 py-2.5 text-sm text-muted-foreground">Nothing here yet.</div>}
-          {items?.map((n) => (
-            <div key={n.id} className="rounded-xl px-3 py-2.5 text-sm hover:bg-muted">
-              <p className={n.read ? "" : "font-semibold"}>{n.title}</p>
-              <p className="text-xs text-muted-foreground">{n.message}</p>
-            </div>
-          ))}
+          {items?.map((n) => {
+            const to = safeInternalPath(n.link);
+            const body = (
+              <>
+                <p className={n.read ? "" : "font-semibold"}>{n.title}</p>
+                <p className="text-xs text-muted-foreground">{n.message}</p>
+              </>
+            );
+            // Tapping one marks it read and, when it has a link, opens that screen.
+            return to ? (
+              <Link key={n.id} to={to} onClick={() => { setOpen(false); if (!n.read) void markNotificationRead(n.id); }} className="block rounded-xl px-3 py-2.5 text-sm hover:bg-muted">{body}</Link>
+            ) : (
+              <button key={n.id} type="button" onClick={() => { if (!n.read) void markNotificationRead(n.id); }} className="block w-full rounded-xl px-3 py-2.5 text-left text-sm hover:bg-muted">{body}</button>
+            );
+          })}
           <Link to="/notifications" className="mt-1 block rounded-xl px-3 py-2 text-center text-sm font-semibold text-primary hover:bg-muted">See all</Link>
         </DropdownPanel>
       )}

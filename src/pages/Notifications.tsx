@@ -3,14 +3,16 @@ import { useCallback, useEffect, useState } from "react";
 import type { Notification, NotificationCategory } from "@/types";
 import { PageHeader, btn } from "@/components/common";
 import { NotificationItem, notificationCategories } from "@/components/listings";
-import { listNotifications, markAllNotificationsRead, markNotificationRead, refreshUnread, timeAgo, type NotificationView } from "@/lib/notificationsApi";
+import { listNotifications, markAllNotificationsRead, markNotificationRead, refreshUnread, safeInternalPath, timeAgo, type NotificationView } from "@/lib/notificationsApi";
+import { useNavigate } from "@/router-compat";
 import { cn } from "@/lib/utils";
 
 type State = { kind: "loading" } | { kind: "error"; message: string } | { kind: "ready"; items: NotificationView[] };
 
-const toItem = (n: NotificationView): Notification => ({ id: n.id, category: n.category, title: n.title, message: n.message, read: n.read, time: timeAgo(n.createdAt) });
+const toItem = (n: NotificationView): Notification => ({ id: n.id, category: n.category, title: n.title, message: n.message, read: n.read, time: timeAgo(n.createdAt), link: safeInternalPath(n.link) });
 
 function Notifications() {
+  const navigate = useNavigate();
   const [state, setState] = useState<State>({ kind: "loading" });
   const [cat, setCat] = useState<NotificationCategory | "all">("all");
 
@@ -32,6 +34,12 @@ function Notifications() {
     patch((n) => (n.id === id ? { ...n, read: true } : n));
     const r = await markNotificationRead(id);
     if (!r.ok) void load(); // the server did not save it, so show what it really holds
+  };
+  /** Tapping a notification marks it read and, when it has a link, takes the user there. */
+  const open = (n: NotificationView) => {
+    if (!n.read) void readOne(n.id);
+    const to = safeInternalPath(n.link);
+    if (to) navigate({ to });
   };
   const readAll = async () => {
     patch((n) => ({ ...n, read: true }));
@@ -58,7 +66,7 @@ function Notifications() {
       )}
       {state.kind === "ready" && (
         <ul className="flex flex-col gap-2">
-          {state.items.map((n) => <NotificationItem key={n.id} n={toItem(n)} onRead={() => void readOne(n.id)} />)}
+          {state.items.map((n) => <NotificationItem key={n.id} n={toItem(n)} onOpen={() => open(n)} />)}
           {!state.items.length && <p className="py-8 text-center text-sm text-muted-foreground">Nothing here yet.</p>}
         </ul>
       )}

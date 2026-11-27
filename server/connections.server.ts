@@ -446,7 +446,7 @@ export async function sendRequest(
     db,
   );
   const otherId = actor.id === coachId ? athleteId : coachId;
-  await notify(otherId, { category: "connection", title: "New connection request", message: `${actor.displayName} wants to connect with you.` }, db);
+  await notify(otherId, { category: "connection", title: "New connection request", message: `${actor.displayName} wants to connect with you.`, ...(otherId === coachId ? { link: "/coach/dashboard" } : {}) }, db);
   return { connection: await viewById(db, row.id, actor.id), created };
 }
 
@@ -497,6 +497,7 @@ export async function respondToRequest(
       category: "connection",
       title: decision === "accepted" ? "Connection accepted" : "Connection declined",
       message: decision === "accepted" ? `${actor.displayName} accepted your connection request.` : `${actor.displayName} declined your connection request.`,
+      ...(row.requested_by === row.coach_id ? { link: "/coach/dashboard" } : {}),
     },
     db,
   );

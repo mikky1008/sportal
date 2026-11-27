@@ -396,14 +396,14 @@ export function SignupForm({ role, tone = "light", onBack, onSwitchToLogin }: Si
                 {extra.includes("organization") && (
                   <TextField id="organization" label={role === "university" ? "University name" : "University / Organization"} error={errors.organization}>
                     {role === "coach" ? (
-                      // Coaches pick their school from the ones already on Sportal as they type, or type their own.
+                      // Coaches pick their school from the schools that have a registered representative (the server checks it too).
                       <>
                         <UniversityCombobox
                           id="organization" name="organization" value={values.organization} onValue={(v) => setField("organization", v)}
                           className={bind("organization").className} disabled={loading || redirecting} invalid={!!errors.organization}
                           describedBy={errors.organization ? "organization-error" : undefined} dark={dark} maxLength={100} placeholder="Start typing your university"
                         />
-                        {!errors.organization && <p className={cn("mt-1.5 text-xs", dark ? "text-slate-400" : "text-muted-foreground")}>Choose your school from the list, or type it if it isn't there.</p>}
+                        {!errors.organization && <p className={cn("mt-1.5 text-xs", dark ? "text-slate-400" : "text-muted-foreground")}>Choose your school from the list. Its representative will review your coach request.</p>}
                       </>
                     ) : (
                       <input {...bind("organization")} type="text" autoComplete="organization" maxLength={100} />

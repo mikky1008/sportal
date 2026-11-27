@@ -3,13 +3,14 @@ import { searchUniversities, type UniversitySuggestion } from "@/lib/universityS
 import { cn } from "@/lib/utils";
 
 /**
- * A text field that suggests schools that already exist on Sportal as you type, and still accepts anything.
+ * A school picker for the coach sign-up: it suggests, as you type, the schools that have an approved
+ * representative on Sportal.
  *
- *  - Suggestions are only a shortcut: whatever is in the box is the value, so a school that isn't listed is
- *    simply typed (a note under the list says so).
- *  - Picking a suggestion fills in the school's exact name, so the coach is linked to that school's
- *    representative. Leaving the box also tidies extra spaces, and fixes the capital letters if what was
- *    typed is a listed school.
+ *  - Only a listed school can be used. The box is still a text field (so you can search by typing), but the
+ *    server rejects any name that is not a school with a representative, because that representative reviews
+ *    the coach. A note under the list says what to do when a school is missing.
+ *  - Picking a suggestion fills in the school's exact name. Leaving the box also tidies extra spaces, and
+ *    fixes the capital letters if what was typed is a listed school.
  *  - Follows the standard ARIA "combobox with list" pattern: Arrow keys move, Enter picks, Escape closes,
  *    and screen readers hear how many schools were found.
  * Styling comes from the form (`className` is the form's own input style; `dark` is the navy drawer).
@@ -100,7 +101,7 @@ export function UniversityCombobox({
         onKeyDown={onKeyDown}
       />
       <span className="sr-only" aria-live="polite">
-        {open && loaded ? (items.length > 0 ? `${items.length} ${items.length === 1 ? "school" : "schools"} found. Use the arrow keys to choose.` : "No matching school. You can keep typing your own.") : ""}
+        {open && loaded ? (items.length > 0 ? `${items.length} ${items.length === 1 ? "school" : "schools"} found. Use the arrow keys to choose.` : "No school with a registered representative matches.") : ""}
       </span>
 
       {open && (showList || (loaded && typed)) && (
@@ -121,9 +122,9 @@ export function UniversityCombobox({
               ))}
             </ul>
           ) : (
-            <p className={cn("px-4 py-3 text-sm", muted)}>No matching school yet. We'll use “{value.trim()}” exactly as you typed it.</p>
+            <p className={cn("px-4 py-3 text-sm", muted)}>No school with a registered representative matches “{value.trim()}”.</p>
           )}
-          <p className={cn("border-t px-4 py-2 text-xs", dark ? "border-slate-700 text-slate-400" : "border-border text-muted-foreground")}>Not on the list? Just type your school's name.</p>
+          <p className={cn("border-t px-4 py-2 text-xs", dark ? "border-slate-700 text-slate-400" : "border-border text-muted-foreground")}>Your school must be on this list. If it isn't, ask your school's representative to register on Sportal first.</p>
         </div>
       )}
     </div>

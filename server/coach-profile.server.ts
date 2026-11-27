@@ -19,6 +19,7 @@ import { getDb, type Db } from "./db.server.ts";
 import { audit, type PublicUser, type RequestMeta } from "./auth.server.ts";
 import { notify } from "./notifications.server.ts";
 import { notifyRepsOfCoachRequest } from "./rep-notifications.server.ts";
+import { findRepSchool } from "./university-search.server.ts";
 import { COACH_ROLE, ConnectionError, isVerifiedCoach, PAGE_DEFAULT, PAGE_MAX } from "./connections.server.ts";
 import {
   COACH_PROFILE_KEYS, EMPTY_COACH, validateCoach, type CoachProfile,
@@ -168,6 +169,18 @@ export async function saveCoachProfile(
   const db = dbArg ?? (await getDb());
   const ts = new Date();
 
+  // The school is chosen at sign-up and is what ties the coach to the representative who reviews them, so the
+  // profile form can never change it. (A coach with no school saved yet may set one, but only a school that
+  // has an approved representative, and it is saved under that school's exact registered name.)
+  const [cur] = await db<{ organization: string | null }[]>`SELECT organization FROM coach_profiles WHERE user_id = ${actor.id}`;
+  const currentSchool = cur?.organization?.trim() ?? "";
+  if (currentSchool) p.organizationName = currentSchool;
+  else if (p.organizationName) {
+    const school = await findRepSchool(p.organizationName, db);
+    if (!school) throw fail({ organizationName: "Choose a school that has a registered representative on Sportal." });
+    p.organizationName = school.name;
+  }
+
   await db.begin(async (tx) => {
     await tx`
       UPDATE user_profiles SET first_name = ${p.firstName || null}, last_name = ${p.lastName || null}, updated_at = ${ts}
@@ -204,9 +217,13 @@ export async function requestVerification(actor: PublicUser, meta: Partial<Reque
   const missing: Record<string, string> = {};
   // The school is the one thing the representative needs: it decides which representative gets the request.
   if (!profile.organizationName) missing["organizationName"] = "Enter your organization name.";
+  // The representative's Coach Requests list only shows University / College coaches, so any other type
+  // (or none) would send a request nobody can see.
+  if (profile.organizationType !== "University" && profile.organizationType !== "College")
+    missing["organizationType"] = "Choose University or College so your school's representative can see your request.";
   const fieldErrors: Record<string, string> = { ...(errors as Record<string, string>), ...missing };
   if (Object.keys(missing).length > 0 || errors.organizationName)
-    throw fail(fieldErrors, "Enter your organization name before requesting verification.");
+    throw fail(fieldErrors, "Complete your organization details before requesting verification.");
 
   if (await isVerifiedCoach(db, actor.id))
     throw new ConnectionError(409, "already_verified", "Your account is already verified.");

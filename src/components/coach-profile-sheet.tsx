@@ -81,7 +81,8 @@ function CoachForm({ onDone }: { onDone: () => void }) {
         {text("email", "Sign-in email", { type: "email", inputMode: "email", readOnly: true })}
       </Group>
       <Group id="organization" title="Organization Information">
-        {text("organizationName", "Organization name", { placeholder: "e.g. FEU Tamaraws" })}
+        {/* The school is picked at sign-up and ties the coach to the representative who reviews them, so it can't be edited. */}
+        {text("organizationName", saved.organizationName ? "School (chosen at sign-up)" : "Organization name", saved.organizationName ? { readOnly: true } : { placeholder: "Your school's registered name" })}
         {pick("organizationType", "Organization type", ORGANIZATION_TYPES, "Choose a type")}
         {text("organizationLocation", "Location", { placeholder: "City or municipality" })}
       </Group>

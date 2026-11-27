@@ -277,7 +277,7 @@ import { EXPORT_KINDS, exportRepData, type ExportKind } from "./rep-exports.serv
 import { buildRepReport } from "./rep-report.server.ts";
 import { notifyCoachNextStep, notifyRepsOfCoachSignup } from "./rep-notifications.server.ts";
 import { getDb } from "./db.server.ts";
-import { allowUniversitySearch, searchUniversities } from "./university-search.server.ts";
+import { allowUniversitySearch, findRepSchool, searchUniversities } from "./university-search.server.ts";
 import { HISTORY_PAGE_DEFAULT, HISTORY_PAGE_MAX, listRepMessages, previewRepMessage, sendRepMessage } from "./rep-messages.server.ts";
 import {
   AVATAR_MAX_CHARS as REP_AVATAR_MAX_CHARS, changeRepPassword, getRepHeader, getRepProfile, setRepAvatar, updateRepProfile,
@@ -700,6 +700,18 @@ async function handleRegister(req: Request): Promise<Response> {
   try {
     if (!(await signupAllowed(meta.ip)))
       return send(req, 200, { ok: false, code: "rate_limited", message: "Too many sign ups from this connection. Try again in an hour." });
+    // A coach must belong to a school that has an approved representative, because that representative decides
+    // the coach's verification. Checked here (not only in the form) and saved under the school's exact registered
+    // name, so the request can never miss its representative because of a typo or a different spelling.
+    let details = parsed.details;
+    if (details.kind === "coach") {
+      const school = await findRepSchool(details.organization);
+      if (!school) {
+        const message = "Choose your school from the list. Only schools with a registered representative on Sportal can be selected.";
+        return send(req, 200, { ok: false, code: "validation", message, fieldErrors: { organization: message } });
+      }
+      details = { ...details, organization: school.name };
+    }
     username = await deriveUsername(input.email);
     createdUser = await createUser({
       email: input.email,
@@ -709,7 +721,7 @@ async function handleRegister(req: Request): Promise<Response> {
       firstName: input.firstName,
       lastName: input.lastName,
       roles: [input.accountType],
-      details: parsed.details,
+      details,
     });
   } catch (err) {
     if (err instanceof UserInputError) {

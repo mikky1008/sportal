@@ -90,7 +90,7 @@ function VerificationStatus({ verification }: { verification: CoachVerification 
       await coachProfileStore.requestVerification();
       toast.success("Verification request sent", { description: "Your school's representative will review it." });
     } catch (err) {
-      if (err instanceof CoachValidationError) toast.error("Enter your organization name in your profile first.");
+      if (err instanceof CoachValidationError) toast.error("Complete your organization details in your profile first.");
       else toast.error(err instanceof Error ? err.message : "Couldn't send the request. Please try again.");
     } finally {
       setSending(false);

@@ -18,6 +18,8 @@ import MyAthletes from "@/pages/MyAthletes";
 import SessionReviews from "@/pages/SessionReviews";
 import CoachApplications from "@/pages/CoachApplications";
 import MyUniversity from "@/pages/MyUniversity";
+import CoachProfilePage from "@/pages/CoachProfile";
+import CoachSettingsPage from "@/pages/CoachSettings";
 import RepDashboard from "@/pages/RepDashboard";
 import RepCoaches from "@/pages/RepCoaches";
 import RepRequests from "@/pages/RepRequests";
@@ -55,6 +57,8 @@ const PROTECTED: { path: string; component: ComponentType }[] = [
   { path: "/coach/reviews", component: SessionReviews },
   { path: "/coach/applications", component: CoachApplications },
   { path: "/coach/university", component: MyUniversity },
+  { path: "/coach/profile", component: CoachProfilePage },
+  { path: "/coach/settings", component: CoachSettingsPage },
   { path: "/rep/dashboard", component: RepDashboard },
   { path: "/rep/coaches", component: RepCoaches },
   { path: "/rep/requests", component: RepRequests },

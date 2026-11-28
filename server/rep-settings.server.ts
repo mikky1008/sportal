@@ -138,14 +138,25 @@ export async function setRepAvatar(actor: Actor, dataUrl: unknown, meta: Partial
 
 /* ------------------------------------------------------------------ password */
 
-export async function changeRepPassword(
+export function changeRepPassword(actor: Actor, raw: unknown, currentToken: string | undefined, meta: Partial<RequestMeta> = {}, dbArg?: Db) {
+  requireRep(actor);
+  return changeOwnPassword(actor, raw, currentToken, meta, dbArg, "rep");
+}
+
+/** A coach changes their own password from Profile > Settings. Same rules as the representative's. */
+export function changeCoachPassword(actor: Actor, raw: unknown, currentToken: string | undefined, meta: Partial<RequestMeta> = {}, dbArg?: Db) {
+  if (!actor.roles.includes("coach")) throw new ConnectionError(403, "role_not_allowed", "Only coach accounts can use this.");
+  return changeOwnPassword(actor, raw, currentToken, meta, dbArg, "coach");
+}
+
+async function changeOwnPassword(
   actor: Actor,
   raw: unknown,
   currentToken: string | undefined,
-  meta: Partial<RequestMeta> = {},
-  dbArg?: Db,
+  meta: Partial<RequestMeta>,
+  dbArg: Db | undefined,
+  who: "rep" | "coach",
 ): Promise<{ otherSessionsSignedOut: number }> {
-  requireRep(actor);
   const body = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const current = typeof body["currentPassword"] === "string" ? body["currentPassword"] : "";
   const next = typeof body["newPassword"] === "string" ? body["newPassword"] : "";
@@ -160,7 +171,7 @@ export async function changeRepPassword(
 
   const db = dbArg ?? (await getDb());
   // Someone holding a stolen session must not be able to guess the current password at full speed.
-  const bucket = `rep-pw:${actor.id}`;
+  const bucket = `${who}-pw:${actor.id}`;
   const wait = await checkRateLimit(db, bucket, meta.ip ?? null);
   if (wait !== null) {
     const mins = Math.ceil(wait / 60);
@@ -171,7 +182,7 @@ export async function changeRepPassword(
   if (!row) throw new ConnectionError(404, "not_found", "Your account could not be found.");
   if (!(await verifyPassword(current, row.password_hash))) {
     await recordAttempt(db, bucket, meta.ip ?? null, false);
-    await audit("rep.password_change_failed", { userId: actor.id, ...meta }, db);
+    await audit(`${who}.password_change_failed`, { userId: actor.id, ...meta }, db);
     throw bad("That isn't your current password.", { currentPassword: "That isn't your current password." });
   }
 
@@ -186,7 +197,7 @@ export async function changeRepPassword(
     const gone = await tx`DELETE FROM sessions WHERE user_id = ${actor.id} AND token_hash <> ${keep} RETURNING token_hash`;
     signedOut = gone.length;
     await tx`DELETE FROM login_attempts WHERE identifier = ${bucket}`;
-    await audit("rep.password_changed", { userId: actor.id, ...meta, detail: { otherSessionsSignedOut: signedOut } }, tx);
+    await audit(`${who}.password_changed`, { userId: actor.id, ...meta, detail: { otherSessionsSignedOut: signedOut } }, tx);
   });
   return { otherSessionsSignedOut: signedOut };
 }

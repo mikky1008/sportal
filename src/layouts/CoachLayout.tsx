@@ -3,7 +3,7 @@ import { useLocation } from "react-router-dom";
 import { IonContent, IonPage } from "@ionic/react";
 import { toast } from "sonner";
 import {
-  Building2, ClipboardList, Compass, Handshake, LayoutDashboard, LogOut, MessageSquare, Settings, User, UserCheck, Users,
+  Building2, ClipboardList, Compass, Handshake, LayoutDashboard, LogOut, MessageSquare, User, UserCheck, Users,
   type LucideIcon, ClipboardCheck, UserPlus } from "lucide-react";
 import { Link } from "@/router-compat";
 import { useAuth } from "@/auth/AuthContext";
@@ -171,14 +171,10 @@ function ProfileMenu({ name, shortName }: { name: string; shortName: string }) {
             ),
           )}
           <DropdownDivider />
-          <button type="button" role="menuitem" className={dropdownItemClass()} onClick={() => { setOpen(false); comingSoon("My Profile"); }}>
+          <Link to="/coach/profile" role="menuitem" onClick={() => setOpen(false)} aria-current={isActive("/coach/profile") || isActive("/coach/settings") ? "page" : undefined} className={dropdownItemClass(isActive("/coach/profile") || isActive("/coach/settings"))}>
             <User className="h-4 w-4" />
             My Profile
-          </button>
-          <button type="button" role="menuitem" className={dropdownItemClass()} onClick={() => { setOpen(false); comingSoon("Settings"); }}>
-            <Settings className="h-4 w-4" />
-            Settings
-          </button>
+          </Link>
           <DropdownDivider />
           <button type="button" role="menuitem" className={dropdownItemClass()} onClick={() => void signOut()}>
             <LogOut className="h-4 w-4" />

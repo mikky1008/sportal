@@ -7,7 +7,6 @@ import { Page } from "@/components/Page";
 import { CoachLayout } from "@/layouts/CoachLayout";
 import { Card, PageHeader, Select, btn } from "@/components/common";
 import { AthleteCard, InquiryRow, ThreadView, WatchNote } from "@/components/recruiting";
-import { CoachCompletionCard } from "@/components/profile-completion-cards";
 import {
   answerInquiry, fetchDirectory, fetchInquiries, fetchMessages, fetchWatchlist, postMessage, saveNote, setWatched,
   type DirectoryFilters, type DirectoryPage, type InquiryItem,
@@ -182,7 +181,6 @@ function Recruiting() {
         title={isCoach && tab === "messages" ? "Messages" : "Recruiting"}
         subtitle={isCoach && tab === "messages" ? "Conversations with athletes who accepted your inquiry." : isCoach ? "Search athlete showcases, build a watchlist and send recruitment inquiries." : "Coaches who found your showcase. You decide who can start a conversation."}
       />
-      {isCoach && tab !== "messages" && <CoachCompletionCard />}
 
       {isCoach && tab === "messages" && (
         <button onClick={() => pickTab("discover")} className="-mb-2 inline-flex w-fit items-center gap-2 text-sm font-semibold text-muted-foreground hover:text-foreground">

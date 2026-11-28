@@ -86,6 +86,7 @@
 //   GET  /api/coach/profile                        coach -> { ok, profile, verification }
 //   PUT  /api/coach/profile                        coach, CoachProfile fields as text -> { ok, profile, verification }
 //   POST /api/coach/verification/request           coach -> { ok, verification }   send the verification details to the reviewers
+//   POST /api/coach/settings/password              coach { currentPassword, newPassword, confirmPassword? } -> { ok, otherSessionsSignedOut }
 //   (There is no admin endpoint for approving coaches: the coach's school representative decides, see /api/rep/coach-requests.)
 // The administrator is a predefined account from ADMIN_EMAIL / ADMIN_PASSWORD (server/admin-account.server.ts). The
 // regular /api/auth/login refuses it and /api/admin/auth/login refuses everyone else; nothing can grant the role.
@@ -275,7 +276,7 @@ import { getDb } from "./db.server.ts";
 import { allowUniversitySearch, findRepSchool, searchUniversities } from "./university-search.server.ts";
 import { HISTORY_PAGE_DEFAULT, HISTORY_PAGE_MAX, listRepMessages, previewRepMessage, sendRepMessage } from "./rep-messages.server.ts";
 import {
-  AVATAR_MAX_CHARS as REP_AVATAR_MAX_CHARS, changeRepPassword, getRepHeader, getRepProfile, setRepAvatar, updateRepProfile,
+  AVATAR_MAX_CHARS as REP_AVATAR_MAX_CHARS, changeCoachPassword, changeRepPassword, getRepHeader, getRepProfile, setRepAvatar, updateRepProfile,
 } from "./rep-settings.server.ts";
 import {
   ATHLETES_PAGE_DEFAULT, ATHLETES_PAGE_MAX, VERIFICATION_STATUSES, getRepAthlete, getRepAthletePhoto, listRepAthletes, type AthleteVerification,
@@ -1422,13 +1423,16 @@ async function handleCoachProfileAndReview(req: Request, path: string): Promise<
   const isGet = m === "GET" && path === "/api/coach/profile";
   const isPut = m === "PUT" && path === "/api/coach/profile";
   const isRequest = m === "POST" && path === "/api/coach/verification/request";
-  if (!isGet && !isPut && !isRequest) return null;
+  const isPassword = m === "POST" && path === "/api/coach/settings/password";
+  if (!isGet && !isPut && !isRequest && !isPassword) return null;
 
-  const user = await getUserBySessionToken(bearer(req));
+  const token = bearer(req);
+  const user = await getUserBySessionToken(token);
   if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
   const meta = requestMeta(req);
 
   try {
+    if (isPassword) return send(req, 200, { ok: true, ...(await changeCoachPassword(user, await readJson(req), token, meta)) });
     if (isGet) return send(req, 200, { ok: true, ...(await getCoachProfile(user)) });
     if (isPut) return send(req, 200, { ok: true, ...(await saveCoachProfile(user, await readJson(req), meta)) });
     return send(req, 200, { ok: true, verification: await requestVerification(user, meta) });

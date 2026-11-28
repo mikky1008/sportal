@@ -23,7 +23,7 @@ import { ATHLETE_ROLE, COACH_ROLE, isVerifiedCoach } from "./connections.server.
 import { notify } from "./notifications.server.ts";
 import { headlinePositions } from "./rankings.server.ts";
 import { formatHeight } from "../src/lib/athleteProfileRules.ts";
-import { formatResult, skillById } from "../src/lib/skills.ts";
+import { formatResult, skillById, skills as SKILL_LIST } from "../src/lib/skills.ts";
 
 export const DIRECTORY_LIMIT_DEFAULT = 60;
 export const DIRECTORY_LIMIT_MAX = 100;
@@ -253,6 +253,9 @@ export interface DirectoryResponse {
   options: { sports: string[]; positions: string[]; schools: string[]; skills: string[] };
 }
 
+/** The sports athletes can practise (same ones as the athlete's "Choose What You Practiced" screen). */
+const PRACTICE_SPORTS = ["Basketball", "Volleyball", "Track & Field"];
+
 const distinct = (xs: string[]) => [...new Set(xs.filter(Boolean))].sort((a, b) => a.localeCompare(b));
 const verifiedShare = (a: DirectoryAthleteView) => (a.totalSessions ? a.verifiedSessions / a.totalSessions : 0);
 
@@ -280,10 +283,15 @@ export async function listAthletes(user: PublicUser, q: DirectoryQuery, dbArg?: 
     total: matches.length,
     watchlist: watch.map((w) => w.athlete_id),
     options: {
-      sports: distinct(all.map((a) => a.sport)),
+      // The filters list everything athletes can practise, so a coach sees the full choice even before
+      // anyone has logged a session in a sport. Anything athletes already use is added on top.
+      sports: distinct([...PRACTICE_SPORTS, ...all.map((a) => a.sport)]),
       positions: distinct(inSport.map((a) => a.position)),
       schools: distinct(all.map((a) => a.school)),
-      skills: distinct(inSport.flatMap((a) => a.skills.map((s) => s.name))),
+      skills: distinct([
+        ...SKILL_LIST.filter((k) => (q.sport ? k.sport === q.sport : PRACTICE_SPORTS.includes(k.sport))).map((k) => k.name),
+        ...inSport.flatMap((a) => a.skills.map((s) => s.name)),
+      ]),
     },
   };
 }

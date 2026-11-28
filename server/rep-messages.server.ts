@@ -4,8 +4,10 @@
 // SERVER ONLY. The school is ALWAYS the signed-in representative's own approved school. Who can be reached
 // is exactly who the representative can already see on their pages, found with the same functions:
 //   - coaches   affiliated coaches with an active account (the My Coaches list, "Affiliated")
-//   - athletes  everyone on the My Athletes list (visible showcase, active account);
-//               "verified_athletes" is the part a verified coach of the school has confirmed
+//   - athletes  athletes on the My Athletes list that a verified coach of the school has confirmed (visible
+//               showcase, active account). Athletes who only typed the school's name in their own profile are
+//               NOT reached by announcements (anyone can type any school), only one at a time by name.
+//               "verified_athletes" is kept as an alias of the same thing
 //   - everyone  coaches and athletes together
 //   - person    ONE coach or athlete of the school, picked by id (anyone else is "not found")
 // Each can be narrowed to one sport. Hidden showcases, suspended accounts, pending applicants and other
@@ -60,7 +62,7 @@ export function audienceLabel(audience: Audience, sport: string, personName: str
   const s = sport ? `${sport} ` : "";
   switch (audience) {
     case "coaches": return `All ${s}coaches`;
-    case "athletes": return `All ${s}athletes`;
+    case "athletes": return `All confirmed ${s}athletes`;
     case "verified_athletes": return `Verified ${s}athletes`;
     default: return sport ? `All coaches and athletes (${sport})` : "All coaches and athletes";
   }
@@ -101,7 +103,7 @@ async function resolveAudience(user: PublicUser, input: AudienceInput, db: Db): 
     for (const c of r.items) if (c.accountActive && !ids.has(c.id)) { ids.add(c.id); coaches++; }
   }
   if (a === "athletes" || a === "verified_athletes" || a === "everyone") {
-    const r = await listRepAthletes(user, { ...page, ...(a === "verified_athletes" ? { status: "verified" as const } : {}) }, db);
+    const r = await listRepAthletes(user, { ...page, status: "verified" as const }, db);
     for (const t of r.items) if (!ids.has(t.id)) { ids.add(t.id); athletes++; }
   }
   if (ids.size > MAX_RECIPIENTS) throw bad(`That is more than ${MAX_RECIPIENTS} people. Narrow it by sport.`, { audience: "Too many people. Narrow it by sport." });

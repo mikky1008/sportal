@@ -15,6 +15,7 @@ import { getDb, type Db } from "./db.server.ts";
 import { audit, type PublicUser, type RequestMeta } from "./auth.server.ts";
 import { ConnectionError, PAGE_DEFAULT, PAGE_MAX } from "./connections.server.ts";
 import { notify } from "./notifications.server.ts";
+import { notifyCoachesSchoolHasRep, schoolsWithoutRep } from "./rep-notifications.server.ts";
 import { requireAdmin } from "./admin.server.ts";
 
 export type ApplicationStatus = "pending" | "approved" | "rejected";
@@ -88,7 +89,7 @@ const notFound = () => new ConnectionError(404, "application_not_found", "That a
 export async function listApplications(
   actor: Pick<PublicUser, "roles">,
   opts: { status?: ApplicationStatus; limit?: number; offset?: number } = {},
-): Promise<{ items: ApplicationSummary[]; total: number; counts: Record<ApplicationStatus, number> }> {
+): Promise<{ items: ApplicationSummary[]; total: number; counts: Record<ApplicationStatus, number>; schoolsWithoutRep: { school: string; waitingCoaches: number }[] }> {
   requireAdmin(actor);
   const db = await getDb();
   const limit = Math.min(Math.max(Math.trunc(opts.limit ?? PAGE_DEFAULT), 1), PAGE_MAX);
@@ -106,7 +107,13 @@ export async function listApplications(
     JOIN users u ON u.id = ra.user_id AND u.deleted_at IS NULL GROUP BY ra.status`;
   const counts: Record<ApplicationStatus, number> = { pending: 0, approved: 0, rejected: 0 };
   for (const c of counted) counts[c.status] = c.n;
-  return { items: rows.map(toSummary), total: opts.status ? counts[opts.status] : counts.pending + counts.approved + counts.rejected, counts };
+  return {
+    items: rows.map(toSummary),
+    total: opts.status ? counts[opts.status] : counts.pending + counts.approved + counts.rejected,
+    counts,
+    // Schools whose coaches are waiting but have no active representative (shown as a notice; no approval power).
+    schoolsWithoutRep: await schoolsWithoutRep(db),
+  };
 }
 
 export async function getApplication(actor: Pick<PublicUser, "roles">, id: string): Promise<ApplicationDetail> {
@@ -201,6 +208,10 @@ export async function reviewApplication(
   if (decision === "approve") {
     // First thing they see after signing in.
     await notify(id, { category: "verification", title: "Your account is approved", message: "A Sportal administrator approved your school representative account. Welcome aboard.", link: "/rep/dashboard" }, db);
+  }
+  if (decision === "approve") {
+    // If this is the school's first active representative, the coaches who were waiting are told.
+    try { await notifyCoachesSchoolHasRep(db, id); } catch { /* the approval is already saved */ }
   }
   return getApplication(actor, id);
 }

@@ -28,8 +28,7 @@ const field = "w-full rounded-xl border bg-card px-3 py-2.5 text-sm outline-none
 
 const AUDIENCES: { value: Audience; label: string; hint: string }[] = [
   { value: "coaches", label: "All coaches", hint: "Affiliated coaches of your school" },
-  { value: "athletes", label: "All athletes", hint: "Everyone on My Athletes" },
-  { value: "verified_athletes", label: "Verified athletes", hint: "Confirmed by a coach of your school" },
+  { value: "athletes", label: "All athletes", hint: "Athletes confirmed by a coach of your school" },
   { value: "everyone", label: "Coaches and athletes", hint: "Everyone above" },
   { value: "person", label: "One person", hint: "A single coach or athlete" },
 ];

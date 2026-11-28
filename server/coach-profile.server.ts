@@ -200,6 +200,9 @@ export async function saveCoachProfile(
 // ---------- the coach asks to be verified ----------
 
 /** Sends the coach's current verification details to the reviewers. */
+/** Days a coach waits after a rejection before sending a new request. */
+export const REAPPLY_COOLDOWN_DAYS = 3;
+
 export async function requestVerification(actor: PublicUser, meta: Partial<RequestMeta> = {}, dbArg?: Db): Promise<VerificationState> {
   requireCoach(actor);
   const db = dbArg ?? (await getDb());
@@ -219,6 +222,14 @@ export async function requestVerification(actor: PublicUser, meta: Partial<Reque
 
   if (await isVerifiedCoach(db, actor.id))
     throw new ConnectionError(409, "already_verified", "Your account is already verified.");
+
+  const [prev] = await db<{ status: string; reviewed_at: Date | null }[]>`SELECT status, reviewed_at FROM coach_verifications WHERE coach_id = ${actor.id}`;
+  // Approved before, but the school's representative ended it: only the representative can restore it.
+  if (prev?.status === "verified")
+    throw new ConnectionError(409, "affiliation_removed", "Your school's representative ended your affiliation. Ask them to restore it.");
+  // After a rejection the coach waits a few days before asking again, so the representative isn't pinged repeatedly.
+  if (prev?.status === "rejected" && prev.reviewed_at && Date.now() - prev.reviewed_at.getTime() < REAPPLY_COOLDOWN_DAYS * 86_400_000)
+    throw new ConnectionError(409, "rejected_recently", `Your request was not approved recently. You can send a new one ${REAPPLY_COOLDOWN_DAYS} days after the decision, once you have addressed the reason you were given.`);
 
   const ts = new Date();
   // One atomic statement: it inserts a first request, or re-opens a REJECTED one. A request that is

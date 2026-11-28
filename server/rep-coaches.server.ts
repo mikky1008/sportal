@@ -11,10 +11,13 @@
 //   removed     verified, but the school's representative ended the affiliation (university_id empty)
 // Rejected requests are not listed. Only University / College organizations can be affiliated.
 //
-// What the representative may change: end ("remove") or restore a coach's affiliation with THEIR OWN
-// school, by clearing or setting coach_profiles.university_id. That is all. It never touches the
-// coach's verification, roles or account; approving or rejecting a coach stays with the administrator.
-// Every change is written to the audit log and the coach is notified.
+// What the representative may change: end ("remove") or restore a coach of THEIR OWN school. The school's
+// representative is the only one who approves coaches, so they are also the only one who can take that back:
+//   remove   clears coach_profiles.university_id, takes the verified_coach role away and ends the coach's
+//            connections (the athletes are told), so the coach can no longer reach athletes. The approval
+//            record itself stays, which is what makes the coach show as "removed" and restorable.
+//   restore  sets the school again and gives the role back.
+// The coach's account is never touched. Every change is written to the audit log and the coach is notified.
 //
 // Responses carry the fields the page shows (name, photo, email, sport, position, profile text).
 // Credential numbers and review notes are never returned.
@@ -164,6 +167,7 @@ export async function setCoachAffiliation(
   if (!school.universityId) throw new RepDashboardError(409, "school_not_registered", "Your school isn't registered on Sportal yet.");
   const uid = school.universityId;
 
+  let endedAthletes: string[] = [];
   await db.begin(async (tx) => {
     // Lock the coach's profile row, then re-check that this coach really is at THIS school.
     await tx`SELECT 1 FROM coach_profiles WHERE user_id = ${coachId} FOR UPDATE`;
@@ -172,11 +176,23 @@ export async function setCoachAffiliation(
     if (!cur) throw notFound();
     if (action === "remove") {
       if (cur.status !== "affiliated") throw new RepDashboardError(409, "not_affiliated", "This coach isn't currently affiliated with your school.");
-      await tx`UPDATE coach_profiles SET university_id = NULL, updated_at = ${new Date()} WHERE user_id = ${coachId} AND university_id = ${uid}`;
+      const ts = new Date();
+      await tx`UPDATE coach_profiles SET university_id = NULL, updated_at = ${ts} WHERE user_id = ${coachId} AND university_id = ${uid}`;
+      await tx`DELETE FROM user_roles WHERE user_id = ${coachId} AND role_id IN (SELECT id FROM roles WHERE name = 'verified_coach')`;
+      const ended = await tx<{ athlete_id: string }[]>`
+        UPDATE coach_athlete_connections SET status = 'disconnected', updated_at = ${ts}
+        WHERE coach_id = ${coachId} AND status IN ('pending', 'accepted')
+        RETURNING athlete_id`;
+      endedAthletes = ended.map((r) => r.athlete_id);
     } else {
       if (cur.status !== "removed") throw new RepDashboardError(409, "not_removed", "This coach's affiliation wasn't removed, so there is nothing to restore.");
       if (!cur.is_active) throw new RepDashboardError(409, "account_suspended", "This coach's account is suspended, so the affiliation can't be restored.");
-      await tx`UPDATE coach_profiles SET university_id = ${uid}, updated_at = ${new Date()} WHERE user_id = ${coachId} AND university_id IS NULL`;
+      const ts = new Date();
+      await tx`UPDATE coach_profiles SET university_id = ${uid}, updated_at = ${ts} WHERE user_id = ${coachId} AND university_id IS NULL`;
+      await tx`
+        INSERT INTO user_roles (user_id, role_id, granted_at)
+        SELECT ${coachId}, id, ${ts} FROM roles WHERE name = 'verified_coach'
+        ON CONFLICT DO NOTHING`;
     }
     await audit(
       action === "remove" ? "rep.coach_affiliation_removed" : "rep.coach_affiliation_restored",
@@ -188,10 +204,12 @@ export async function setCoachAffiliation(
   await notify(
     coachId,
     action === "remove"
-      ? { category: "system", title: "Affiliation ended", message: `${school.name} ended your affiliation with the school. Your coach verification is unchanged.` }
-      : { category: "system", title: "Affiliation restored", message: `${school.name} restored your affiliation with the school.` },
+      ? { category: "system", title: "Affiliation ended", message: `${school.name} ended your affiliation. You are no longer a verified coach and your connections with athletes have ended.` }
+      : { category: "system", title: "Affiliation restored", message: `${school.name} restored your affiliation. You are a verified coach again and can connect with athletes.`, link: "/coach/dashboard" },
     db,
   );
+  for (const athleteId of endedAthletes)
+    await notify(athleteId, { category: "connection", title: "Connection ended", message: "A coach you were connected with is no longer approved on Sportal, so the connection was ended." }, db);
   return loadDetail(db, school, coachId);
 }
 

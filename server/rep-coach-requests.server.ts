@@ -16,14 +16,13 @@
 //   pending / approved (verified) / rejected.   Pending requests from suspended accounts are left out.
 //
 // Deciding:
-//  - Only a PENDING request of this school can be decided here (revoking an approval stays with the
-//    administrator; a representative removes an affiliation from My Coaches instead).
-//  - It runs the SAME decision the administrator's review runs (applyReview in coach-profile.server.ts):
-//    approving grants the verified_coach role and joins the coach to this university; rejecting needs
-//    a reason (1 to 500 characters) that the coach is shown in a notification. Because it is the same
-//    step, an approval here makes the coach a verified Sportal coach, exactly as an administrator's would.
-//    The administrator can still review or revoke afterwards. The whole decision is one transaction with a
-//    row lock, so it can never collide with an administrator deciding the same request at the same moment.
+//  - Only a PENDING request of this school can be decided here (taking an approval back is "Remove" in
+//    My Coaches, which also ends the coach's verification and connections).
+//  - The representative is the only one who decides (there is no administrator approval of coaches). It runs
+//    applyReview in coach-profile.server.ts: approving grants the verified_coach role and joins the coach to
+//    this university; rejecting needs a reason (1 to 500 characters) that the coach is shown in a
+//    notification. The whole decision is one transaction with a row lock, so two representatives of the same
+//    school deciding the same request at the same moment cannot both win.
 //  - Every decision is audited (coach_verification.* by applyReview, plus rep.coach_request_* naming the school).
 //
 // "Supporting documents": coaches do not upload files. What a coach submits as proof is text: credential
@@ -229,7 +228,7 @@ export async function decideCoachRequest(
       : "This request was already rejected.");
 
   // One transaction: lock the request, make sure it is STILL pending, then run the shared review step
-  // inside it. If an administrator decides at the same moment, whoever locks first wins and the other
+  // inside it. If another representative decides at the same moment, whoever locks first wins and the other
   // is refused (409), so a representative's rejection can never undo an approval made a moment earlier.
   await db.begin(async (tx) => {
     const [row] = await tx<{ status: string }[]>`SELECT status FROM coach_verifications WHERE coach_id = ${coachId} FOR UPDATE`;

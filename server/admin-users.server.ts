@@ -14,6 +14,7 @@
 //   rejected  = a school representative whose application was rejected
 //   active    = everything else
 
+import { notifyCoachesSchoolHasRep, notifyCoachesSchoolLostRep } from "./rep-notifications.server.ts";
 import { getDb, type Db } from "./db.server.ts";
 import { audit, type PublicUser, type RequestMeta } from "./auth.server.ts";
 import { ConnectionError } from "./connections.server.ts";
@@ -243,6 +244,12 @@ async function setSuspended(
       tx as unknown as Db,
     );
   });
+  // A school left without any active representative (or getting one back) is told to its waiting coaches.
+  // This never blocks the suspension itself.
+  try {
+    if (suspend) await notifyCoachesSchoolLostRep(db, id);
+    else await notifyCoachesSchoolHasRep(db, id);
+  } catch { /* the account change is already saved */ }
   return getUserDetail(actor, id);
 }
 

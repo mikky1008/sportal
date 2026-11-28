@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils";
    Everything comes from GET /api/rep/coaches. The server takes the school from the signed-in
    representative's own approved account, so only that school's coaches can ever appear here.
    The one thing a representative can change is a coach's affiliation with their own school
-   (remove / restore); verification and accounts stay with the administrator.
+   (remove / restore). Removing also ends their Sportal verification and their athlete connections; restoring gives it back.
 --------------------------------------------------------------------------------------------- */
 
 const prettyDate = (iso: string) => {
@@ -167,7 +167,7 @@ function CoachDialog({ coachId, school, onClose, onChanged }: { coachId: string 
             )}
             {coach.status === "affiliated" && !confirming && (
               <>
-                <p className="mt-1 text-sm text-muted-foreground">Removing ends this coach's affiliation with {school}. Their Sportal verification and account are not changed.</p>
+                <p className="mt-1 text-sm text-muted-foreground">Removing ends this coach's affiliation with {school} and their Sportal verification. They lose access to athletes and their connections end. You can restore them later.</p>
                 <button type="button" className={cn(btn.secondary, btn.sm, "mt-3 border-destructive/40 text-destructive hover:bg-destructive/10")} onClick={() => setConfirming(true)}>
                   Remove from school
                 </button>
@@ -175,7 +175,7 @@ function CoachDialog({ coachId, school, onClose, onChanged }: { coachId: string 
             )}
             {coach.status === "affiliated" && confirming && (
               <div role="alertdialog" aria-label="Confirm removal" className="mt-2">
-                <p className="text-sm">Remove <strong>{coach.name}</strong> from {school}? They will be told, and you can restore the affiliation later.</p>
+                <p className="text-sm">Remove <strong>{coach.name}</strong> from {school}? They and their connected athletes will be told, and you can restore the coach later.</p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button type="button" disabled={busy} className={cn(btn.secondary, btn.sm)} onClick={() => setConfirming(false)}>Cancel</button>
                   <button type="button" disabled={busy} className={cn(btn.secondary, btn.sm, "border-destructive bg-destructive text-white hover:bg-destructive hover:brightness-110")} onClick={() => void act("remove")}>

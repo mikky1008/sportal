@@ -40,7 +40,7 @@ export interface ApplicationDetail extends ApplicationSummary {
 export type ApplicationCounts = Record<ApplicationStatus, number>;
 
 export const fetchApplications = (status: ApplicationStatus | "", limit = 100, offset = 0) =>
-  apiRequest<{ items: ApplicationSummary[]; total: number; counts: ApplicationCounts }>(
+  apiRequest<{ items: ApplicationSummary[]; total: number; counts: ApplicationCounts; schoolsWithoutRep: { school: string; waitingCoaches: number }[] }>(
     `/api/admin/school-verifications?${status ? `status=${status}&` : ""}limit=${limit}&offset=${offset}`,
   );
 

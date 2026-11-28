@@ -214,6 +214,7 @@ export default function AdminVerifications() {
   const [rows, setRows] = useState<ApplicationSummary[] | null>(null);
   const [total, setTotal] = useState(0);
   const [counts, setCounts] = useState<ApplicationCounts | null>(null);
+  const [noRep, setNoRep] = useState<{ school: string; waitingCoaches: number }[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
 
@@ -227,7 +228,7 @@ export default function AdminVerifications() {
     setError(null);
     void fetchApplications(tab, PAGE_SIZE, page * PAGE_SIZE).then((r) => {
       if (!live) return;
-      if (r.ok) { setRows(r.data.items); setTotal(r.data.total); setCounts(r.data.counts); }
+      if (r.ok) { setRows(r.data.items); setTotal(r.data.total); setCounts(r.data.counts); setNoRep(r.data.schoolsWithoutRep ?? []); }
       else setError(r.message);
     });
     return () => { live = false; };
@@ -270,6 +271,20 @@ export default function AdminVerifications() {
             Review applications from school and university representatives. Only approved representatives can sign in and use their accounts.
           </p>
         </div>
+
+        {noRep.length > 0 && (
+          <div role="status" className="flex gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <p className="font-semibold">Coaches are waiting at a school with no active representative</p>
+              <ul className="mt-1 list-disc pl-5">
+                {noRep.map((s) => (
+                  <li key={s.school}>{s.school}: {s.waitingCoaches} coach{s.waitingCoaches === 1 ? "" : "es"} waiting. They were told, and will be reviewed once a representative for this school is approved or reactivated.</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
 
         <div role="tablist" aria-label="Application status" className="flex flex-wrap gap-2">
           {TABS.map((t) => (

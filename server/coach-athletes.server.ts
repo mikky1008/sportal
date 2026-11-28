@@ -15,7 +15,7 @@
 import { standingFor } from "./rankings.server.ts";
 import { getDb, type Db } from "./db.server.ts";
 import type { PublicUser } from "./auth.server.ts";
-import { ATHLETE_ROLE, COACH_ROLE, ConnectionError, PAGE_DEFAULT, PAGE_MAX } from "./connections.server.ts";
+import { ATHLETE_ROLE, COACH_ROLE, ConnectionError, PAGE_DEFAULT, PAGE_MAX, isVerifiedCoach } from "./connections.server.ts";
 import { skills as skillCatalog } from "../src/lib/skills.ts";
 
 const skillNames = new Map<string, string>(skillCatalog.map((k) => [k.id, k.name]));
@@ -33,6 +33,13 @@ export const PERFORMANCE_WINDOW_DAYS = 30;
 function requireCoach(actor: Pick<PublicUser, "roles">): void {
   if (!actor.roles.includes(COACH_ROLE))
     throw new ConnectionError(403, "role_not_allowed", "Only coach accounts can use this.");
+}
+
+/** Connected athletes' details are only for coaches whose school's representative still approves them. */
+async function requireVerifiedCoach(db: Db, actor: Pick<PublicUser, "id" | "roles">): Promise<void> {
+  requireCoach(actor);
+  if (!(await isVerifiedCoach(db, actor.id)))
+    throw new ConnectionError(403, "coach_not_verified", "Your coach account is not approved by a school representative.");
 }
 
 // ---------- My Athletes ----------
@@ -88,8 +95,8 @@ export async function listMyAthletes(
   paging: { limit?: number; offset?: number } = {},
   dbArg?: Db,
 ): Promise<{ items: AthleteDetail[]; total: number; limit: number; offset: number }> {
-  requireCoach(actor);
   const db = dbArg ?? (await getDb());
+  await requireVerifiedCoach(db, actor);
   const me = actor.id;
   const { limit, offset } = clampPaging(paging);
 
@@ -218,8 +225,8 @@ export const CONVERSATIONS_SHOWN = 5;
 export const SHORTLIST_SHOWN = 12;
 
 export async function getCoachDashboard(actor: PublicUser, dbArg?: Db): Promise<CoachDashboard> {
-  requireCoach(actor);
   const db = dbArg ?? (await getDb());
+  await requireVerifiedCoach(db, actor);
   const me = actor.id;
   const today = now();
   const since = isoDay(new Date(today.getTime() - PERFORMANCE_WINDOW_DAYS * DAY_MS));

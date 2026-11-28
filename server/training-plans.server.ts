@@ -133,6 +133,7 @@ async function assertAthletesConnected(tx: Tx, coachId: string, athleteIds: stri
     FROM coach_athlete_connections c
     JOIN users u ON u.id = c.athlete_id AND u.is_active = TRUE AND u.deleted_at IS NULL
     WHERE c.coach_id = ${coachId} AND c.status = 'accepted' AND c.athlete_id IN ${tx(athleteIds)}
+      AND EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = ${coachId} AND r.name = 'verified_coach')
     FOR SHARE OF c`;
   const allowed = new Set(ok.map((r) => r.athlete_id));
   const rejected = athleteIds.filter((id) => !allowed.has(id));

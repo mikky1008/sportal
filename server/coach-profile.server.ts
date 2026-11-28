@@ -257,6 +257,7 @@ export async function applyReview(
   if (note.length > NOTE_MAX) throw fail({ note: `Notes can be up to ${NOTE_MAX} characters.` });
   const ts = new Date();
 
+  let endedAthletes: string[] = [];
   await db.begin(async (tx) => {
     const [row] = await tx<{ status: "pending" | "verified" | "rejected" }[]>`
       SELECT status FROM coach_verifications WHERE coach_id = ${input.coachId} FOR UPDATE`;
@@ -296,8 +297,16 @@ export async function applyReview(
         WHERE user_id = ${input.coachId} AND role_id IN (SELECT id FROM roles WHERE name = ${VERIFIED_COACH_ROLE})`;
       // Withdrawing (or refusing) the approval also withdraws the affiliation.
       await tx`UPDATE coach_profiles SET university_id = NULL WHERE user_id = ${input.coachId}`;
+      // ...and ends every connection the coach had, so a removed coach keeps no access to athletes.
+      const ended = await tx<{ athlete_id: string }[]>`
+        UPDATE coach_athlete_connections SET status = 'disconnected', updated_at = ${ts}
+        WHERE coach_id = ${input.coachId} AND status IN ('pending', 'accepted')
+        RETURNING athlete_id`;
+      endedAthletes = ended.map((r) => r.athlete_id);
     }
   });
+  for (const athleteId of endedAthletes)
+    await notify(athleteId, { category: "connection", title: "Connection ended", message: "A coach you were connected with is no longer approved on Sportal, so the connection was ended." }, db);
   await audit(
     input.decision === "approve" ? "coach_verification.approved" : "coach_verification.rejected",
     { userId: input.reviewerId, ...input.meta, detail: { coachId: input.coachId, via: input.reviewerId ? "api" : "cli" } },

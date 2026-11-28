@@ -40,6 +40,11 @@ export const SEARCH_MAX_CHARS = 80;
 export const SEARCH_LIMIT_DEFAULT = 10;
 export const SEARCH_LIMIT_MAX = 20;
 
+/** Most requests a coach may have waiting for an answer at the same time. */
+export const MAX_PENDING_COACH_REQUESTS = 5;
+/** Days before a coach may ask an athlete again after being declined. */
+export const DECLINE_COOLDOWN_DAYS = 30;
+
 export type ConnectionStatus = "pending" | "accepted" | "declined" | "cancelled" | "disconnected";
 export type ListKind = "incoming" | "outgoing" | "accepted";
 type Side = "coach" | "athlete";
@@ -407,6 +412,17 @@ export async function sendRequest(
 
   const ts = now();
   let row = await findPair(db, coachId, athleteId);
+  if (coachId === actor.id && !(row && (row.status === "pending" || row.status === "accepted"))) {
+    // A coach can have at most MAX_PENDING_COACH_REQUESTS requests waiting for an answer, and cannot
+    // re-ask an athlete who declined until the cooldown has passed.
+    const [{ n } = { n: 0 }] = await db<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM coach_athlete_connections
+      WHERE coach_id = ${coachId} AND requested_by = ${coachId} AND status = 'pending'`;
+    if (n >= MAX_PENDING_COACH_REQUESTS)
+      throw new ConnectionError(429, "too_many_pending", `You already have ${MAX_PENDING_COACH_REQUESTS} requests waiting for an answer. Wait for a reply or cancel one first.`);
+    if (row?.status === "declined" && row.responded_at && ts.getTime() - new Date(row.responded_at).getTime() < DECLINE_COOLDOWN_DAYS * 86_400_000)
+      throw new ConnectionError(409, "declined_recently", "This athlete declined your request recently. You can ask again later.");
+  }
   let created = false;
   if (!row) {
     const [inserted] = await db<ConnectionRow[]>`

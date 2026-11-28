@@ -188,7 +188,7 @@ function Recruiting() {
         </button>
       )}
 
-      {!(isCoach && tab === "messages") && <div role="tablist" aria-label="Recruiting sections" className="-mb-2 flex gap-1 overflow-x-auto border-b">
+      {!(isCoach && tab === "messages") && <div role="tablist" aria-label="Recruiting sections" className="-mb-2 -mt-3 flex gap-1 overflow-x-auto border-b">
         {tabs.map((t) => {
           const active = tab === t.id;
           const isMsg = t.id === "messages" || t.id === "inbox";

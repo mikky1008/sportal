@@ -42,7 +42,6 @@ const MAIN_NAV: NavEntry[] = [
 
 const MORE_NAV: NavEntry[] = [
   { label: "Session Reviews", icon: ClipboardCheck, to: "/coach/reviews" },
-  { label: "Session Reviews", icon: ClipboardCheck, to: "/coach/reviews" },
   { label: "Training Plans", icon: ClipboardList, to: "/coach/training-plans/new", activePrefix: "/coach/training-plans" },
   { label: "Affiliation Requests", icon: UserCheck },
   { label: "Applications", icon: UserPlus, to: "/coach/applications" },

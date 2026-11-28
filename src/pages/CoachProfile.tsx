@@ -1,10 +1,13 @@
 import { Link } from "@/router-compat";
-import { BadgeCheck, Briefcase, Building2, Clock, MapPin, Settings, Trophy } from "lucide-react";
+import { useMemo, useState } from "react";
+import { BadgeCheck, Briefcase, Building2, Clock, MapPin, Pencil, Settings, Trophy } from "lucide-react";
 import { CoachLayout } from "@/layouts/CoachLayout";
 import { useCoachProfile } from "@/lib/coachProfileStore";
 import { CoachCompletionCard } from "@/components/profile-completion-cards";
 import { PersonAvatar } from "@/components/avatar";
-import { Card, Pill } from "@/components/common";
+import { CoachProfileSheet } from "@/components/coach-profile-sheet";
+import { computeCoachCompletion } from "@/lib/profileCompletion";
+import { Card, Pill, btn } from "@/components/common";
 
 /**
  * The coach's own profile. This is where "Edit profile" lives (inside the completion card), and the gear
@@ -23,6 +26,10 @@ function CoachProfile() {
   const { profile: p, verification } = useCoachProfile();
   const name = [p.firstName, p.lastName].filter(Boolean).join(" ") || "Coach";
   const verified = verification.status === "Verified";
+  const [editing, setEditing] = useState(false);
+  // Once the profile is complete and the school's representative has approved it, there is nothing left to
+  // track, so the progress card goes away and a plain Edit profile button stays in the header.
+  const done = useMemo(() => computeCoachCompletion(p).complete, [p]) && verified;
   return (
     <div className="flex flex-col gap-6">
       <section className="surface relative flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:p-6">
@@ -48,10 +55,15 @@ function CoachProfile() {
             {p.organizationName && <span className="flex items-center gap-1.5"><Building2 className="h-4 w-4" />{p.organizationName}</span>}
             {p.organizationLocation && <span className="flex items-center gap-1.5"><MapPin className="h-4 w-4" />{p.organizationLocation}</span>}
           </div>
+          {done && (
+            <button type="button" onClick={() => setEditing(true)} className={`${btn.secondary} mt-4`}>
+              <Pencil className="h-4 w-4" /> Edit profile
+            </button>
+          )}
         </div>
       </section>
 
-      <CoachCompletionCard />
+      {done ? <CoachProfileSheet open={editing} section={null} onOpenChange={setEditing} /> : <CoachCompletionCard />}
 
       <div className="grid gap-6 lg:grid-cols-3">
         <Card title="Coaching" className="lg:col-span-2">

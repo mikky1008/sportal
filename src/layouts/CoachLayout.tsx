@@ -8,10 +8,11 @@ import {
 import { Link } from "@/router-compat";
 import { useAuth } from "@/auth/AuthContext";
 import { listNotifications, markNotificationRead, safeInternalPath, useUnreadCount, type NotificationView } from "@/lib/notificationsApi";
+import { fetchInquiries } from "@/lib/recruitingApi";
 import { useCoachProfile } from "@/lib/coachProfileStore";
 import {
   AppHeader, DropdownDivider, DropdownLabel, DropdownPanel, HeaderBrand, HeaderNavItem, HeaderPill, HeaderPillDivider,
-  HeaderSearch, HeaderUser, MenuGlyph, NotificationBell, PageBody, dropdownItemClass, useDropdown,
+  HeaderSearch, HeaderUser, MenuGlyph, NotificationBell, PageBody, dropdownItemClass, iconButtonClass, useDropdown,
 } from "@/components/shell";
 
 /**
@@ -51,6 +52,26 @@ const MORE_NAV: NavEntry[] = [
 
 
 const comingSoon = (label: string) => toast(`${label} is coming soon`, { description: "This coach page hasn't been built yet." });
+
+/** Conversations with athletes. Lives in the top bar next to notifications, with a badge for unread messages. */
+function MessagesButton() {
+  const [unread, setUnread] = useState(0);
+  useEffect(() => {
+    let live = true;
+    const load = () => void fetchInquiries().then((r) => { if (live && r.ok) setUnread(r.data.reduce((n, i) => n + i.unread, 0)); });
+    load();
+    const t = setInterval(load, 30_000);
+    return () => { live = false; clearInterval(t); };
+  }, []);
+  return (
+    <Link to="/recruiting" search={{ tab: "messages", thread: undefined }} direction="root" aria-label={`Messages, ${unread} unread`} title="Messages" className={iconButtonClass}>
+      <MessageSquare className="h-5 w-5" />
+      {unread > 0 && (
+        <span className="absolute -right-0.5 -top-0.5 grid h-5 min-w-5 place-items-center rounded-full bg-red-600 px-1 text-[11px] font-semibold leading-none text-white">{unread > 9 ? "9+" : unread}</span>
+      )}
+    </Link>
+  );
+}
 
 function NotificationsMenu() {
   const { open, setOpen, ref } = useDropdown();
@@ -192,6 +213,7 @@ export function CoachLayout({ children }: { children: ReactNode }) {
             <HeaderSearch placeholder="Search athletes..." />
 
             <div className="ml-auto flex items-center gap-2 sm:gap-3">
+              <MessagesButton />
               <NotificationsMenu />
               <ProfileMenu name={name} shortName={profile.lastName || profile.firstName || name} />
             </div>

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearch } from "@/router-compat";
 import { toast } from "sonner";
-import { Info, Search } from "lucide-react";
+import { ArrowLeft, Info, Search, Bookmark, Compass, Inbox, type LucideIcon } from "lucide-react";
 import { useAuth } from "@/auth/AuthContext";
 import { Page } from "@/components/Page";
 import { CoachLayout } from "@/layouts/CoachLayout";
@@ -27,12 +27,11 @@ const sortOptions: { id: DirectoryFilters["sort"]; label: string }[] = [
 ];
 
 type Tab = "discover" | "watchlist" | "messages" | "inbox";
-const COACH_TABS: { id: Tab; label: string }[] = [
-  { id: "discover", label: "Discover" },
-  { id: "watchlist", label: "Watchlist" },
-  { id: "messages", label: "Messages" },
+const COACH_TABS: { id: Tab; label: string; icon: LucideIcon }[] = [
+  { id: "discover", label: "Discover", icon: Compass },
+  { id: "watchlist", label: "Watchlist", icon: Bookmark },
 ];
-const ATHLETE_TABS: { id: Tab; label: string }[] = [{ id: "inbox", label: "Inbox" }];
+const ATHLETE_TABS: { id: Tab; label: string; icon: LucideIcon }[] = [{ id: "inbox", label: "Inbox", icon: Inbox }];
 
 const message = (e: { message?: string }, fallback: string) => e.message || fallback;
 
@@ -86,9 +85,15 @@ function Recruiting() {
   const search = useSearch(parseRecruitingSearch);
   const tabs = isCoach ? COACH_TABS : ATHLETE_TABS;
   const [tab, setTab] = useState<Tab>(() => {
+    // Coaches reach Messages from the top bar, not from the tab bar, but "?tab=messages" still opens it.
+    if (isCoach && search.tab === "messages") return "messages";
     const wanted = tabs.find((t) => t.id === search.tab);
     return wanted ? wanted.id : tabs[0]!.id;
   });
+  // The top-bar Messages button (or a notification) can change ?tab= while this screen is already open.
+  useEffect(() => {
+    if (isCoach && search.tab === "messages") { setTab("messages"); setThreadPick(undefined); }
+  }, [isCoach, search.tab, search.thread]);
   // undefined = follow the ?thread= deep link; null = explicitly closed
   const [threadPick, setThreadPick] = useState<string | null | undefined>(undefined);
   const openThreadId = threadPick === undefined ? (search.thread ?? null) : threadPick;
@@ -174,26 +179,43 @@ function Recruiting() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title="Recruiting"
-        subtitle={isCoach ? "Search athlete showcases, build a watchlist and send recruitment inquiries." : "Coaches who found your showcase. You decide who can start a conversation."}
+        title={isCoach && tab === "messages" ? "Messages" : "Recruiting"}
+        subtitle={isCoach && tab === "messages" ? "Conversations with athletes who accepted your inquiry." : isCoach ? "Search athlete showcases, build a watchlist and send recruitment inquiries." : "Coaches who found your showcase. You decide who can start a conversation."}
       />
-      {isCoach && <CoachCompletionCard />}
+      {isCoach && tab !== "messages" && <CoachCompletionCard />}
 
-      <div className="flex gap-2 overflow-x-auto pb-1">
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => pickTab(t.id)}
-            aria-pressed={tab === t.id}
-            className={cn("whitespace-nowrap rounded-full border px-4 py-2 text-sm font-semibold transition", tab === t.id ? "border-primary bg-primary text-primary-foreground" : "bg-card text-muted-foreground hover:text-foreground")}
-          >
-            {t.label}
-            {t.id === "watchlist" && saved.size > 0 && ` (${saved.size})`}
-            {(t.id === "messages" || t.id === "inbox") && inquiries.items.length > 0 && ` (${inquiries.items.length})`}
-            {(t.id === "messages" || t.id === "inbox") && unreadTotal > 0 && <span className="ml-2 rounded-full bg-primary-foreground/20 px-1.5 text-xs">{unreadTotal} new</span>}
-          </button>
-        ))}
-      </div>
+      {isCoach && tab === "messages" && (
+        <button onClick={() => pickTab("discover")} className="-mb-2 inline-flex w-fit items-center gap-2 text-sm font-semibold text-muted-foreground hover:text-foreground">
+          <ArrowLeft className="h-4 w-4" /> Back to Discover
+        </button>
+      )}
+
+      {!(isCoach && tab === "messages") && <div role="tablist" aria-label="Recruiting sections" className="-mb-2 flex gap-1 overflow-x-auto border-b">
+        {tabs.map((t) => {
+          const active = tab === t.id;
+          const isMsg = t.id === "messages" || t.id === "inbox";
+          const count = t.id === "watchlist" ? saved.size : 0;
+          return (
+            <button
+              key={t.id}
+              role="tab"
+              aria-selected={active}
+              onClick={() => pickTab(t.id)}
+              className={cn(
+                "relative flex items-center gap-2 whitespace-nowrap px-4 py-3 text-sm font-semibold transition",
+                active ? "text-primary after:absolute after:inset-x-3 after:-bottom-px after:h-0.5 after:rounded-full after:bg-primary" : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <t.icon className="h-4 w-4" aria-hidden="true" />
+              {t.label}
+              {count > 0 && <span className="rounded-full bg-muted px-1.5 text-xs font-medium text-muted-foreground">{count}</span>}
+              {isMsg && unreadTotal > 0 && (
+                <span className="rounded-full bg-destructive px-1.5 text-xs font-bold text-white" aria-label={`${unreadTotal} unread`}>{unreadTotal}</span>
+              )}
+            </button>
+          );
+        })}
+      </div>}
 
       {isCoach && tab === "discover" && (
         <>

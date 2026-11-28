@@ -311,7 +311,7 @@ export function HeaderSearch({ placeholder }: { placeholder: string }) {
 
 /* ---- right-hand side of the bar ---- */
 
-const iconButtonClass =
+export const iconButtonClass =
   "relative grid h-11 w-11 place-items-center rounded-full bg-white/5 text-shell-icon transition hover:bg-white/10 hover:text-shell-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shell-focus";
 
 /** Bell with an unread-count badge. Renders a link when `to` is given, otherwise a button (dropdown trigger). */

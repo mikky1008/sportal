@@ -76,7 +76,7 @@ function AthleteShowcase({ detail, onChange }: { detail: AthleteDetail; onChange
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile label="Performance" value={a.totalSessions ? String(a.performanceScore) : "—"} />
-        <StatTile label={`${a.sport} Rank`} value={rank ? `#${rank}` : "Unranked"} />
+        <StatTile label={a.sport ? `${a.sport} Rank` : "Rank"} value={rank ? `#${rank}` : "Unranked"} />
         <StatTile label="Coach-Verified" value={`${a.verifiedSessions}/${a.totalSessions}`} hint={<span className="text-muted-foreground">sessions</span>} />
         <StatTile label="Position" value={a.position || "—"} hint={<span className="text-muted-foreground">{a.sport}</span>} />
       </div>

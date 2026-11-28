@@ -32,6 +32,8 @@ export function inquiryTone(status: InquiryStatus) {
 
 export function AthleteCard({ a, watched, onToggleWatch, footer }: { a: DirectoryAthlete; watched: boolean; onToggleWatch: () => void; footer?: ReactNode }) {
   const rank = a.rank > 0 ? a.rank : undefined;
+  // An athlete who hasn't saved a sport yet is still listed, so a scout can reach them, but there is nothing to rate.
+  const notSetUp = a.profileSetUp === false;
   return (
     <article className="surface flex flex-col p-5">
       <div className="flex items-start justify-between gap-3">
@@ -51,22 +53,31 @@ export function AthleteCard({ a, watched, onToggleWatch, footer }: { a: Director
           {a.firstName} {a.lastName}
         </Link>
       </h3>
-      <p className="text-sm text-muted-foreground">{a.sport} · {a.position} · {a.school}</p>
-      <p className="mt-0.5 text-xs text-muted-foreground" data-testid="team-line">{a.teamStatus === "Not on a team" || !a.teamName ? a.teamStatus : `${a.teamStatus} · ${a.teamName}`}</p>
-      <div className="mt-3 flex flex-wrap gap-1.5">
-        {a.skills.map((s) => <Pill key={s.name} tone="primary">{s.name} {s.value}</Pill>)}
-      </div>
-      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        <span>Score <b className="font-display text-base text-foreground">{a.performanceScore}</b></span>
-        <Pill
-          tone={a.verifiedSessions > 0 ? "success" : "warning"}
-          title="Sessions a coach has reviewed, out of all sessions counted for this athlete."
-        >
-          {a.verifiedSessions}/{a.totalSessions} coach-verified
-        </Pill>
-      </div>
+      {notSetUp ? (
+        <>
+          <div className="mt-1"><Pill tone="default">Profile not set up yet</Pill></div>
+          <p className="mt-3 text-sm text-muted-foreground">No sport, position or results yet. You can still view them and send an inquiry.</p>
+        </>
+      ) : (
+        <>
+          <p className="text-sm text-muted-foreground">{a.sport} · {a.position} · {a.school}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground" data-testid="team-line">{a.teamStatus === "Not on a team" || !a.teamName ? a.teamStatus : `${a.teamStatus} · ${a.teamName}`}</p>
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {a.skills.map((s) => <Pill key={s.name} tone="primary">{s.name} {s.value}</Pill>)}
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span>Score <b className="font-display text-base text-foreground">{a.performanceScore}</b></span>
+            <Pill
+              tone={a.verifiedSessions > 0 ? "success" : "warning"}
+              title="Sessions a coach has reviewed, out of all sessions counted for this athlete."
+            >
+              {a.verifiedSessions}/{a.totalSessions} coach-verified
+            </Pill>
+          </div>
+        </>
+      )}
       <div className="mt-auto flex items-center justify-between pt-4">
-        <span className="text-xs font-medium text-muted-foreground">{rank ? `Rank #${rank}` : "Unranked"}</span>
+        <span className="text-xs font-medium text-muted-foreground">{notSetUp ? "Not ranked" : rank ? `Rank #${rank}` : "Unranked"}</span>
         <Link to="/recruiting/$athleteId" search={{ tab: undefined, thread: undefined }} params={{ athleteId: a.id }} className={cn(btn.primary, "px-4 py-2")}>View showcase</Link>
       </div>
       {footer}
@@ -170,7 +181,7 @@ export function InquiryModal({ athlete, open, onClose, onSend, defaultOrganizati
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
             <h2 className="text-2xl font-bold">Recruitment Inquiry</h2>
-            <p className="text-sm text-muted-foreground">To {athlete.firstName} {athlete.lastName} · {athlete.sport}, {athlete.school}</p>
+            <p className="text-sm text-muted-foreground">To {[`${athlete.firstName} ${athlete.lastName}`, [athlete.sport, athlete.school].filter(Boolean).join(", ")].filter(Boolean).join(" · ")}</p>
           </div>
           <button onClick={onClose} aria-label="Close" className="rounded-lg p-1 hover:bg-muted"><X className="h-5 w-5" /></button>
         </div>

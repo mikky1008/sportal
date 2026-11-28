@@ -6,6 +6,8 @@
 //
 // The rules the Recruiting page used to enforce in the browser now live here, where they can be trusted:
 //  - Only a VERIFIED coach can discover athletes, keep notes and send inquiries.
+//  - Every active athlete is in the directory, even one who has not set up their profile yet (labelled
+//    "Profile not set up yet"), so no athlete is invisible to scouts just because they haven't filled it in.
 //  - An athlete who hides their showcase (athlete_profiles.showcase_visible = false) is not in the
 //    directory and cannot receive NEW inquiries. Conversations that already exist stay open.
 //  - An inquiry is a request, not a message. Only the athlete can answer it, only while it is
@@ -67,6 +69,8 @@ export interface DirectoryAthleteView {
   skills: { name: string; value: string }[];
   achievements: { title: string; year: string }[];
   visible: boolean;
+  /** false until the athlete saves a sport: they are still listed, shown as "Profile not set up yet" */
+  profileSetUp: boolean;
 }
 
 export type InquiryStatusView = "Pending" | "Accepted" | "Declined";
@@ -140,17 +144,25 @@ interface SessionAgg {
   verified: number;
 }
 
-/** Everyone who has a started profile. Hidden athletes are only returned when `includeHidden` is set. */
+/**
+ * Every active athlete account, including athletes who have not set up their profile yet (no sport saved):
+ * they are listed so a scout can still find and contact them, and flagged with `profileSetUp: false` so the
+ * screens can say "Profile not set up yet". Hidden athletes are only returned when `includeHidden` is set.
+ */
 async function loadDirectory(db: Db, opts: { onlyId?: string; includeHidden?: boolean } = {}): Promise<DirectoryAthleteView[]> {
   const rows = await db<ProfileRow[]>`
     SELECT u.id, up.first_name, up.last_name, u.display_name,
-           ap.sport, ap.playing_position AS position, ap.school, ap.year_level AS year, ap.height_cm::float8 AS height_cm,
-           ap.bio, ap.team_status, ap.team_name, ap.municipality, ap.province, ap.showcase_visible AS visible
-    FROM athlete_profiles ap
-    JOIN users u ON u.id = ap.user_id
+           COALESCE(ap.sport, '') AS sport, COALESCE(ap.playing_position, '') AS position, COALESCE(ap.school, '') AS school,
+           COALESCE(ap.year_level, '') AS year, ap.height_cm::float8 AS height_cm,
+           COALESCE(ap.bio, '') AS bio, COALESCE(NULLIF(ap.team_status, ''), 'Not on a team') AS team_status, COALESCE(ap.team_name, '') AS team_name,
+           COALESCE(ap.municipality, '') AS municipality, COALESCE(ap.province, '') AS province,
+           COALESCE(ap.showcase_visible, TRUE) AS visible
+    FROM users u
+    LEFT JOIN athlete_profiles ap ON ap.user_id = u.id
     LEFT JOIN user_profiles up ON up.user_id = u.id
-    WHERE u.is_active = TRUE AND u.deleted_at IS NULL AND ap.sport <> ''
-      ${opts.includeHidden ? db`` : db`AND ap.showcase_visible = TRUE`}
+    WHERE u.is_active = TRUE AND u.deleted_at IS NULL
+      AND EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id AND r.name = ${ATHLETE_ROLE})
+      ${opts.includeHidden ? db`` : db`AND COALESCE(ap.showcase_visible, TRUE) = TRUE`}
       ${opts.onlyId ? db`AND u.id = ${opts.onlyId}` : db``}`;
   if (rows.length === 0) return [];
 
@@ -216,6 +228,7 @@ async function loadDirectory(db: Db, opts: { onlyId?: string; includeHidden?: bo
       skills: skillList,
       achievements: achBy.get(r.id) ?? [],
       visible: r.visible,
+      profileSetUp: r.sport !== "",
     };
   });
 }

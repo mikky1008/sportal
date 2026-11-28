@@ -184,6 +184,8 @@ export interface DirectoryAthlete {
   achievements: { title: string; year: string }[];
   /** athletes can hide their showcase from discovery entirely */
   visible: boolean;
+  /** false until the athlete saves a sport; they are still listed, labelled "Profile not set up yet" (absent = set up) */
+  profileSetUp?: boolean;
 }
 
 export type InquiryStatus = "Pending" | "Accepted" | "Declined";

@@ -792,6 +792,16 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX idx_rep_messages_sender ON rep_messages (sender_id, created_at DESC);
     `,
   },
+  {
+    version: 16,
+    name: "coaches_approved_by_school_reps_only",
+    sql: `
+      -- A coach is approved by the representative of the school they picked at sign-up. The administrator
+      -- can no longer approve coaches, so the coaches:review permission is taken away from every role and removed.
+      DELETE FROM role_permissions WHERE permission_id IN (SELECT id FROM permissions WHERE name = 'coaches:review');
+      DELETE FROM permissions WHERE name = 'coaches:review';
+    `,
+  },
 ];
 
 const MIGRATION_LOCK_ID = 727_274_001;

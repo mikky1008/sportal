@@ -86,13 +86,10 @@
 //   GET  /api/coach/profile                        coach -> { ok, profile, verification }
 //   PUT  /api/coach/profile                        coach, CoachProfile fields as text -> { ok, profile, verification }
 //   POST /api/coach/verification/request           coach -> { ok, verification }   send the verification details to the reviewers
-//   GET  /api/admin/coach-verifications            reviewer ?status=pending|verified|rejected&limit&offset -> { ok, items, total }
-//   POST /api/admin/coach-verifications/:coachId/approve   reviewer { note? } -> { ok, coachId, status }
-//   POST /api/admin/coach-verifications/:coachId/reject    reviewer { note }  -> { ok, coachId, status }   (the reason is shown to the coach)
+//   (There is no admin endpoint for approving coaches: the coach's school representative decides, see /api/rep/coach-requests.)
 // The administrator is a predefined account from ADMIN_EMAIL / ADMIN_PASSWORD (server/admin-account.server.ts). The
 // regular /api/auth/login refuses it and /api/admin/auth/login refuses everyone else; nothing can grant the role.
-// A reviewer is an account with the `coaches:review` permission (the `admin` role). Approving grants the
-// `verified_coach` role, which carries `sessions:verify`; rejecting removes it.
+// A school representative's approval grants the `verified_coach` role, which carries `sessions:verify`; rejecting removes it.
 //
 // Training plans assigned to me (student-athlete accounts only; PUBLISHED plans from coaches I'm connected to):
 //   GET /api/athletes/me/training-plans            ?limit&offset -> { ok, items, total }
@@ -217,9 +214,7 @@ import { createSession, listMySessions, listSessionsForReview, requestSessionRev
 import { createPlan, getAssignedPlan, getPlan, listAssignedPlans, listPlans, PlanError, updatePlan } from "./training-plans.server.ts";
 import {
   getCoachProfile,
-  listVerificationRequests,
   requestVerification,
-  reviewVerification,
   saveCoachProfile,
 } from "./coach-profile.server.ts";
 import {
@@ -1421,15 +1416,13 @@ async function handleCoachAndProfile(req: Request, path: string): Promise<Respon
   }
 }
 
-/** Coach profile, verification request, and the reviewer's endpoints. Returns null for any other path. */
+/** Coach profile and verification request. Returns null for any other path. (Coaches are approved by their school's representative, never by an admin.) */
 async function handleCoachProfileAndReview(req: Request, path: string): Promise<Response | null> {
   const m = req.method;
   const isGet = m === "GET" && path === "/api/coach/profile";
   const isPut = m === "PUT" && path === "/api/coach/profile";
   const isRequest = m === "POST" && path === "/api/coach/verification/request";
-  const isList = m === "GET" && path === "/api/admin/coach-verifications";
-  const decide = m === "POST" ? /^\/api\/admin\/coach-verifications\/([^/]+)\/(approve|reject)$/.exec(path) : null;
-  if (!isGet && !isPut && !isRequest && !isList && !decide) return null;
+  if (!isGet && !isPut && !isRequest) return null;
 
   const user = await getUserBySessionToken(bearer(req));
   if (!user) return send(req, 401, { ok: false, code: "unauthenticated", message: "Sign in to continue." });
@@ -1438,17 +1431,7 @@ async function handleCoachProfileAndReview(req: Request, path: string): Promise<
   try {
     if (isGet) return send(req, 200, { ok: true, ...(await getCoachProfile(user)) });
     if (isPut) return send(req, 200, { ok: true, ...(await saveCoachProfile(user, await readJson(req), meta)) });
-    if (isRequest) return send(req, 200, { ok: true, verification: await requestVerification(user, meta) });
-    if (isList) {
-      const status = new URL(req.url).searchParams.get("status");
-      if (status !== null && !["pending", "verified", "rejected"].includes(status))
-        return send(req, 400, { ok: false, code: "validation", message: "status must be pending, verified or rejected." });
-      const paging = pagingFrom(req);
-      return send(req, 200, { ok: true, ...(await listVerificationRequests(user, { ...paging, ...(status ? { status: status as "pending" | "verified" | "rejected" } : {}) })) });
-    }
-    const body = (await readJson(req)) as Record<string, unknown> | null;
-    const result = await reviewVerification(user, decide?.[1] ?? "", decide?.[2] === "approve" ? "approve" : "reject", body && typeof body === "object" ? body["note"] : undefined, meta);
-    return send(req, 200, { ok: true, ...result });
+    return send(req, 200, { ok: true, verification: await requestVerification(user, meta) });
   } catch (err) {
     if (err instanceof ConnectionError)
       return send(req, err.httpStatus, { ok: false, code: err.code, message: err.message, ...err.extra });

@@ -25,7 +25,7 @@ export interface SearchAthleteView {
   sport: string;
   school: string;
   relationship: Relationship;
-  /** a showcase page exists for this athlete (started profile and not hidden) */
+  /** a showcase page exists for this athlete (not hidden; an athlete with no profile yet still has one) */
   hasShowcase: boolean;
 }
 
@@ -83,7 +83,7 @@ async function searchAthletesForCoach(db: Db, coach: PublicUser, q: string, limi
       r.conn_status === "accepted" ? "connected"
       : r.conn_status === "pending" ? (r.requested_by === coach.id ? "request_sent" : "request_received")
       : "none",
-    hasShowcase: r.sport !== "" && r.visible,
+    hasShowcase: r.visible,
   }));
 }
 

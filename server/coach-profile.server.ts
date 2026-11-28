@@ -6,8 +6,8 @@
 //  1. The coach fills in the Verification Information on their profile (official email, credential
 //     type, credential reference) and presses "Request verification". That copies those details into
 //     a coach_verifications row with status 'pending'. Editing the profile never verifies anyone.
-//  2. A reviewer (an account holding the `coaches:review` permission, today only `admin`) lists the
-//     pending requests and approves or rejects each one. A rejection needs a written reason.
+//  2. The coach's school representative (server/rep-coach-requests.server.ts) approves or rejects the
+//     request. A rejection needs a written reason. There is no admin way to approve a coach.
 //  3. Approving grants the `verified_coach` role, which carries `sessions:verify`: the same permission
 //     the connections API already reads as "verified coach". Rejecting (or revoking later) removes it.
 //  4. A rejected coach can fix their details and request again. A verified coach cannot re-request.
@@ -20,25 +20,17 @@ import { audit, type PublicUser, type RequestMeta } from "./auth.server.ts";
 import { notify } from "./notifications.server.ts";
 import { notifyRepsOfCoachRequest } from "./rep-notifications.server.ts";
 import { findRepSchool } from "./university-search.server.ts";
-import { COACH_ROLE, ConnectionError, isVerifiedCoach, PAGE_DEFAULT, PAGE_MAX } from "./connections.server.ts";
+import { COACH_ROLE, ConnectionError, isVerifiedCoach } from "./connections.server.ts";
 import {
   COACH_PROFILE_KEYS, EMPTY_COACH, validateCoach, type CoachProfile,
 } from "../src/lib/coachProfileRules.ts";
 
-export const REVIEW_PERMISSION = "coaches:review";
 export const VERIFIED_COACH_ROLE = "verified_coach";
 export const NOTE_MAX = 500;
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function requireCoach(actor: Pick<PublicUser, "roles">): void {
   if (!actor.roles.includes(COACH_ROLE))
     throw new ConnectionError(403, "role_not_allowed", "Only coach accounts have a coach profile.");
-}
-
-function requireReviewer(actor: Pick<PublicUser, "permissions">): void {
-  if (!actor.permissions.includes(REVIEW_PERMISSION))
-    throw new ConnectionError(403, "not_a_reviewer", "You don't have permission to review coaches.");
 }
 
 // ---------- verification state ----------
@@ -247,63 +239,7 @@ export async function requestVerification(actor: PublicUser, meta: Partial<Reque
   return getVerificationState(db, actor.id);
 }
 
-// ---------- the reviewer's side ----------
-
-export interface VerificationRequestView {
-  coachId: string;
-  displayName: string;
-  email: string;
-  status: "pending" | "verified" | "rejected";
-  organization: string;
-  organizationType: string;
-  position: string;
-  sport: string;
-  officialEmail: string;
-  credentialType: string;
-  credentialReference: string;
-  submittedAt: string;
-  reviewedAt: string | null;
-  note: string;
-}
-
-export async function listVerificationRequests(
-  actor: PublicUser,
-  opts: { status?: "pending" | "verified" | "rejected"; limit?: number; offset?: number } = {},
-  dbArg?: Db,
-): Promise<{ items: VerificationRequestView[]; total: number; limit: number; offset: number }> {
-  requireReviewer(actor);
-  const db = dbArg ?? (await getDb());
-  const limit = Math.min(Math.max(Math.trunc(opts.limit ?? PAGE_DEFAULT), 1), PAGE_MAX);
-  const offset = Math.max(Math.trunc(opts.offset ?? 0), 0);
-  const filter = opts.status ? db`AND v.status = ${opts.status}` : db``;
-  const rows = await db<{
-    coach_id: string; display_name: string; email: string; status: "pending" | "verified" | "rejected";
-    organization: string; organization_type: string | null; coaching_position: string | null; sport_specialization: string | null;
-    official_email: string; credential_type: string; credential_reference: string;
-    submitted_at: Date; reviewed_at: Date | null; review_note: string;
-  }[]>`
-    SELECT v.coach_id, u.display_name, u.email, v.status, v.organization, cp.organization_type, cp.coaching_position,
-           cp.sport_specialization, v.official_email, v.credential_type, v.credential_reference,
-           v.submitted_at, v.reviewed_at, v.review_note
-    FROM coach_verifications v
-    JOIN users u ON u.id = v.coach_id
-    LEFT JOIN coach_profiles cp ON cp.user_id = v.coach_id
-    WHERE u.deleted_at IS NULL ${filter}
-    ORDER BY (v.status = 'pending') DESC, v.submitted_at, v.coach_id
-    LIMIT ${limit} OFFSET ${offset}`;
-  const [count] = await db<{ n: number }[]>`
-    SELECT COUNT(*)::int AS n FROM coach_verifications v JOIN users u ON u.id = v.coach_id WHERE u.deleted_at IS NULL ${filter}`;
-  return {
-    items: rows.map((r) => ({
-      coachId: r.coach_id, displayName: r.display_name, email: r.email, status: r.status,
-      organization: r.organization, organizationType: r.organization_type ?? "", position: r.coaching_position ?? "",
-      sport: r.sport_specialization ?? "", officialEmail: r.official_email, credentialType: r.credential_type,
-      credentialReference: r.credential_reference, submittedAt: r.submitted_at.toISOString(),
-      reviewedAt: r.reviewed_at ? r.reviewed_at.toISOString() : null, note: r.review_note,
-    })),
-    total: count?.n ?? 0, limit, offset,
-  };
-}
+// ---------- the decision (made by the school representative, or by the command-line tool) ----------
 
 export type ReviewDecision = "approve" | "reject";
 
@@ -374,21 +310,4 @@ export async function applyReview(
       : { category: "verification", title: "Verification not approved", message: `Reason: ${note}`, link: "/profile" },
     db,
   );
-}
-
-export async function reviewVerification(
-  actor: PublicUser,
-  coachId: string,
-  decision: ReviewDecision,
-  rawNote: unknown,
-  meta: Partial<RequestMeta> = {},
-  dbArg?: Db,
-): Promise<{ coachId: string; status: VerificationLabel }> {
-  requireReviewer(actor);
-  if (!UUID_RE.test(coachId)) throw new ConnectionError(404, "request_not_found", "That coach hasn't requested verification.");
-  if (coachId === actor.id) throw new ConnectionError(403, "cannot_review_self", "You can't review your own verification.");
-  if (rawNote !== undefined && typeof rawNote !== "string") throw fail({ note: "Must be text." });
-  const db = dbArg ?? (await getDb());
-  await applyReview(db, { coachId, decision, note: typeof rawNote === "string" ? rawNote : "", reviewerId: actor.id, meta });
-  return { coachId, status: decision === "approve" ? "Verified" : "Rejected" };
 }
